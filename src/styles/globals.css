@@ -1,0 +1,247 @@
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-size: 16px;
+  --background: #F5F6F8;
+  --foreground: #0A0A0A;
+  --card: #FFFFFF;
+  --card-foreground: #0A0A0A;
+  --popover: #FFFFFF;
+  --popover-foreground: #0A0A0A;
+  --primary: #6E59A5;
+  --primary-foreground: #FFFFFF;
+  --secondary: #E5DEFF;
+  --secondary-foreground: #4A3D70;
+  --muted: #E5E7EB;
+  --muted-foreground: #71717A;
+  --accent: #33C3F0;
+  --accent-foreground: #FFFFFF;
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
+  --border: #E5E7EB;
+  --input: transparent;
+  --input-background: #FFFFFF;
+  --switch-background: #E5E7EB;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #6E59A5;
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.75rem;
+  --primary-purple: #6E59A5;
+  --primary-purple-light: #E5DEFF;
+  --primary-purple-dark: #4A3D70;
+  --accent-blue: #33C3F0;
+  --accent-pink: #D946EF;
+  --character-blue: #3B82F6;
+  --character-blue-light: #DBEAFE;
+  --asset-green: #10B981;
+  --asset-green-light: #D1FAE5;
+  --scene-pink: #EC4899;
+  --scene-pink-light: #FCE7F3;
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #0A0A0A;
+  --sidebar-primary: #6E59A5;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #F5F6F8;
+  --sidebar-accent-foreground: #0A0A0A;
+  --sidebar-border: #E5E7EB;
+  --sidebar-ring: #6E59A5;
+  --map-grass: #FFFFFF;
+  --map-water: #33C3F0;
+  --map-mountain: #A0A0A0;
+  --map-road: #000000;
+  --map-forest: #2D5F3E;
+  --map-city: #8B4513;
+}
+
+.dark {
+  --background: #1C1823;
+  --foreground: #EDE9FE;
+  --card: #222033;
+  --card-foreground: #EDE9FE;
+  --popover: #222033;
+  --popover-foreground: #EDE9FE;
+  --primary: #8E75D1;
+  --primary-foreground: #1C1823;
+  --secondary: #2E2A3A;
+  --secondary-foreground: #EDE9FE;
+  --muted: #2E2A3A;
+  --muted-foreground: #9CA3AF;
+  --accent: #1D9BF0;
+  --accent-foreground: #FFFFFF;
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
+  --border: #2E2A3A;
+  --input: #2E2A3A;
+  --ring: #8E75D1;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --primary-purple: #8E75D1;
+  --primary-purple-light: #2E2A3A;
+  --primary-purple-dark: #B09FE0;
+  --accent-blue: #1D9BF0;
+  --accent-pink: #BE3ED5;
+  --character-blue: #60A5FA;
+  --character-blue-light: #1E3A5F;
+  --asset-green: #34D399;
+  --asset-green-light: #1E4D3A;
+  --scene-pink: #F472B6;
+  --scene-pink-light: #4A1E3A;
+  --sidebar: #222033;
+  --sidebar-foreground: #EDE9FE;
+  --sidebar-primary: #8E75D1;
+  --sidebar-primary-foreground: #1C1823;
+  --sidebar-accent: #2E2A3A;
+  --sidebar-accent-foreground: #EDE9FE;
+  --sidebar-border: #2E2A3A;
+  --sidebar-ring: #8E75D1;
+  --map-grass: #2E2A3A;
+  --map-water: #4DAED9;
+  --map-mountain: #B5B5B5;
+  --map-road: #000000;
+  --map-forest: #3D7F5E;
+  --map-city: #A65A2E;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-character-blue: var(--character-blue);
+  --color-character-blue-light: var(--character-blue-light);
+  --color-asset-green: var(--asset-green);
+  --color-asset-green-light: var(--asset-green-light);
+  --color-scene-pink: var(--scene-pink);
+  --color-scene-pink-light: var(--scene-pink-light);
+  --color-map-grass: var(--map-grass);
+  --color-map-water: var(--map-water);
+  --color-map-mountain: var(--map-mountain);
+  --color-map-road: var(--map-road);
+  --color-map-forest: var(--map-forest);
+  --color-map-city: var(--map-city);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/**
+ * Base typography. This is not applied to elements which have an ancestor with a Tailwind text class.
+ */
+@layer base {
+  :where(:not(:has([class*=" text-"]), :not(:has([class^="text-"])))) {
+    h1 {
+      font-size: var(--text-2xl);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h2 {
+      font-size: var(--text-xl);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h3 {
+      font-size: var(--text-lg);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h4 {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    p {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+
+    label {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    button {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    input {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+  }
+}
+
+html {
+  font-size: var(--font-size);
+}
+
+/* Hide scrollbar for horizontal scroll containers */
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}

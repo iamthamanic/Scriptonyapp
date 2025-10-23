@@ -1,0 +1,2696 @@
+import { useState, useRef, useEffect } from "react";
+import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2 } from "lucide-react";
+import { DndProvider, useDrag, useDrop } from "react-dnd";
+import { Button } from "../ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Badge } from "../ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../ui/alert-dialog";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
+import { Textarea } from "../ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Calendar } from "../ui/calendar";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { SceneCharacterBadge } from "../SceneCharacterBadge";
+import { WorldReferenceAutocomplete } from "../WorldReferenceAutocomplete";
+import { useColoredTags } from "../hooks/useColoredTags";
+import { ImageCropDialog } from "../ImageCropDialog";
+import { LoadingSpinner } from "../LoadingSpinner";
+import { FilmTimeline } from "../FilmTimeline";
+import { projectsApi, worldsApi, itemsApi } from "../../utils/api";
+import { toast } from "sonner@2.0.3";
+
+interface ProjectsPageProps {
+  selectedProjectId?: string;
+  onNavigate: (page: string, id?: string) => void;
+}
+
+export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProps) {
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
+  const [selectedProject, setSelectedProject] = useState(selectedProjectId);
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [inspirations, setInspirations] = useState<string[]>([""]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+  const [projectCoverImages, setProjectCoverImages] = useState<Record<string, string>>({});
+  
+  // API State
+  const [projects, setProjects] = useState<any[]>([]);
+  const [worlds, setWorlds] = useState<any[]>([]);
+  const [worldbuildingItems, setWorldbuildingItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newProjectTitle, setNewProjectTitle] = useState("");
+  const [newProjectType, setNewProjectType] = useState("film");
+  const [newProjectLogline, setNewProjectLogline] = useState("");
+  const [newProjectDuration, setNewProjectDuration] = useState("");
+  const [newProjectLinkedWorld, setNewProjectLinkedWorld] = useState<string | undefined>();
+  const [newProjectCoverImage, setNewProjectCoverImage] = useState<string | undefined>();
+  const newProjectCoverInputRef = useRef<HTMLInputElement>(null);
+  
+  // Delete Project States
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // Sync selectedProject state with selectedProjectId prop
+  useEffect(() => {
+    setSelectedProject(selectedProjectId);
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (selectedProjectId && projects.length > 0) {
+      const project = projects.find(p => p.id === selectedProjectId);
+      if (project && project.linkedWorldId) {
+        loadWorldbuildingItems(project.linkedWorldId);
+      }
+    }
+  }, [selectedProjectId, projects]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [projectsData, worldsData] = await Promise.all([
+        projectsApi.getAll(),
+        worldsApi.getAll(),
+      ]);
+      setProjects(projectsData);
+      setWorlds(worldsData);
+    } catch (error) {
+      console.error("Error loading data:", error);
+      toast.error("Fehler beim Laden der Daten");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadWorldbuildingItems = async (worldId: string) => {
+    try {
+      const items = await itemsApi.getAllForWorld(worldId);
+      setWorldbuildingItems(items);
+    } catch (error) {
+      console.error("Error loading worldbuilding items:", error);
+    }
+  };
+
+  const handleCreateProject = async () => {
+    if (!newProjectTitle.trim()) {
+      toast.error("Bitte gib einen Projekttitel ein");
+      return;
+    }
+
+    try {
+      const project = await projectsApi.create({
+        title: newProjectTitle,
+        logline: newProjectLogline,
+        type: newProjectType,
+        genre: selectedGenres.join(", "),
+        duration: newProjectDuration,
+        linkedWorldId: newProjectLinkedWorld,
+        inspirations,
+        coverImage: newProjectCoverImage,
+      });
+
+      setProjects([...projects, project]);
+      
+      // Store cover image in state if provided
+      if (newProjectCoverImage) {
+        setProjectCoverImages(prev => ({
+          ...prev,
+          [project.id]: newProjectCoverImage
+        }));
+      }
+      
+      setShowNewProjectDialog(false);
+      
+      // Reset form
+      setNewProjectTitle("");
+      setNewProjectType("film");
+      setNewProjectLogline("");
+      setNewProjectDuration("");
+      setNewProjectLinkedWorld(undefined);
+      setNewProjectCoverImage(undefined);
+      setSelectedGenres([]);
+      setInspirations([""]);
+      
+      toast.success("Projekt erfolgreich erstellt!");
+    } catch (error) {
+      console.error("Error creating project:", error);
+      toast.error("Fehler beim Erstellen des Projekts");
+    }
+  };
+
+  const handleNewProjectCoverChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewProjectCoverImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!deletePassword.trim()) {
+      toast.error("Bitte Passwort eingeben");
+      return;
+    }
+
+    if (!selectedProject) return;
+
+    setDeleteLoading(true);
+
+    try {
+      await projectsApi.delete(selectedProject, deletePassword);
+      
+      // Remove from local state
+      setProjects(projects.filter(p => p.id !== selectedProject));
+      
+      // Reset states
+      setShowDeleteDialog(false);
+      setDeletePassword("");
+      
+      toast.success("Projekt erfolgreich gelöscht");
+      
+      // Navigate back to projects list
+      onNavigate("projects");
+    } catch (error: any) {
+      console.error("Error deleting project:", error);
+      toast.error(error.message || "Fehler beim Löschen des Projekts");
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const currentProject = projects.find(p => p.id === selectedProjectId);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen pb-24 flex items-center justify-center">
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (selectedProjectId && currentProject) {
+    return (
+      <ProjectDetail 
+        project={currentProject} 
+        onBack={() => onNavigate("projects")}
+        coverImage={projectCoverImages[currentProject.id]}
+        onCoverImageChange={(imageUrl) => {
+          setProjectCoverImages(prev => ({
+            ...prev,
+            [currentProject.id]: imageUrl
+          }));
+        }}
+        worldbuildingItems={worldbuildingItems}
+        onUpdate={loadData}
+        onDelete={handleDeleteProject}
+        showDeleteDialog={showDeleteDialog}
+        setShowDeleteDialog={setShowDeleteDialog}
+        deletePassword={deletePassword}
+        setDeletePassword={setDeletePassword}
+        deleteLoading={deleteLoading}
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen pb-24">
+      {/* Header - Mobile optimiert */}
+      <div className="px-4 py-6 bg-gradient-to-b from-primary/5 to-transparent">
+        <div className="flex items-center gap-1.5 mb-4">
+          <div className="flex-1 relative min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <Input 
+              placeholder="Projekte durchsuchen..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 h-9"
+            />
+          </div>
+          
+          {/* Date Filter - Ultra Compact */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 w-[70px] justify-center text-left font-normal px-1.5 shrink-0"
+              >
+                <CalendarIcon className="size-3.5 shrink-0" />
+                {dateFrom ? (
+                  <span className="ml-0.5 text-[11px] truncate">
+                    {dateFrom.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })}
+                  </span>
+                ) : (
+                  <span className="ml-0.5 text-[11px] text-muted-foreground">Von</span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={dateFrom}
+                onSelect={setDateFrom}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 w-[70px] justify-center text-left font-normal px-1.5 shrink-0"
+              >
+                <CalendarIcon className="size-3.5 shrink-0" />
+                {dateTo ? (
+                  <span className="ml-0.5 text-[11px] truncate">
+                    {dateTo.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })}
+                  </span>
+                ) : (
+                  <span className="ml-0.5 text-[11px] text-muted-foreground">Bis</span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={dateTo}
+                onSelect={setDateTo}
+                initialFocus
+              />
+            </PopoverContent>
+          </Popover>
+
+          {(dateFrom || dateTo) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setDateFrom(undefined);
+                setDateTo(undefined);
+              }}
+              className="h-9 w-9 p-0 shrink-0"
+            >
+              <X className="size-3.5" />
+            </Button>
+          )}
+        </div>
+        
+        <Button 
+          onClick={() => setShowNewProjectDialog(true)}
+          size="sm"
+          className="h-9 w-full"
+        >
+          <Plus className="size-4 mr-1.5" />
+          Neues Projekt erstellen
+        </Button>
+      </div>
+
+      {/* Project Cards */}
+      <div className="px-4 space-y-3">
+        {(() => {
+          const filteredProjects = projects.filter(project => {
+            // Search filter
+            const matchesSearch = !searchQuery || 
+              project.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              project.logline?.toLowerCase().includes(searchQuery.toLowerCase());
+            
+            // Date filter
+            let matchesDate = true;
+            if (project.createdAt) {
+              const projectDate = new Date(project.createdAt);
+              if (dateFrom && projectDate < dateFrom) {
+                matchesDate = false;
+              }
+              if (dateTo && projectDate > dateTo) {
+                matchesDate = false;
+              }
+            }
+            
+            return matchesSearch && matchesDate;
+          });
+
+          if (filteredProjects.length === 0) {
+            return (
+              <Card>
+                <CardContent className="p-8 text-center text-muted-foreground">
+                  {projects.length === 0 
+                    ? "Noch keine Projekte. Erstelle dein erstes Projekt!" 
+                    : "Keine Projekte gefunden. Versuche andere Filter."}
+                </CardContent>
+              </Card>
+            );
+          }
+
+          return filteredProjects.map((project) => (
+            <Card
+              key={project.id}
+              className="active:scale-[0.98] transition-transform cursor-pointer overflow-hidden"
+              onClick={() => onNavigate("projects", project.id)}
+            >
+              <div 
+                className="aspect-[16/9] bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden"
+                style={projectCoverImages[project.id] ? { 
+                  backgroundImage: `url(${projectCoverImages[project.id]})`, 
+                  backgroundSize: 'cover', 
+                  backgroundPosition: 'center' 
+                } : {}}
+              >
+                {projectCoverImages[project.id] && (
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />
+                )}
+              </div>
+              <CardHeader className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <CardTitle className="text-base mb-2">{project.title}</CardTitle>
+                    <CardDescription className="text-sm line-clamp-2 mb-3">
+                      {project.logline}
+                    </CardDescription>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="secondary" className="text-xs">{project.type}</Badge>
+                      <Badge variant="outline" className="text-xs">{project.genre}</Badge>
+                      {project.lastEdited && (
+                        <Badge className="text-xs bg-primary/10 text-primary hover:bg-primary/15 border-0">
+                          {new Date(project.lastEdited).toLocaleDateString("de-DE", { 
+                            day: "2-digit", 
+                            month: "2-digit", 
+                            year: "numeric" 
+                          })}, {new Date(project.lastEdited).toLocaleTimeString("de-DE", { 
+                            hour: "2-digit", 
+                            minute: "2-digit" 
+                          })} Uhr
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                  <ChevronRight className="size-5 text-muted-foreground shrink-0 mt-1" />
+                </div>
+              </CardHeader>
+            </Card>
+          ));
+        })()}
+      </div>
+
+      {/* New Project Dialog */}
+      <Dialog open={showNewProjectDialog} onOpenChange={setShowNewProjectDialog}>
+        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-primary">Create New Project</DialogTitle>
+            <DialogDescription className="sr-only">
+              Erstelle ein neues Skript-Projekt
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-5 py-4">
+            {/* Project Title & Type */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="title">Project Title</Label>
+                <Input 
+                  id="title" 
+                  placeholder="Enter project title" 
+                  className="h-11" 
+                  value={newProjectTitle}
+                  onChange={(e) => setNewProjectTitle(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="type">Project Type</Label>
+                <Select value={newProjectType} onValueChange={setNewProjectType}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue placeholder="Film" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="film">Film</SelectItem>
+                    <SelectItem value="series">Serie</SelectItem>
+                    <SelectItem value="audio">Hörspiel</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Narrative Structure */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="narrative">Narrative Structure</Label>
+                <Info className="size-3.5 text-muted-foreground" />
+              </div>
+              <Select>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="None" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="three-act">Drei-Akt-Struktur</SelectItem>
+                  <SelectItem value="hero-journey">Heldenreise</SelectItem>
+                  <SelectItem value="non-linear">Nicht-linear</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">No specific narrative structure</p>
+            </div>
+
+            {/* Welt verknüpfen */}
+            <div className="space-y-2">
+              <Label htmlFor="world">Welt verknüpfen (optional)</Label>
+              <div className="flex gap-2">
+                <Select value={newProjectLinkedWorld} onValueChange={setNewProjectLinkedWorld}>
+                  <SelectTrigger className="h-11 flex-1">
+                    <SelectValue placeholder="Keine Welt verknüpfen" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Keine Welt verknüpfen</SelectItem>
+                    {worlds.map((world) => (
+                      <SelectItem key={world.id} value={world.id}>{world.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  className="h-11 w-11 shrink-0"
+                  onClick={() => onNavigate("worldbuilding")}
+                >
+                  <Plus className="size-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Verknüpfe dein Projekt mit einer Welt für umfangreiches Worldbuilding.</p>
+            </div>
+
+            {/* Logline */}
+            <div className="space-y-2">
+              <Label htmlFor="logline">Logline</Label>
+              <Textarea 
+                id="logline" 
+                placeholder="A brief summary of your project..." 
+                rows={3}
+                value={newProjectLogline}
+                onChange={(e) => setNewProjectLogline(e.target.value)}
+              />
+            </div>
+
+            {/* Genres */}
+            <div className="space-y-2">
+              <Label>Genres</Label>
+              <div className="flex flex-wrap gap-2">
+                {["Action", "Abenteuer", "Komödie", "Drama", "Fantasy", "Horror", "Mystery", "Romantik", "Science Fiction", "Slice of Life", "Übernatürlich", "Thriller"].map((genre) => (
+                  <button
+                    key={genre}
+                    onClick={() => {
+                      setSelectedGenres((prev) =>
+                        prev.includes(genre)
+                          ? prev.filter((g) => g !== genre)
+                          : [...prev, genre]
+                      );
+                    }}
+                    className={`px-4 py-2 rounded-lg border transition-all text-sm ${
+                      selectedGenres.includes(genre)
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background border-border hover:border-primary/50"
+                    }`}
+                  >
+                    {genre}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">Please select at least one genre</p>
+            </div>
+
+            {/* Duration */}
+            <div className="space-y-2">
+              <Label htmlFor="duration">Duration (minutes)</Label>
+              <Input 
+                id="duration" 
+                type="number" 
+                placeholder="Project duration in minutes" 
+                className="h-11"
+                value={newProjectDuration}
+                onChange={(e) => setNewProjectDuration(e.target.value)}
+              />
+            </div>
+
+            {/* Inspirations */}
+            <div className="space-y-2">
+              <Label>Inspirations</Label>
+              {inspirations.map((inspiration, index) => (
+                <div key={index} className="flex gap-2">
+                  <Input
+                    value={inspiration}
+                    onChange={(e) => {
+                      const newInspirations = [...inspirations];
+                      newInspirations[index] = e.target.value;
+                      setInspirations(newInspirations);
+                    }}
+                    placeholder={`Inspiration ${index + 1}`}
+                    className="h-11"
+                  />
+                  {inspirations.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setInspirations(inspirations.filter((_, i) => i !== index));
+                      }}
+                      className="h-11 w-11 shrink-0"
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+              <Button
+                variant="outline"
+                onClick={() => setInspirations([...inspirations, ""])}
+                className="h-9"
+              >
+                <Plus className="size-4 mr-2" />
+                Add Inspiration
+              </Button>
+            </div>
+
+            {/* Cover Image */}
+            <div className="space-y-2">
+              <Label>Cover Image (Optional)</Label>
+              <div 
+                onClick={() => newProjectCoverInputRef.current?.click()}
+                className="w-full border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary/50 transition-colors cursor-pointer relative overflow-hidden"
+              >
+                {newProjectCoverImage ? (
+                  <div className="relative">
+                    <img 
+                      src={newProjectCoverImage} 
+                      alt="Cover Preview" 
+                      className="w-full h-32 object-cover rounded-lg mb-2"
+                    />
+                    <div className="flex items-center justify-center gap-2">
+                      <p className="text-sm text-primary">✓ Bild hochgeladen</p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setNewProjectCoverImage(undefined);
+                        }}
+                        className="h-7 text-xs"
+                      >
+                        <X className="size-3 mr-1" />
+                        Entfernen
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center">
+                    <Upload className="size-6 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm mb-1">Upload Image</p>
+                    <p className="text-xs text-muted-foreground">Empfohlen: 1200×630px</p>
+                  </div>
+                )}
+              </div>
+              <input
+                ref={newProjectCoverInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleNewProjectCoverChange}
+                className="hidden"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setShowNewProjectDialog(false)} className="h-11">
+              Cancel
+            </Button>
+            <Button onClick={handleCreateProject} className="h-11">
+              Create Project
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+interface CharacterCardProps {
+  character: {
+    id: string;
+    name: string;
+    role: string;
+    description: string;
+    age?: string;
+    gender?: string;
+    species?: string;
+    backgroundStory?: string;
+    skills?: string;
+    strengths?: string;
+    weaknesses?: string;
+    characterTraits?: string;
+    image?: string;
+    lastEdited: Date;
+  };
+  onImageUpload: (characterId: string, imageUrl: string) => void;
+  onUpdateDetails: (characterId: string, updates: {
+    name: string;
+    role: string;
+    description: string;
+    age?: string;
+    gender?: string;
+    species?: string;
+    backgroundStory?: string;
+    skills?: string;
+    strengths?: string;
+    weaknesses?: string;
+    characterTraits?: string;
+  }) => void;
+}
+
+function CharacterCard({ character, onImageUpload, onUpdateDetails }: CharacterCardProps) {
+  const characterImageInputRef = useRef<HTMLInputElement>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedName, setEditedName] = useState(character.name);
+  const [editedRole, setEditedRole] = useState(character.role);
+  const [editedDescription, setEditedDescription] = useState(character.description);
+  const [editedAge, setEditedAge] = useState(character.age || "");
+  const [editedGender, setEditedGender] = useState(character.gender || "");
+  const [editedSpecies, setEditedSpecies] = useState(character.species || "");
+  const [editedBackgroundStory, setEditedBackgroundStory] = useState(character.backgroundStory || "");
+  const [editedSkills, setEditedSkills] = useState(character.skills || "");
+  const [editedStrengths, setEditedStrengths] = useState(character.strengths || "");
+  const [editedWeaknesses, setEditedWeaknesses] = useState(character.weaknesses || "");
+  const [editedCharacterTraits, setEditedCharacterTraits] = useState(character.characterTraits || "");
+  const [tempImageForCrop, setTempImageForCrop] = useState<string | undefined>(undefined);
+  const [showImageCropDialog, setShowImageCropDialog] = useState(false);
+
+  const handleImageClick = () => {
+    characterImageInputRef.current?.click();
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setTempImageForCrop(reader.result as string);
+        setShowImageCropDialog(true);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCroppedImage = (croppedImage: string) => {
+    onImageUpload(character.id, croppedImage);
+    setShowImageCropDialog(false);
+    setTempImageForCrop(undefined);
+  };
+
+  return (
+    <Card className="overflow-hidden">
+      {!isExpanded ? (
+        /* Collapsed View */
+        <div 
+          className="p-3 flex items-center gap-3 cursor-pointer hover:bg-muted/10 transition-colors"
+          onClick={() => setIsExpanded(true)}
+        >
+          {/* Profile Image Placeholder */}
+          <div className="flex-shrink-0 w-12 h-12 rounded-full overflow-hidden bg-muted/30 border-2 border-character-blue-light">
+            {character.image ? (
+              <img src={character.image} alt={character.name} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <User className="size-6 text-muted-foreground" />
+              </div>
+            )}
+          </div>
+
+          {/* Character Info */}
+          <div className="flex-1 min-w-0">
+            <CardTitle className="text-sm truncate text-character-blue mb-0.5">
+              @{character.name}
+            </CardTitle>
+            <Badge variant="secondary" className="w-fit text-xs mb-1 bg-character-blue-light text-character-blue border-0">{character.role}</Badge>
+            <CardDescription className="text-xs line-clamp-1">
+              {character.description}
+            </CardDescription>
+          </div>
+
+          {/* Expand Icon */}
+          <ChevronDown className="size-5 text-muted-foreground shrink-0" />
+        </div>
+      ) : (
+        /* Expanded View */
+        <CardHeader className="p-4">
+          {/* Button Row */}
+          <div className="flex items-center justify-end gap-2 mb-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (isEditing) {
+                  onUpdateDetails(character.id, {
+                    name: editedName,
+                    role: editedRole,
+                    description: editedDescription,
+                    age: editedAge,
+                    gender: editedGender,
+                    species: editedSpecies,
+                    backgroundStory: editedBackgroundStory,
+                    skills: editedSkills,
+                    strengths: editedStrengths,
+                    weaknesses: editedWeaknesses,
+                    characterTraits: editedCharacterTraits
+                  });
+                  setIsEditing(false);
+                } else {
+                  setEditedName(character.name);
+                  setEditedRole(character.role);
+                  setEditedDescription(character.description);
+                  setEditedAge(character.age || "");
+                  setEditedGender(character.gender || "");
+                  setEditedSpecies(character.species || "");
+                  setEditedBackgroundStory(character.backgroundStory || "");
+                  setEditedSkills(character.skills || "");
+                  setEditedStrengths(character.strengths || "");
+                  setEditedWeaknesses(character.weaknesses || "");
+                  setEditedCharacterTraits(character.characterTraits || "");
+                  setIsEditing(true);
+                }
+              }}
+              className="h-7 px-3 shrink-0 rounded-[10px] bg-[#e4e6ea] dark:bg-muted hover:bg-gray-300 dark:hover:bg-muted/80 text-[#646567] dark:text-foreground"
+            >
+              {isEditing ? (
+                <>
+                  <Save className="size-3 mr-1" />
+                  <span className="text-xs">Speichern</span>
+                </>
+              ) : (
+                <>
+                  <Edit2 className="size-3 mr-1" />
+                  <span className="text-xs">Bearbeiten</span>
+                </>
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsExpanded(false)}
+              className="h-7 px-2 shrink-0 rounded-[10px] bg-[#e4e6ea] dark:bg-muted hover:bg-gray-300 dark:hover:bg-muted/80 text-[#646567] dark:text-foreground"
+            >
+              <ChevronDown className="size-4 rotate-180" />
+            </Button>
+          </div>
+
+          {/* Profile and Name Row */}
+          <div className="flex items-center gap-3 mb-3">
+            {/* Profilbild - in beiden Modi anzeigen */}
+            <div className="shrink-0">
+              {character.image ? (
+                isEditing ? (
+                  <button 
+                    onClick={handleImageClick}
+                    className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-character-blue-light hover:border-character-blue transition-colors cursor-pointer group"
+                  >
+                    <img src={character.image} alt={character.name} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <Camera className="size-5 text-white" />
+                    </div>
+                  </button>
+                ) : (
+                  <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-character-blue-light">
+                    <img src={character.image} alt={character.name} className="w-full h-full object-cover" />
+                  </div>
+                )
+              ) : (
+                isEditing ? (
+                  <button 
+                    onClick={handleImageClick}
+                    className="w-16 h-16 rounded-full border-2 border-dashed border-border hover:border-primary/50 transition-colors cursor-pointer flex items-center justify-center bg-muted/10"
+                  >
+                    <Camera className="size-6 text-muted-foreground" />
+                  </button>
+                ) : (
+                  <div className="w-16 h-16 rounded-full border-2 border-character-blue-light flex items-center justify-center bg-muted/10">
+                    <User className="size-8 text-muted-foreground" />
+                  </div>
+                )
+              )}
+              {isEditing && (
+                <input
+                  ref={characterImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  className="hidden"
+                />
+              )}
+            </div>
+            
+            <div className="flex-1 min-w-0">
+              {isEditing ? (
+                <div className="flex items-center gap-2">
+                  {/* @ Symbol Box */}
+                  <div className="shrink-0 rounded-lg border border-border bg-card flex items-center justify-center px-3 h-8">
+                    <span className="text-base text-character-blue">@</span>
+                  </div>
+                  {/* Name Input Box */}
+                  <div className="flex-1 rounded-lg border border-border bg-character-blue-light flex items-center h-8 overflow-hidden">
+                    <Input
+                      value={editedName}
+                      onChange={(e) => setEditedName(e.target.value)}
+                      className="h-full border-0 rounded-none bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-character-blue px-3"
+                      placeholder="Charakter-Name"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  {/* @ Symbol Box */}
+                  <div className="shrink-0 rounded-lg border border-border bg-card flex items-center justify-center px-3 h-8">
+                    <span className="text-base text-character-blue">@</span>
+                  </div>
+                  {/* Name Display Box */}
+                  <div className="flex-1 rounded-lg border border-border bg-character-blue-light flex items-center px-3 h-8">
+                    <p className="text-base text-character-blue">{character.name}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        
+        {isEditing ? (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground font-bold">Rolle</Label>
+              <Input
+                value={editedRole}
+                onChange={(e) => setEditedRole(e.target.value)}
+                className="h-9 border-2"
+                placeholder="z.B. Protagonist, Antagonist, Unterstützer"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground font-bold">Beschreibung</Label>
+              <Textarea
+                value={editedDescription}
+                onChange={(e) => setEditedDescription(e.target.value)}
+                rows={2}
+                className="border-2"
+                placeholder="Kurze Zusammenfassung des Charakters..."
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground font-bold">Alter</Label>
+                <Input
+                  value={editedAge}
+                  onChange={(e) => setEditedAge(e.target.value)}
+                  className="h-9 border-2"
+                  placeholder="35"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground font-bold">Geschlecht</Label>
+                <Input
+                  value={editedGender}
+                  onChange={(e) => setEditedGender(e.target.value)}
+                  className="h-9 border-2"
+                  placeholder="Female"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground font-bold">Spezies</Label>
+                <Input
+                  value={editedSpecies}
+                  onChange={(e) => setEditedSpecies(e.target.value)}
+                  className="h-9 border-2"
+                  placeholder="Human"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground font-bold">Background Story</Label>
+              <Textarea
+                value={editedBackgroundStory}
+                onChange={(e) => setEditedBackgroundStory(e.target.value)}
+                rows={3}
+                className="border-2"
+                placeholder="Die Hintergrundgeschichte des Charakters - Herkunft, wichtige Ereignisse, Motivation..."
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground font-bold">Skills</Label>
+              <Textarea
+                value={editedSkills}
+                onChange={(e) => setEditedSkills(e.target.value)}
+                rows={2}
+                className="border-2"
+                placeholder="Fähigkeiten kommagetrennt (z.B. Piloting, Schwertkampf, Hacking)"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground font-bold">Stärken</Label>
+              <Textarea
+                value={editedStrengths}
+                onChange={(e) => setEditedStrengths(e.target.value)}
+                rows={2}
+                className="border-2"
+                placeholder="Was macht den Charakter stark? (z.B. Entscheidungsfreudig, Mutig, Intelligent)"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground font-bold">Schwächen</Label>
+              <Textarea
+                value={editedWeaknesses}
+                onChange={(e) => setEditedWeaknesses(e.target.value)}
+                rows={2}
+                className="border-2"
+                placeholder="Schwachstellen und Verletzlichkeiten (z.B. Impulsiv, Vertrauensselig, Sturköpfig)"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground font-bold">Charakter Traits</Label>
+              <Textarea
+                value={editedCharacterTraits}
+                onChange={(e) => setEditedCharacterTraits(e.target.value)}
+                rows={2}
+                className="border-2"
+                placeholder="Persönlichkeitsmerkmale (z.B. Mutig, Sarkastisch, Mitfühlend, Neugierig)"
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <Badge variant="secondary" className="w-fit">{character.role}</Badge>
+            <CardDescription className="text-sm">{character.description}</CardDescription>
+            {(character.age || character.gender || character.species) && (
+              <div className="flex gap-2 flex-wrap text-xs text-muted-foreground">
+                {character.age && <span>Alter: {character.age}</span>}
+                {character.gender && <span>• {character.gender}</span>}
+                {character.species && <span>• {character.species}</span>}
+              </div>
+            )}
+            {character.backgroundStory && (
+              <div className="mt-2">
+                <p className="text-xs font-bold mb-1">Background:</p>
+                <CardDescription className="text-xs">{character.backgroundStory}</CardDescription>
+              </div>
+            )}
+            {character.skills && (
+              <div className="mt-2">
+                <p className="text-xs font-bold mb-1">Skills:</p>
+                <CardDescription className="text-xs">{character.skills}</CardDescription>
+              </div>
+            )}
+            {character.strengths && (
+              <div className="mt-2">
+                <p className="text-xs font-bold mb-1">Stärken:</p>
+                <CardDescription className="text-xs">{character.strengths}</CardDescription>
+              </div>
+            )}
+            {character.weaknesses && (
+              <div className="mt-2">
+                <p className="text-xs font-bold mb-1">Schwächen:</p>
+                <CardDescription className="text-xs">{character.weaknesses}</CardDescription>
+              </div>
+            )}
+            {character.characterTraits && (
+              <div className="mt-2">
+                <p className="text-xs font-bold mb-1">Traits:</p>
+                <CardDescription className="text-xs">{character.characterTraits}</CardDescription>
+              </div>
+            )}
+          </div>
+        )}
+
+          <Badge className="text-xs bg-primary/10 text-primary hover:bg-primary/15 border-0 w-fit">
+            {character.lastEdited.toLocaleDateString("de-DE", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric"
+            })}, {character.lastEdited.toLocaleTimeString("de-DE", {
+              hour: "2-digit",
+              minute: "2-digit"
+            })} Uhr
+          </Badge>
+        </CardHeader>
+      )}
+
+      {/* Image Crop Dialog */}
+      {showImageCropDialog && tempImageForCrop && (
+        <ImageCropDialog
+          image={tempImageForCrop}
+          onComplete={handleCroppedImage}
+          onCancel={() => {
+            setShowImageCropDialog(false);
+            setTempImageForCrop(undefined);
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+interface DraggableSceneProps {
+  scene: {
+    id: string;
+    number: number;
+    title: string;
+    description: string;
+    lastEdited: Date;
+    image?: string;
+    mentionedCharacters?: string[];
+    worldReferences?: string[];
+  };
+  index: number;
+  moveScene: (dragIndex: number, hoverIndex: number) => void;
+  onImageUpload: (sceneId: string, imageUrl: string) => void;
+  onUpdateDetails: (sceneId: string, title: string, description: string) => void;
+  characters: Array<{
+    id: string;
+    name: string;
+    role: string;
+    description: string;
+    age?: string;
+    gender?: string;
+    species?: string;
+    backgroundStory?: string;
+    skills?: string;
+    strengths?: string;
+    weaknesses?: string;
+    characterTraits?: string;
+    image?: string;
+    lastEdited: Date;
+  }>;
+  worldItems: Array<{
+    id: string;
+    name: string;
+    category: string;
+    categoryType: string;
+  }>;
+  linkedWorldId?: string;
+}
+
+function DraggableScene({ scene, index, moveScene, onImageUpload, onUpdateDetails, characters, worldItems, linkedWorldId }: DraggableSceneProps) {
+  const sceneImageInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedTitle, setEditedTitle] = useState(scene.title);
+  const [editedDescription, setEditedDescription] = useState(scene.description);
+  
+  // Autocomplete states
+  const [showAutocomplete, setShowAutocomplete] = useState(false);
+  const [autocompleteSearch, setAutocompleteSearch] = useState("");
+  const [autocompletePosition, setAutocompletePosition] = useState({ top: 0, left: 0 });
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [autocompleteType, setAutocompleteType] = useState<'character' | 'world'>('character');
+
+  // Use colored tags hook
+  const { colorizeText } = useColoredTags({
+    characters: characters.map(c => ({ id: c.id, name: c.name })),
+    assets: worldItems,
+    scenes: []
+  });
+
+  // Extract tagged characters from description
+  const getTaggedCharacters = (text: string) => {
+    // Match @CharacterName or @Character Name (with spaces)
+    const matches = text.match(/@([A-Za-z]+(\s+[A-Za-z]+)*)/g) || [];
+    const taggedNames = matches.map(m => m.substring(1)); // Remove the @
+    return characters.filter(c => taggedNames.includes(c.name));
+  };
+
+  const taggedCharacters = getTaggedCharacters(editedDescription);
+
+  // Dynamic placeholder
+  const textareaPlaceholder = linkedWorldId 
+    ? "Szenen-Beschreibung (nutze @ für Charaktere, / für World-Items)"
+    : "Szenen-Beschreibung (nutze @ um Charaktere zu taggen)";
+
+  const [{ handlerId }, drop] = useDrop({
+    accept: "SCENE",
+    collect(monitor) {
+      return {
+        handlerId: monitor.getHandlerId(),
+      };
+    },
+    hover(item: { index: number }, monitor) {
+      if (!ref.current) {
+        return;
+      }
+      const dragIndex = item.index;
+      const hoverIndex = index;
+
+      if (dragIndex === hoverIndex) {
+        return;
+      }
+
+      const hoverBoundingRect = ref.current?.getBoundingClientRect();
+      const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
+      const clientOffset = monitor.getClientOffset();
+      const hoverClientY = clientOffset!.y - hoverBoundingRect.top;
+
+      if (dragIndex < hoverIndex && hoverClientY < hoverMiddleY) {
+        return;
+      }
+
+      if (dragIndex > hoverIndex && hoverClientY > hoverMiddleY) {
+        return;
+      }
+
+      moveScene(dragIndex, hoverIndex);
+      item.index = hoverIndex;
+    },
+  });
+
+  const [{ isDragging }, drag, preview] = useDrag({
+    type: "SCENE",
+    item: () => {
+      return { id: scene.id, index };
+    },
+    collect: (monitor) => ({
+      isDragging: monitor.isDragging(),
+    }),
+  });
+
+  drag(drop(ref));
+
+  const handleImageClick = () => {
+    sceneImageInputRef.current?.click();
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        onImageUpload(scene.id, reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDescriptionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart;
+    setEditedDescription(value);
+    setCursorPosition(cursorPos);
+
+    // Check if @ was just typed (for characters)
+    const textBeforeCursor = value.substring(0, cursorPos);
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+    
+    // Determine which is more recent: @ or /
+    const useAtAutocomplete = lastAtIndex > lastSlashIndex;
+    const useSlashAutocomplete = lastSlashIndex > lastAtIndex && linkedWorldId;
+    
+    if (useAtAutocomplete && lastAtIndex !== -1) {
+      const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+      // Check if there's no space after @
+      if (!textAfterAt.includes(' ') && textAfterAt.length >= 0) {
+        setAutocompleteSearch(textAfterAt);
+        setAutocompleteType('character');
+        setShowAutocomplete(true);
+        
+        // Calculate position - directly below the cursor position
+        if (textareaRef.current) {
+          const textarea = textareaRef.current;
+          const rect = textarea.getBoundingClientRect();
+          
+          // Create a temporary div to measure text position
+          const tempDiv = document.createElement('div');
+          const computedStyle = window.getComputedStyle(textarea);
+          
+          // Copy relevant styles
+          tempDiv.style.font = computedStyle.font;
+          tempDiv.style.fontSize = computedStyle.fontSize;
+          tempDiv.style.fontFamily = computedStyle.fontFamily;
+          tempDiv.style.padding = computedStyle.padding;
+          tempDiv.style.border = computedStyle.border;
+          tempDiv.style.lineHeight = computedStyle.lineHeight;
+          tempDiv.style.whiteSpace = 'pre-wrap';
+          tempDiv.style.wordWrap = 'break-word';
+          tempDiv.style.position = 'absolute';
+          tempDiv.style.visibility = 'hidden';
+          tempDiv.style.width = rect.width + 'px';
+          
+          // Add text up to cursor
+          tempDiv.textContent = textBeforeCursor;
+          document.body.appendChild(tempDiv);
+          
+          const tempRect = tempDiv.getBoundingClientRect();
+          document.body.removeChild(tempDiv);
+          
+          setAutocompletePosition({
+            top: rect.top + tempRect.height - textarea.scrollTop,
+            left: rect.left + 10
+          });
+        }
+      } else {
+        setShowAutocomplete(false);
+      }
+    } else if (useSlashAutocomplete && lastSlashIndex !== -1) {
+      const textAfterSlash = textBeforeCursor.substring(lastSlashIndex + 1);
+      // Check if there's no space after /
+      if (!textAfterSlash.includes(' ') && textAfterSlash.length >= 0) {
+        setAutocompleteSearch(textAfterSlash);
+        setAutocompleteType('world');
+        setShowAutocomplete(true);
+        
+        // Calculate position
+        if (textareaRef.current) {
+          const textarea = textareaRef.current;
+          const rect = textarea.getBoundingClientRect();
+          
+          const tempDiv = document.createElement('div');
+          const computedStyle = window.getComputedStyle(textarea);
+          
+          tempDiv.style.font = computedStyle.font;
+          tempDiv.style.fontSize = computedStyle.fontSize;
+          tempDiv.style.fontFamily = computedStyle.fontFamily;
+          tempDiv.style.padding = computedStyle.padding;
+          tempDiv.style.border = computedStyle.border;
+          tempDiv.style.lineHeight = computedStyle.lineHeight;
+          tempDiv.style.whiteSpace = 'pre-wrap';
+          tempDiv.style.wordWrap = 'break-word';
+          tempDiv.style.position = 'absolute';
+          tempDiv.style.visibility = 'hidden';
+          tempDiv.style.width = rect.width + 'px';
+          
+          tempDiv.textContent = textBeforeCursor;
+          document.body.appendChild(tempDiv);
+          
+          const tempRect = tempDiv.getBoundingClientRect();
+          document.body.removeChild(tempDiv);
+          
+          setAutocompletePosition({
+            top: rect.top + tempRect.height - textarea.scrollTop,
+            left: rect.left + 10
+          });
+        }
+      } else {
+        setShowAutocomplete(false);
+      }
+    } else {
+      setShowAutocomplete(false);
+    }
+  };
+
+  const insertCharacterTag = (characterName: string) => {
+    const textBeforeCursor = editedDescription.substring(0, cursorPosition);
+    const textAfterCursor = editedDescription.substring(cursorPosition);
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    
+    // Create the full tag with the original name (including spaces)
+    const tag = '@' + characterName;
+    
+    const newDescription = 
+      editedDescription.substring(0, lastAtIndex) + 
+      tag + ' ' + 
+      textAfterCursor;
+    
+    setEditedDescription(newDescription);
+    setShowAutocomplete(false);
+    
+    // Set cursor position after the inserted tag
+    setTimeout(() => {
+      if (textareaRef.current) {
+        const newCursorPos = lastAtIndex + tag.length + 1; // +1 for the space
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+      }
+    }, 0);
+  };
+
+  const insertWorldTag = (itemName: string) => {
+    const textBeforeCursor = editedDescription.substring(0, cursorPosition);
+    const textAfterCursor = editedDescription.substring(cursorPosition);
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/');
+    
+    const tag = '/' + itemName;
+    
+    const newDescription = 
+      editedDescription.substring(0, lastSlashIndex) + 
+      tag + ' ' + 
+      textAfterCursor;
+    
+    setEditedDescription(newDescription);
+    setShowAutocomplete(false);
+    
+    setTimeout(() => {
+      if (textareaRef.current) {
+        const newCursorPos = lastSlashIndex + tag.length + 1;
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+      }
+    }, 0);
+  };
+
+  const filteredCharacters = characters.filter(c => 
+    c.name.toLowerCase().includes(autocompleteSearch.toLowerCase())
+  );
+
+  return (
+    <div
+      ref={ref}
+      data-handler-id={handlerId}
+      style={{ opacity: isDragging ? 0.5 : 1 }}
+    >
+      <Card className="active:scale-[0.98] transition-transform overflow-hidden">
+        <div className="flex">
+          {/* Drag Handle */}
+          <div className="flex-shrink-0 w-10 flex items-center justify-center bg-muted/30 cursor-grab active:cursor-grabbing">
+            <GripVertical className="size-5 text-muted-foreground" />
+          </div>
+
+          {/* Scene Content */}
+          <div className="flex-1 min-w-0">
+            {!isExpanded ? (
+              /* Collapsed View with Thumbnail */
+              <div 
+                className="p-3 flex items-center gap-3 cursor-pointer hover:bg-muted/10 transition-colors"
+                onClick={() => setIsExpanded(true)}
+              >
+                {/* Thumbnail */}
+                <div className="flex-shrink-0 w-20 h-14 rounded-lg overflow-hidden bg-muted/30">
+                  {scene.image ? (
+                    <img src={scene.image} alt={scene.title} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <ImageIcon className="size-5 text-muted-foreground" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Scene Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    {/* # Symbol Box */}
+                    <div className="shrink-0 rounded-lg border border-border bg-card flex items-center justify-center px-3 h-8">
+                      <span className="text-base text-scene-pink">#{scene.number}</span>
+                    </div>
+                    {/* Title Box */}
+                    <div className="flex-1 rounded-lg border border-border bg-scene-pink-light flex items-center px-3 h-8">
+                      <p className="text-base text-scene-pink truncate">{scene.title}</p>
+                    </div>
+                  </div>
+                  <CardDescription className="text-xs line-clamp-1">
+                    {colorizeText(scene.description).map((part, i) => {
+                      if (part.type === 'character') {
+                        return <span key={i} className="text-character-blue">{part.text}</span>;
+                      } else if (part.type === 'asset') {
+                        return <span key={i} className="text-asset-green">{part.text}</span>;
+                      } else if (part.type === 'scene') {
+                        return <span key={i} className="text-scene-pink">{part.text}</span>;
+                      }
+                      return <span key={i}>{part.text}</span>;
+                    })}
+                  </CardDescription>
+                </div>
+
+                {/* Expand Icon */}
+                <ChevronDown className="size-5 text-muted-foreground shrink-0" />
+              </div>
+            ) : (
+              /* Expanded View */
+              <CardHeader className="p-4">
+                {/* Button Row */}
+                <div className="flex items-center justify-end gap-2 mb-3">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (isEditing) {
+                        onUpdateDetails(scene.id, editedTitle, editedDescription);
+                        setIsEditing(false);
+                      } else {
+                        setEditedTitle(scene.title);
+                        setEditedDescription(scene.description);
+                        setIsEditing(true);
+                      }
+                    }}
+                    className="h-7 px-3 shrink-0 rounded-[10px] bg-[#e4e6ea] dark:bg-muted hover:bg-gray-300 dark:hover:bg-muted/80 text-[#646567] dark:text-foreground"
+                  >
+                    {isEditing ? (
+                      <>
+                        <Save className="size-3 mr-1" />
+                        <span className="text-xs">Speichern</span>
+                      </>
+                    ) : (
+                      <>
+                        <Edit2 className="size-3 mr-1" />
+                        <span className="text-xs">Bearbeiten</span>
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsExpanded(false)}
+                    className="h-7 px-2 shrink-0 rounded-[10px] bg-[#e4e6ea] dark:bg-muted hover:bg-gray-300 dark:hover:bg-muted/80 text-[#646567] dark:text-foreground"
+                  >
+                    <ChevronDown className="size-4 rotate-180" />
+                  </Button>
+                </div>
+
+                {/* Scene Number and Title Row */}
+                <div className="flex items-center gap-2 mb-3">
+                  {isEditing ? (
+                    <>
+                      {/* # Symbol Box */}
+                      <div className="shrink-0 rounded-lg border border-border bg-card flex items-center justify-center px-3 h-8">
+                        <span className="text-base text-scene-pink">#{scene.number}</span>
+                      </div>
+                      {/* Title Input Box */}
+                      <div className="flex-1 rounded-lg border border-border bg-scene-pink-light flex items-center h-8 overflow-hidden">
+                        <Input
+                          value={editedTitle}
+                          onChange={(e) => setEditedTitle(e.target.value)}
+                          className="h-full border-0 rounded-none bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 text-scene-pink px-3"
+                          placeholder="Szenen-Titel"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* # Symbol Box */}
+                      <div className="shrink-0 rounded-lg border border-border bg-card flex items-center justify-center px-3 h-8">
+                        <span className="text-base text-scene-pink">#{scene.number}</span>
+                      </div>
+                      {/* Title Display Box */}
+                      <div className="flex-1 rounded-lg border border-border bg-scene-pink-light flex items-center px-3 h-8">
+                        <p className="text-base text-scene-pink">{scene.title}</p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              
+              {isEditing ? (
+                <div className="relative mb-3">
+                  {/* Colored Text Overlay */}
+                  <div 
+                    className="absolute left-3 top-2 pointer-events-none text-sm whitespace-pre-wrap select-none z-10 pr-6 pb-4"
+                    style={{ 
+                      width: 'calc(100% - 24px)',
+                      lineHeight: '1.5',
+                      fontFamily: 'inherit'
+                    }}
+                    aria-hidden="true"
+                  >
+                    {editedDescription ? colorizeText(editedDescription).map((part, index) => {
+                      if (part.type === 'character') {
+                        return <span key={index} style={{ color: 'var(--character-blue)', fontWeight: 500 }}>{part.text}</span>;
+                      } else if (part.type === 'asset') {
+                        return <span key={index} style={{ color: 'var(--asset-green)', fontWeight: 500 }}>{part.text}</span>;
+                      } else if (part.type === 'scene') {
+                        return <span key={index} style={{ color: 'var(--scene-pink)', fontWeight: 500 }}>{part.text}</span>;
+                      }
+                      return <span key={index}>{part.text}</span>;
+                    }) : null}
+                  </div>
+                  <Textarea
+                    ref={textareaRef}
+                    value={editedDescription}
+                    onChange={handleDescriptionChange}
+                    className="mb-0 relative text-transparent caret-foreground"
+                    style={{ caretColor: 'var(--foreground)' }}
+                    rows={3}
+                    placeholder={textareaPlaceholder}
+                  />
+                  {showAutocomplete && autocompleteType === 'character' && filteredCharacters.length > 0 && (
+                    <div 
+                      className="absolute z-50 bg-popover border border-border rounded-lg shadow-lg overflow-hidden"
+                      style={{
+                        position: 'fixed',
+                        top: `${autocompletePosition.top}px`,
+                        left: `${autocompletePosition.left}px`,
+                        maxWidth: '300px'
+                      }}
+                    >
+                      <div className="p-1">
+                        <div className="px-2 py-1.5 text-xs text-character-blue border-b border-border mb-1">
+                          @ Charaktere
+                        </div>
+                        {filteredCharacters.slice(0, 5).map(character => (
+                          <button
+                            key={character.id}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              insertCharacterTag(character.name);
+                            }}
+                            className="w-full text-left px-3 py-2 hover:bg-character-blue-light rounded-md flex items-center gap-2 transition-colors"
+                          >
+                            {character.image ? (
+                              <img src={character.image} alt={character.name} className="w-8 h-8 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-character-blue-light flex items-center justify-center">
+                                <AtSign className="size-4 text-character-blue" />
+                              </div>
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm truncate text-character-blue">
+                                @{character.name}
+                              </p>
+                              <p className="text-xs text-muted-foreground truncate">{character.role}</p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {showAutocomplete && autocompleteType === 'world' && linkedWorldId && (
+                    <WorldReferenceAutocomplete
+                      items={worldItems}
+                      search={autocompleteSearch}
+                      position={autocompletePosition}
+                      onSelect={insertWorldTag}
+                    />
+                  )}
+                </div>
+              ) : (
+                <>
+                  <CardDescription className="text-sm mb-3">
+                    {colorizeText(scene.description).map((part, i) => {
+                      if (part.type === 'character') {
+                        return <span key={i} className="text-character-blue">{part.text}</span>;
+                      } else if (part.type === 'asset') {
+                        return <span key={i} className="text-asset-green">{part.text}</span>;
+                      } else if (part.type === 'scene') {
+                        return <span key={i} className="text-scene-pink">{part.text}</span>;
+                      }
+                      return <span key={i}>{part.text}</span>;
+                    })}
+                  </CardDescription>
+                  {taggedCharacters.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {taggedCharacters.map(character => (
+                        <SceneCharacterBadge key={character.id} character={character} />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+              
+              {/* Scene Image & Tagged Characters */}
+              <div className="flex gap-3 mb-3">
+                {/* Scene Image */}
+                <div className="flex-1 max-w-[75%]">
+                  <div
+                    onClick={handleImageClick}
+                    className="relative aspect-video rounded-lg overflow-hidden bg-muted/30 cursor-pointer group"
+                  >
+                    {scene.image ? (
+                      <>
+                        <img src={scene.image} alt={scene.title} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Camera className="size-6 text-white" />
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground group-hover:text-primary transition-colors">
+                        <ImageIcon className="size-6 mb-1" />
+                        <p className="text-[10px]">Bild hochladen</p>
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    ref={sceneImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageChange}
+                    className="hidden"
+                  />
+                </div>
+
+                {/* Tagged Characters */}
+                {taggedCharacters.length > 0 && (
+                  <div className="flex-1 flex flex-col gap-2">
+                    <p className="text-xs text-muted-foreground">Charaktere in dieser Szene:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {taggedCharacters.map(character => (
+                        <div key={character.id} className="flex items-center gap-2 bg-primary/10 rounded-lg p-2">
+                          {character.image ? (
+                            <img src={character.image} alt={character.name} className="w-10 h-10 rounded-full object-cover border-2 border-primary/30" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center border-2 border-primary/30">
+                              <AtSign className="size-5 text-primary" />
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs truncate">{character.name}</p>
+                            <p className="text-[10px] text-muted-foreground truncate">{character.role}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+                <Badge className="text-xs bg-primary/10 text-primary hover:bg-primary/15 border-0 w-fit">
+                  {scene.lastEdited.toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric"
+                  })}, {scene.lastEdited.toLocaleTimeString("de-DE", {
+                    hour: "2-digit",
+                    minute: "2-digit"
+                  })} Uhr
+                </Badge>
+              </CardHeader>
+            )}
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+interface ProjectDetailProps {
+  project: any;
+  onBack: () => void;
+  coverImage?: string;
+  onCoverImageChange: (imageUrl: string) => void;
+  worldbuildingItems: Array<{ id: string; name: string; category: string; categoryType: string }>;
+  onUpdate?: () => void;
+  onDelete: () => Promise<void>;
+  showDeleteDialog: boolean;
+  setShowDeleteDialog: (show: boolean) => void;
+  deletePassword: string;
+  setDeletePassword: (password: string) => void;
+  deleteLoading: boolean;
+}
+
+function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading }: ProjectDetailProps) {
+  const [showNewScene, setShowNewScene] = useState(false);
+  const [showNewCharacter, setShowNewCharacter] = useState(false);
+  const [isEditingInfo, setIsEditingInfo] = useState(false);
+  const [editedTitle, setEditedTitle] = useState(project.title);
+  const [editedLogline, setEditedLogline] = useState(project.logline);
+  const [editedType, setEditedType] = useState(project.type);
+  const [editedGenre, setEditedGenre] = useState(project.genre);
+  const [editedDuration, setEditedDuration] = useState(project.duration);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Scenes State with localStorage persistence
+  const getInitialScenes = () => {
+    const storageKey = `project-${project.id}-scenes`;
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Convert date strings back to Date objects
+        return parsed.map((scene: any) => ({
+          ...scene,
+          lastEdited: new Date(scene.lastEdited)
+        }));
+      } catch (e) {
+        console.error('Error loading scenes from localStorage:', e);
+      }
+    }
+    // Default scenes
+    return [
+      { 
+        id: "1", 
+        number: 1, 
+        title: "Opening Scene", 
+        description: "The spaceship launches from Earth with @Captain Sarah Chen at the helm, heading towards /Mount Silkar", 
+        lastEdited: new Date("2025-09-29T11:20:00"), 
+        image: undefined as string | undefined,
+        mentionedCharacters: ["1"] as string[], // IDs der erwähnten Charaktere
+        worldReferences: ["1"] as string[], // IDs der erwähnten World-Items
+      },
+      { 
+        id: "2", 
+        number: 2, 
+        title: "First Contact", 
+        description: "The crew encounters an alien signal. @Dr. Marcus Webb analyzes the data near /Delta River", 
+        lastEdited: new Date("2025-09-30T08:45:00"), 
+        image: undefined as string | undefined,
+        mentionedCharacters: ["2"] as string[],
+        worldReferences: ["2"] as string[],
+      },
+    ];
+  };
+
+  const [scenesState, setScenesState] = useState(getInitialScenes);
+
+  // Save scenes to localStorage whenever they change
+  useEffect(() => {
+    const storageKey = `project-${project.id}-scenes`;
+    localStorage.setItem(storageKey, JSON.stringify(scenesState));
+  }, [scenesState, project.id]);
+  
+  // New Scene Dialog States
+  const [newSceneTitle, setNewSceneTitle] = useState("");
+  const [newSceneDescription, setNewSceneDescription] = useState("");
+  const [newSceneNumber, setNewSceneNumber] = useState("");
+  const [newSceneImage, setNewSceneImage] = useState<string | undefined>(undefined);
+  const newSceneImageInputRef = useRef<HTMLInputElement>(null);
+  
+  // Conflict Dialog States
+  const [showConflictDialog, setShowConflictDialog] = useState(false);
+  const [conflictSceneData, setConflictSceneData] = useState<any>(null);
+
+  const handleCoverClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const imageUrl = reader.result as string;
+        onCoverImageChange(imageUrl);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const moveScene = (dragIndex: number, hoverIndex: number) => {
+    const dragScene = scenesState[dragIndex];
+    const newScenes = [...scenesState];
+    newScenes.splice(dragIndex, 1);
+    newScenes.splice(hoverIndex, 0, dragScene);
+    
+    // Renumber scenes
+    const renumbered = newScenes.map((scene, idx) => ({
+      ...scene,
+      number: idx + 1
+    }));
+    
+    setScenesState(renumbered);
+  };
+
+  const updateSceneImage = (sceneId: string, imageUrl: string) => {
+    setScenesState(prev => prev.map(scene => 
+      scene.id === sceneId ? { ...scene, image: imageUrl } : scene
+    ));
+  };
+
+  const updateSceneDetails = (sceneId: string, title: string, description: string) => {
+    setScenesState(prev => prev.map(scene => 
+      scene.id === sceneId ? { ...scene, title, description, lastEdited: new Date() } : scene
+    ));
+  };
+
+  const handleCreateScene = () => {
+    const targetNumber = parseInt(newSceneNumber) || scenesState.length + 1;
+    const existingScene = scenesState.find(s => s.number === targetNumber);
+    
+    const newScene = {
+      id: Date.now().toString(),
+      number: targetNumber,
+      title: newSceneTitle,
+      description: newSceneDescription,
+      image: newSceneImage,
+      lastEdited: new Date()
+    };
+
+    if (existingScene) {
+      // Conflict detected - show dialog
+      setConflictSceneData(newScene);
+      setShowConflictDialog(true);
+    } else {
+      // No conflict - insert directly
+      insertScene(newScene, "none");
+    }
+  };
+
+  const insertScene = (newScene: any, action: "up" | "down" | "none") => {
+    let updatedScenes = [...scenesState];
+    
+    if (action === "down") {
+      // Move existing scenes at this position and below down
+      updatedScenes = updatedScenes.map(scene => 
+        scene.number >= newScene.number ? { ...scene, number: scene.number + 1 } : scene
+      );
+    } else if (action === "up") {
+      // Move existing scenes at this position and above up
+      updatedScenes = updatedScenes.map(scene => 
+        scene.number <= newScene.number ? { ...scene, number: scene.number - 1 } : scene
+      );
+    }
+    
+    updatedScenes.push(newScene);
+    updatedScenes.sort((a, b) => a.number - b.number);
+    
+    // Renumber all scenes to ensure continuous numbering
+    const renumbered = updatedScenes.map((scene, idx) => ({
+      ...scene,
+      number: idx + 1
+    }));
+    
+    setScenesState(renumbered);
+    resetNewSceneForm();
+  };
+
+  const resetNewSceneForm = () => {
+    setShowNewScene(false);
+    setNewSceneTitle("");
+    setNewSceneDescription("");
+    setNewSceneNumber("");
+    setNewSceneImage(undefined);
+  };
+
+  const handleNewSceneImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewSceneImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Characters State with localStorage persistence
+  const getInitialCharacters = () => {
+    const storageKey = `project-${project.id}-characters`;
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Convert date strings back to Date objects
+        return parsed.map((char: any) => ({
+          ...char,
+          lastEdited: new Date(char.lastEdited)
+        }));
+      } catch (e) {
+        console.error('Error loading characters from localStorage:', e);
+      }
+    }
+    // Default characters
+    return [
+      { 
+        id: "1", 
+        name: "Captain Sarah Chen", 
+        role: "Protagonist", 
+        description: "A fearless space explorer leading the mission",
+        age: "35",
+        gender: "Female",
+        species: "Human",
+        backgroundStory: "Former military pilot who transitioned to deep space exploration",
+        skills: "Piloting, Leadership, Combat",
+        strengths: "Decisive, Brave, Strategic thinker",
+        weaknesses: "Impatient, Struggles with delegation",
+        characterTraits: "Determined, Protective, Charismatic",
+        image: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400" as string | undefined, 
+        lastEdited: new Date("2025-09-28T16:30:00") 
+      },
+      { 
+        id: "2", 
+        name: "Dr. Marcus Webb", 
+        role: "Supporting", 
+        description: "The ship's chief scientist and researcher",
+        age: "42",
+        gender: "Male",
+        species: "Human",
+        backgroundStory: "Renowned astrophysicist with multiple published papers",
+        skills: "Research, Analysis, Xenobiology",
+        strengths: "Intelligent, Methodical, Curious",
+        weaknesses: "Overly cautious, Socially awkward",
+        characterTraits: "Inquisitive, Analytical, Reserved",
+        image: "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=400" as string | undefined, 
+        lastEdited: new Date("2025-09-29T14:10:00") 
+      },
+    ];
+  };
+
+  const [charactersState, setCharactersState] = useState(getInitialCharacters);
+
+  // Save characters to localStorage whenever they change
+  useEffect(() => {
+    const storageKey = `project-${project.id}-characters`;
+    localStorage.setItem(storageKey, JSON.stringify(charactersState));
+  }, [charactersState, project.id]);
+
+  // New Character Dialog States
+  const [newCharacterName, setNewCharacterName] = useState("");
+  const [newCharacterRole, setNewCharacterRole] = useState("");
+  const [newCharacterDescription, setNewCharacterDescription] = useState("");
+  const [newCharacterAge, setNewCharacterAge] = useState("");
+  const [newCharacterGender, setNewCharacterGender] = useState("");
+  const [newCharacterSpecies, setNewCharacterSpecies] = useState("");
+  const [newCharacterBackgroundStory, setNewCharacterBackgroundStory] = useState("");
+  const [newCharacterSkills, setNewCharacterSkills] = useState("");
+  const [newCharacterStrengths, setNewCharacterStrengths] = useState("");
+  const [newCharacterWeaknesses, setNewCharacterWeaknesses] = useState("");
+  const [newCharacterTraits, setNewCharacterTraits] = useState("");
+  const [newCharacterImage, setNewCharacterImage] = useState<string | undefined>(undefined);
+  const [tempImageForCrop, setTempImageForCrop] = useState<string | undefined>(undefined);
+  const [showImageCropDialog, setShowImageCropDialog] = useState(false);
+  const newCharacterImageInputRef = useRef<HTMLInputElement>(null);
+
+  const updateCharacterImage = (characterId: string, imageUrl: string) => {
+    setCharactersState(prev => prev.map(character => 
+      character.id === characterId ? { ...character, image: imageUrl } : character
+    ));
+  };
+
+  const updateCharacterDetails = (characterId: string, updates: {
+    name: string;
+    role: string;
+    description: string;
+    age?: string;
+    gender?: string;
+    species?: string;
+    backgroundStory?: string;
+    skills?: string;
+    strengths?: string;
+    weaknesses?: string;
+    characterTraits?: string;
+  }) => {
+    setCharactersState(prev => prev.map(character => 
+      character.id === characterId ? { ...character, ...updates, lastEdited: new Date() } : character
+    ));
+  };
+
+  const handleCreateCharacter = () => {
+    const newCharacter = {
+      id: Date.now().toString(),
+      name: newCharacterName,
+      role: newCharacterRole,
+      description: newCharacterDescription,
+      age: newCharacterAge,
+      gender: newCharacterGender,
+      species: newCharacterSpecies,
+      backgroundStory: newCharacterBackgroundStory,
+      skills: newCharacterSkills,
+      strengths: newCharacterStrengths,
+      weaknesses: newCharacterWeaknesses,
+      characterTraits: newCharacterTraits,
+      image: newCharacterImage,
+      lastEdited: new Date()
+    };
+
+    setCharactersState(prev => [...prev, newCharacter]);
+    resetNewCharacterForm();
+  };
+
+  const resetNewCharacterForm = () => {
+    setShowNewCharacter(false);
+    setNewCharacterName("");
+    setNewCharacterRole("");
+    setNewCharacterDescription("");
+    setNewCharacterAge("");
+    setNewCharacterGender("");
+    setNewCharacterSpecies("");
+    setNewCharacterBackgroundStory("");
+    setNewCharacterSkills("");
+    setNewCharacterStrengths("");
+    setNewCharacterWeaknesses("");
+    setNewCharacterTraits("");
+    setNewCharacterImage(undefined);
+  };
+
+  const handleNewCharacterImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setTempImageForCrop(reader.result as string);
+        setShowImageCropDialog(true);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCroppedImage = (croppedImage: string) => {
+    setNewCharacterImage(croppedImage);
+    setShowImageCropDialog(false);
+    setTempImageForCrop(undefined);
+  };
+
+  return (
+    <div className="min-h-screen pb-24">
+      {/* Header with Cover - Full Width */}
+      <div className="relative group w-full">
+        <div 
+          onClick={handleCoverClick}
+          className="w-full aspect-[16/9] max-h-[200px] bg-gradient-to-br from-primary/20 to-accent/20 cursor-pointer relative overflow-hidden"
+          style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+        >
+          {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
+              <Camera className="size-6 text-primary" />
+            </div>
+          </div>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <Button 
+          variant="ghost" 
+          onClick={onBack} 
+          className="absolute top-4 left-4 backdrop-blur-sm bg-background/80 rounded-full h-9 px-3 z-10"
+        >
+          <ArrowLeft className="size-4 mr-1" />
+          Zurück
+        </Button>
+      </div>
+
+      {/* Project Info */}
+      <div className="px-4 py-6">
+        <Card className="mb-4">
+          <CardHeader className="p-4 flex flex-row items-center justify-between">
+            <CardTitle className="text-base">Projekt-Informationen</CardTitle>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (isEditingInfo) {
+                  // Save changes
+                  setIsEditingInfo(false);
+                } else {
+                  setIsEditingInfo(true);
+                }
+              }}
+              className="h-8 px-3 rounded-[10px] bg-[#e4e6ea] dark:bg-muted hover:bg-gray-300 dark:hover:bg-muted/80 text-[#646567] dark:text-foreground hover:text-primary"
+            >
+              {isEditingInfo ? (
+                <>
+                  <Save className="size-3.5 mr-1.5" />
+                  Speichern
+                </>
+              ) : (
+                <>
+                  <Edit2 className="size-3.5 mr-1.5" />
+                  Bearbeiten
+                </>
+              )}
+            </Button>
+          </CardHeader>
+          <CardContent className="p-4 pt-0 space-y-4">
+            {isEditingInfo ? (
+              <>
+                <div>
+                  <Label htmlFor="project-title" className="text-sm mb-2 block font-bold">Titel</Label>
+                  <Input
+                    id="project-title"
+                    value={editedTitle}
+                    onChange={(e) => setEditedTitle(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="project-logline" className="text-sm mb-2 block font-bold">Logline</Label>
+                  <Textarea
+                    id="project-logline"
+                    value={editedLogline}
+                    onChange={(e) => setEditedLogline(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label htmlFor="project-type" className="text-sm mb-2 block font-bold">Art</Label>
+                    <Select value={editedType} onValueChange={setEditedType}>
+                      <SelectTrigger id="project-type" className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Movie">Film</SelectItem>
+                        <SelectItem value="Series">Serie</SelectItem>
+                        <SelectItem value="Audio">Hörspiel</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="project-genre" className="text-sm mb-2 block font-bold">Genre</Label>
+                    <Select value={editedGenre} onValueChange={setEditedGenre}>
+                      <SelectTrigger id="project-genre" className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Action">Action</SelectItem>
+                        <SelectItem value="Comedy">Comedy</SelectItem>
+                        <SelectItem value="Drama">Drama</SelectItem>
+                        <SelectItem value="Sci-fi">Sci-fi</SelectItem>
+                        <SelectItem value="Horror">Horror</SelectItem>
+                        <SelectItem value="Romance">Romance</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="project-duration" className="text-sm mb-2 block font-bold">Dauer</Label>
+                    <Input
+                      id="project-duration"
+                      value={editedDuration}
+                      onChange={(e) => setEditedDuration(e.target.value)}
+                      placeholder="90 min"
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="project-world" className="text-sm mb-2 block font-bold">Verknüpfte Welt</Label>
+                  <div className="flex gap-2">
+                    <Select value={project.linkedWorldId || "none"}>
+                      <SelectTrigger id="project-world" className="h-9 flex-1">
+                        <SelectValue placeholder="Keine Welt verknüpft" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Keine Welt verknüpft</SelectItem>
+                        <SelectItem value="1">Kontinent Silkat</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" title="Neue Welt erstellen">
+                      <Plus className="size-4" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    {project.linkedWorldId ? "Projekt greift auf alle Welt-Informationen zu" : "Verknüpfe eine Welt für Worldbuilding-Referenzen"}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <p className="text-sm font-bold mb-1">Titel</p>
+                  <h1 className="mb-0">{editedTitle}</h1>
+                </div>
+                <div>
+                  <p className="text-sm font-bold mb-1">Logline</p>
+                  <p className="text-sm text-muted-foreground">{editedLogline}</p>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-sm font-bold mb-1">Art</p>
+                    <p className="text-sm">{editedType}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold mb-1">Genre</p>
+                    <p className="text-sm">{editedGenre}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold mb-1">Dauer</p>
+                    <p className="text-sm">{editedDuration}</p>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-bold mb-1">Verknüpfte Welt</p>
+                  {project.linkedWorldId ? (
+                    <div className="flex items-center gap-2">
+                      <Globe className="size-4 text-primary" />
+                      <p className="text-sm">Kontinent Silkat</p>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Keine Welt verknüpft</p>
+                  )}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Danger Zone - Collapsible */}
+        <Collapsible defaultOpen={false}>
+          <Card className="border-destructive/50 bg-destructive/5">
+            <CollapsibleTrigger className="w-full">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="size-5 text-destructive" />
+                    <CardTitle className="text-destructive">Danger Zone</CardTitle>
+                  </div>
+                  <ChevronDown className="size-5 text-destructive transition-transform [[data-state=open]_&]:rotate-180" />
+                </div>
+                <CardDescription className="text-left">
+                  Unwiderrufliche Aktionen für dieses Projekt
+                </CardDescription>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="space-y-3 pt-0">
+                <div className="flex items-center justify-between p-4 border border-destructive/30 rounded-lg bg-background">
+                  <div>
+                    <p className="font-medium text-destructive">Projekt löschen</p>
+                    <p className="text-sm text-muted-foreground">
+                      Löscht das Projekt permanent mit allen Szenen, Charakteren und Episoden
+                    </p>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setShowDeleteDialog(true)}
+                    className="shrink-0"
+                  >
+                    <Trash2 className="size-4 mr-2" />
+                    Löschen
+                  </Button>
+                </div>
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+      </div>
+
+      {/* Film Timeline Section */}
+      <section className="px-4 mb-8">
+        <div className="mb-4">
+          <h2 className="text-scene-pink">#Storyboard Timeline</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Acts → Sequenzen → Szenen → Shots
+          </p>
+        </div>
+
+        {/* Film Timeline (3D Layer View) */}
+        <FilmTimeline projectId={project.id} />
+      </section>
+
+      {/* Characters Section */}
+      <section className="px-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-character-blue">@Charaktere ({charactersState.length})</h2>
+          <Button 
+            size="sm" 
+            variant="secondary" 
+            onClick={() => setShowNewCharacter(true)}
+            className="h-8 bg-[rgba(110,89,165,1)] text-[rgba(255,255,255,1)]"
+          >
+            <Plus className="size-3.5 mr-1.5" />
+            Neu
+          </Button>
+        </div>
+        <div className="space-y-3">
+          {charactersState.map((character) => (
+            <CharacterCard
+              key={character.id}
+              character={character}
+              onImageUpload={updateCharacterImage}
+              onUpdateDetails={updateCharacterDetails}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* New Scene Dialog */}
+      <Dialog open={showNewScene} onOpenChange={(open) => {
+        setShowNewScene(open);
+        if (!open) resetNewSceneForm();
+      }}>
+        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Neue Szene</DialogTitle>
+            <DialogDescription>Füge eine neue Szene zu deinem Projekt hinzu</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Titel</Label>
+                <Input 
+                  placeholder="z.B. Eröffnungsszene" 
+                  className="h-11"
+                  value={newSceneTitle}
+                  onChange={(e) => setNewSceneTitle(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Szenen-Nummer</Label>
+                <Input 
+                  type="number" 
+                  placeholder={`${scenesState.length + 1}`}
+                  className="h-11"
+                  value={newSceneNumber}
+                  onChange={(e) => setNewSceneNumber(e.target.value)}
+                  min="1"
+                />
+                <p className="text-xs text-muted-foreground">Leer = ans Ende</p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Beschreibung</Label>
+              <Textarea 
+                placeholder="Kurze Beschreibung der Szene..." 
+                rows={3}
+                value={newSceneDescription}
+                onChange={(e) => setNewSceneDescription(e.target.value)}
+              />
+            </div>
+            
+            {/* Scene Image Upload */}
+            <div className="space-y-2">
+              <Label>Szenen-Bild (Optional)</Label>
+              {newSceneImage ? (
+                <div className="relative aspect-video rounded-lg overflow-hidden bg-muted/30 max-w-[60%]">
+                  <img src={newSceneImage} alt="Preview" className="w-full h-full object-cover" />
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setNewSceneImage(undefined)}
+                    className="absolute top-2 right-2 h-8"
+                  >
+                    <X className="size-4 mr-1" />
+                    Entfernen
+                  </Button>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => newSceneImageInputRef.current?.click()}
+                  className="w-full border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors active:scale-[0.98] cursor-pointer"
+                >
+                  <div className="flex flex-col items-center justify-center">
+                    <ImageIcon className="size-6 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm mb-1">Bild hochladen</p>
+                    <p className="text-xs text-muted-foreground">Empfohlen: 16:9 Format</p>
+                  </div>
+                </button>
+              )}
+              <input
+                ref={newSceneImageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleNewSceneImageChange}
+                className="hidden"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => {
+              setShowNewScene(false);
+              resetNewSceneForm();
+            }} className="h-11">Abbrechen</Button>
+            <Button onClick={handleCreateScene} className="h-11" disabled={!newSceneTitle.trim()}>
+              Szene erstellen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conflict Dialog */}
+      <AlertDialog open={showConflictDialog} onOpenChange={setShowConflictDialog}>
+        <AlertDialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Szenen-Konflikt</AlertDialogTitle>
+            <AlertDialogDescription>
+              An Position #{conflictSceneData?.number} existiert bereits eine Szene. 
+              Wie sollen die bestehenden Szenen verschoben werden?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel onClick={() => setShowConflictDialog(false)} className="h-11">
+              Abbrechen
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => {
+                insertScene(conflictSceneData, "up");
+                setShowConflictDialog(false);
+              }}
+              className="h-11 bg-primary"
+            >
+              Bestehende nach oben verschieben
+            </AlertDialogAction>
+            <AlertDialogAction 
+              onClick={() => {
+                insertScene(conflictSceneData, "down");
+                setShowConflictDialog(false);
+              }}
+              className="h-11 bg-primary"
+            >
+              Bestehende nach unten verschieben
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* New Character Dialog */}
+      <Dialog open={showNewCharacter} onOpenChange={(open) => {
+        setShowNewCharacter(open);
+        if (!open) resetNewCharacterForm();
+      }}>
+        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Neuer Charakter</DialogTitle>
+            <DialogDescription>Erstelle einen neuen Charakter für dein Projekt</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {/* Character Image Upload - First */}
+            <div className="space-y-2">
+              <Label>Profilbild (Optional)</Label>
+              {newCharacterImage ? (
+                <div className="relative w-32 h-32 mx-auto">
+                  <img src={newCharacterImage} alt="Preview" className="w-full h-full object-cover rounded-full border-4 border-character-blue-light" />
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setNewCharacterImage(undefined)}
+                    className="absolute -top-2 -right-2 h-8 w-8 rounded-full p-0"
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => newCharacterImageInputRef.current?.click()}
+                  className="w-32 h-32 mx-auto border-2 border-dashed border-border rounded-full text-center hover:border-primary/50 transition-colors active:scale-[0.98] cursor-pointer flex flex-col items-center justify-center bg-muted/10"
+                >
+                  <Camera className="size-8 mb-1 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">Bild hochladen</p>
+                </button>
+              )}
+              <input
+                ref={newCharacterImageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleNewCharacterImageChange}
+                className="hidden"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Name *</Label>
+              <Input 
+                placeholder="z.B. Sarah Chen, Marcus Webb" 
+                className="h-11 border-2"
+                value={newCharacterName}
+                onChange={(e) => setNewCharacterName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Rolle</Label>
+              <Input 
+                placeholder="z.B. Protagonist, Antagonist, Unterstützer" 
+                className="h-11 border-2"
+                value={newCharacterRole}
+                onChange={(e) => setNewCharacterRole(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Beschreibung</Label>
+              <Textarea 
+                placeholder="Kurze Zusammenfassung des Charakters..." 
+                rows={3}
+                className="border-2"
+                value={newCharacterDescription}
+                onChange={(e) => setNewCharacterDescription(e.target.value)}
+              />
+            </div>
+
+            {/* Additional Character Details */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label>Alter</Label>
+                <Input 
+                  placeholder="z.B. 35" 
+                  className="h-11 border-2"
+                  value={newCharacterAge}
+                  onChange={(e) => setNewCharacterAge(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Geschlecht</Label>
+                <Input 
+                  placeholder="Female, Male, ..." 
+                  className="h-11 border-2"
+                  value={newCharacterGender}
+                  onChange={(e) => setNewCharacterGender(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Spezies</Label>
+                <Input 
+                  placeholder="Human, Alien, ..." 
+                  className="h-11 border-2"
+                  value={newCharacterSpecies}
+                  onChange={(e) => setNewCharacterSpecies(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Background Story</Label>
+              <Textarea 
+                placeholder="Die Hintergrundgeschichte des Charakters - Herkunft, wichtige Ereignisse, Motivation..." 
+                rows={3}
+                className="border-2"
+                value={newCharacterBackgroundStory}
+                onChange={(e) => setNewCharacterBackgroundStory(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Skills</Label>
+              <Textarea 
+                placeholder="Fähigkeiten kommagetrennt (z.B. Piloting, Schwertkampf, Hacking, Heilung)" 
+                rows={2}
+                className="border-2"
+                value={newCharacterSkills}
+                onChange={(e) => setNewCharacterSkills(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Stärken</Label>
+              <Textarea 
+                placeholder="Was macht den Charakter stark? (z.B. Entscheidungsfreudig, Mutig, Intelligent, Loyal)" 
+                rows={2}
+                className="border-2"
+                value={newCharacterStrengths}
+                onChange={(e) => setNewCharacterStrengths(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Schwächen</Label>
+              <Textarea 
+                placeholder="Schwachstellen und Verletzlichkeiten (z.B. Impulsiv, Vertrauensselig, Sturköpfig)" 
+                rows={2}
+                className="border-2"
+                value={newCharacterWeaknesses}
+                onChange={(e) => setNewCharacterWeaknesses(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Charakter Traits</Label>
+              <Textarea 
+                placeholder="Persönlichkeitsmerkmale (z.B. Mutig, Sarkastisch, Mitfühlend, Neugierig, Introvertiert)" 
+                rows={2}
+                className="border-2"
+                value={newCharacterTraits}
+                onChange={(e) => setNewCharacterTraits(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => {
+              setShowNewCharacter(false);
+              resetNewCharacterForm();
+            }} className="h-11">Abbrechen</Button>
+            <Button onClick={handleCreateCharacter} className="h-11" disabled={!newCharacterName.trim()}>
+              Charakter erstellen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Image Crop Dialog */}
+      {showImageCropDialog && tempImageForCrop && (
+        <ImageCropDialog
+          image={tempImageForCrop}
+          onComplete={handleCroppedImage}
+          onCancel={() => {
+            setShowImageCropDialog(false);
+            setTempImageForCrop(undefined);
+          }}
+        />
+      )}
+
+      {/* Delete Project Dialog */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <div className="flex items-center gap-2 mb-2">
+              <div className="p-2 rounded-full bg-destructive/10">
+                <Trash2 className="size-5 text-destructive" />
+              </div>
+              <AlertDialogTitle>Projekt wirklich löschen?</AlertDialogTitle>
+            </div>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Diese Aktion kann <strong>nicht rückgängig</strong> gemacht werden. 
+                  Das Projekt <strong>"{project.title}"</strong> wird permanent gelöscht, 
+                  inklusive aller:
+                </p>
+                <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                  <li>Szenen</li>
+                  <li>Charaktere</li>
+                  <li>Episoden</li>
+                  <li>Projekt-Einstellungen</li>
+                </ul>
+                <div className="pt-2 space-y-2">
+                  <Label htmlFor="delete-password" className="text-foreground">
+                    Gib dein Passwort ein, um zu bestätigen:
+                  </Label>
+                  <Input
+                    id="delete-password"
+                    type="password"
+                    placeholder="Dein Passwort"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    disabled={deleteLoading}
+                    className="h-11"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && deletePassword.trim()) {
+                        onDelete();
+                      }
+                    }}
+                    autoFocus
+                  />
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel 
+              onClick={() => {
+                setDeletePassword("");
+              }}
+              disabled={deleteLoading}
+            >
+              Abbrechen
+            </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={onDelete}
+              disabled={deleteLoading || !deletePassword.trim()}
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="size-4 mr-2 animate-spin" />
+                  Wird gelöscht...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="size-4 mr-2" />
+                  Projekt löschen
+                </>
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
