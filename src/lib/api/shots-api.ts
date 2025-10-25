@@ -34,6 +34,8 @@ export async function createShot(
   shotData: Partial<Shot>,
   accessToken: string
 ): Promise<Shot> {
+  console.log('[Shots API] Creating shot:', { sceneId, shotData });
+  
   const response = await fetch(`${API_BASE}/shots`, {
     method: 'POST',
     headers: {
@@ -46,11 +48,17 @@ export async function createShot(
     }),
   });
 
+  console.log('[Shots API] Response status:', response.status);
+
   if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[Shots API] Error response:', errorText);
     throw new Error(`Failed to create shot: ${response.statusText}`);
   }
 
-  const { shot } = await response.json();
+  const result = await response.json();
+  console.log('[Shots API] Success result:', result);
+  const { shot } = result;
   return shot;
 }
 

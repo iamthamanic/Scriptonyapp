@@ -83,10 +83,47 @@ shots.get('/:sceneId', async (c) => {
           .select('*')
           .eq('shot_id', shot.id);
 
+        // Transform to camelCase for frontend
         return {
-          ...shot,
-          characters: characters || [],
-          audioFiles: audioFiles || [],
+          id: shot.id,
+          sceneId: shot.scene_id,
+          projectId: shot.project_id,
+          shotNumber: shot.shot_number,
+          description: shot.description,
+          cameraAngle: shot.camera_angle,
+          cameraMovement: shot.camera_movement,
+          lens: shot.lens,
+          duration: shot.duration,
+          composition: shot.composition,
+          lightingNotes: shot.lighting_notes,
+          soundNotes: shot.sound_notes,
+          storyboardUrl: shot.storyboard_url,
+          referenceImageUrl: shot.reference_image_url,
+          framing: shot.framing,
+          dialog: shot.dialog,
+          notes: shot.notes,
+          shotlengthMinutes: shot.shotlength_minutes,
+          shotlengthSeconds: shot.shotlength_seconds,
+          imageUrl: shot.image_url,
+          orderIndex: shot.order_index,
+          createdAt: shot.created_at,
+          updatedAt: shot.updated_at,
+          characters: (characters || []).map((char: any) => ({
+            id: char.id,
+            characterId: char.character_id,
+            name: char.name,
+            description: char.description,
+            profileImageUrl: char.profile_image_url,
+            isMainCharacter: char.is_main_character,
+          })),
+          audioFiles: (audioFiles || []).map((audio: any) => ({
+            id: audio.id,
+            shotId: audio.shot_id,
+            fileName: audio.file_name,
+            fileUrl: audio.file_url,
+            fileType: audio.file_type,
+            createdAt: audio.created_at,
+          })),
         };
       })
     );
@@ -196,7 +233,35 @@ shots.post('/', async (c) => {
     }
 
     console.log('[SHOTS] Created shot:', data.id);
-    return c.json({ shot: data }, 201);
+    
+    // Transform to camelCase for frontend
+    const transformedData = {
+      id: data.id,
+      sceneId: data.scene_id,
+      projectId: data.project_id,
+      shotNumber: data.shot_number,
+      description: data.description,
+      cameraAngle: data.camera_angle,
+      cameraMovement: data.camera_movement,
+      lens: data.lens,
+      duration: data.duration,
+      composition: data.composition,
+      lightingNotes: data.lighting_notes,
+      soundNotes: data.sound_notes,
+      storyboardUrl: data.storyboard_url,
+      referenceImageUrl: data.reference_image_url,
+      framing: data.framing,
+      dialog: data.dialog,
+      notes: data.notes,
+      shotlengthMinutes: data.shotlength_minutes,
+      shotlengthSeconds: data.shotlength_seconds,
+      imageUrl: data.image_url,
+      orderIndex: data.order_index,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+    
+    return c.json({ shot: transformedData }, 201);
   } catch (err) {
     console.error('[SHOTS] Unexpected error:', err);
     return c.json({ error: 'Internal server error' }, 500);
@@ -213,45 +278,45 @@ shots.put('/:id', async (c) => {
     const supabase = getSupabaseClient(authHeader);
     const body = await c.req.json();
 
-    const {
-      shot_number,
-      description,
-      camera_angle,
-      camera_movement,
-      lens,
-      duration,
-      composition,
-      lighting_notes,
-      sound_notes,
-      storyboard_url,
-      reference_image_url,
-      // New fields
-      framing,
-      dialog,
-      notes,
-      shotlength_minutes,
-      shotlength_seconds,
-      image_url,
-    } = body;
-
+    // Accept both camelCase and snake_case
     const updateData: any = {};
-    if (shot_number !== undefined) updateData.shot_number = shot_number;
-    if (description !== undefined) updateData.description = description;
-    if (camera_angle !== undefined) updateData.camera_angle = camera_angle;
-    if (camera_movement !== undefined) updateData.camera_movement = camera_movement;
-    if (lens !== undefined) updateData.lens = lens;
-    if (duration !== undefined) updateData.duration = duration;
-    if (composition !== undefined) updateData.composition = composition;
-    if (lighting_notes !== undefined) updateData.lighting_notes = lighting_notes;
-    if (sound_notes !== undefined) updateData.sound_notes = sound_notes;
-    if (storyboard_url !== undefined) updateData.storyboard_url = storyboard_url;
-    if (reference_image_url !== undefined) updateData.reference_image_url = reference_image_url;
-    if (framing !== undefined) updateData.framing = framing;
-    if (dialog !== undefined) updateData.dialog = dialog;
-    if (notes !== undefined) updateData.notes = notes;
-    if (shotlength_minutes !== undefined) updateData.shotlength_minutes = shotlength_minutes;
-    if (shotlength_seconds !== undefined) updateData.shotlength_seconds = shotlength_seconds;
-    if (image_url !== undefined) updateData.image_url = image_url;
+    if (body.shotNumber !== undefined || body.shot_number !== undefined) {
+      updateData.shot_number = body.shotNumber ?? body.shot_number;
+    }
+    if (body.description !== undefined) updateData.description = body.description;
+    if (body.cameraAngle !== undefined || body.camera_angle !== undefined) {
+      updateData.camera_angle = body.cameraAngle ?? body.camera_angle;
+    }
+    if (body.cameraMovement !== undefined || body.camera_movement !== undefined) {
+      updateData.camera_movement = body.cameraMovement ?? body.camera_movement;
+    }
+    if (body.lens !== undefined) updateData.lens = body.lens;
+    if (body.duration !== undefined) updateData.duration = body.duration;
+    if (body.composition !== undefined) updateData.composition = body.composition;
+    if (body.lightingNotes !== undefined || body.lighting_notes !== undefined) {
+      updateData.lighting_notes = body.lightingNotes ?? body.lighting_notes;
+    }
+    if (body.soundNotes !== undefined || body.sound_notes !== undefined) {
+      updateData.sound_notes = body.soundNotes ?? body.sound_notes;
+    }
+    if (body.storyboardUrl !== undefined || body.storyboard_url !== undefined) {
+      updateData.storyboard_url = body.storyboardUrl ?? body.storyboard_url;
+    }
+    if (body.referenceImageUrl !== undefined || body.reference_image_url !== undefined) {
+      updateData.reference_image_url = body.referenceImageUrl ?? body.reference_image_url;
+    }
+    if (body.framing !== undefined) updateData.framing = body.framing;
+    if (body.dialog !== undefined) updateData.dialog = body.dialog;
+    if (body.notes !== undefined) updateData.notes = body.notes;
+    if (body.shotlengthMinutes !== undefined || body.shotlength_minutes !== undefined) {
+      updateData.shotlength_minutes = body.shotlengthMinutes ?? body.shotlength_minutes;
+    }
+    if (body.shotlengthSeconds !== undefined || body.shotlength_seconds !== undefined) {
+      updateData.shotlength_seconds = body.shotlengthSeconds ?? body.shotlength_seconds;
+    }
+    if (body.imageUrl !== undefined || body.image_url !== undefined) {
+      updateData.image_url = body.imageUrl ?? body.image_url;
+    }
 
     const { data, error } = await supabase
       .from('shots')
@@ -266,7 +331,35 @@ shots.put('/:id', async (c) => {
     }
 
     console.log('[SHOTS] Updated shot:', shotId);
-    return c.json({ shot: data });
+    
+    // Transform to camelCase for frontend
+    const transformedData = {
+      id: data.id,
+      sceneId: data.scene_id,
+      projectId: data.project_id,
+      shotNumber: data.shot_number,
+      description: data.description,
+      cameraAngle: data.camera_angle,
+      cameraMovement: data.camera_movement,
+      lens: data.lens,
+      duration: data.duration,
+      composition: data.composition,
+      lightingNotes: data.lighting_notes,
+      soundNotes: data.sound_notes,
+      storyboardUrl: data.storyboard_url,
+      referenceImageUrl: data.reference_image_url,
+      framing: data.framing,
+      dialog: data.dialog,
+      notes: data.notes,
+      shotlengthMinutes: data.shotlength_minutes,
+      shotlengthSeconds: data.shotlength_seconds,
+      imageUrl: data.image_url,
+      orderIndex: data.order_index,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+    
+    return c.json({ shot: transformedData });
   } catch (err) {
     console.error('[SHOTS] Unexpected error:', err);
     return c.json({ error: 'Internal server error' }, 500);

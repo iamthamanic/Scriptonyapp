@@ -68,8 +68,9 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
       // If no acts exist, initialize 3-Act structure
       if (loadedActs.length === 0) {
         console.log('No acts found, initializing 3-Act structure...');
-        const result = await ShotsAPI.initializeThreeActStructure(projectId, token);
-        loadedActs = result.acts || [];
+        await ShotsAPI.initializeThreeActStructure(projectId, token);
+        // Reload acts after initialization
+        loadedActs = await TimelineAPI.getActs(projectId, token);
       }
       
       setActs(loadedActs);
@@ -132,11 +133,11 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
     if (newSet.has(actId)) {
       newSet.delete(actId);
       // Collapse all sequences in this act
-      const actSequences = sequences.filter(s => s.actId === actId);
+      const actSequences = sequences.filter(s => s && s.actId === actId);
       actSequences.forEach(seq => {
         expandedSequences.delete(seq.id);
         // Collapse all scenes in these sequences
-        const seqScenes = scenes.filter(sc => sc.sequenceId === seq.id);
+        const seqScenes = scenes.filter(sc => sc && sc.sequenceId === seq.id);
         seqScenes.forEach(scene => expandedScenes.delete(scene.id));
       });
       setExpandedSequences(new Set(expandedSequences));
@@ -152,7 +153,7 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
     if (newSet.has(sequenceId)) {
       newSet.delete(sequenceId);
       // Collapse all scenes in this sequence
-      const seqScenes = scenes.filter(sc => sc.sequenceId === sequenceId);
+      const seqScenes = scenes.filter(sc => sc && sc.sequenceId === sequenceId);
       seqScenes.forEach(scene => expandedScenes.delete(scene.id));
       setExpandedScenes(new Set(expandedScenes));
     } else {
@@ -228,7 +229,7 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
         return;
       }
 
-      const actSequences = sequences.filter(s => s.actId === actId);
+      const actSequences = sequences.filter(s => s && s.actId === actId);
       const newSequence = await TimelineAPI.createSequence(actId, {
         sequenceNumber: actSequences.length + 1,
         title: `Sequence ${actSequences.length + 1}`,
@@ -252,7 +253,7 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
         return;
       }
 
-      const seqScenes = scenes.filter(s => s.sequenceId === sequenceId);
+      const seqScenes = scenes.filter(s => s && s.sequenceId === sequenceId);
       const newScene = await TimelineAPI.createScene(sequenceId, {
         number: scenes.length + 1,
         title: `Scene ${scenes.length + 1}`,
@@ -268,14 +269,18 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
   };
 
   const handleAddShot = async (sceneId: string) => {
+    console.log('[Timeline] handleAddShot called with sceneId:', sceneId);
     try {
       const token = await getAccessToken();
+      console.log('[Timeline] Got token:', token ? 'yes' : 'no');
       if (!token) {
         toast.error('Nicht angemeldet');
         return;
       }
 
-      const sceneShots = shots.filter(s => s.sceneId === sceneId);
+      const sceneShots = shots.filter(s => s && s.sceneId === sceneId);
+      console.log('[Timeline] Creating shot for scene:', sceneId, 'Current shots:', sceneShots.length);
+      
       const newShot = await ShotsAPI.createShot(sceneId, {
         shotNumber: `${sceneShots.length + 1}`,
         cameraAngle: 'medium',
@@ -283,6 +288,7 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
         lens: '50mm',
       }, token);
 
+      console.log('[Timeline] Shot created:', newShot);
       setShots([...shots, newShot]);
       setExpandedScenes(new Set([...expandedScenes, sceneId]));
       toast.success('Shot erstellt');
@@ -335,7 +341,7 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
       await ShotsAPI.reorderShots(sceneId, shotIds, token);
       // Reload shots for this scene
       const updatedShots = await ShotsAPI.getShots(sceneId, token);
-      setShots([...shots.filter(s => s.sceneId !== sceneId), ...updatedShots]);
+      setShots([...shots.filter(s => s && s.sceneId !== sceneId), ...updatedShots]);
     } catch (error) {
       console.error('Error reordering shots:', error);
       toast.error('Fehler beim Umsortieren der Shots');
@@ -370,10 +376,10 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
       const audioFile = await ShotsAPI.uploadShotAudio(shotId, file, type, label, token);
       
       // Reload shot to get updated audioFiles array
-      const sceneId = shots.find(s => s.id === shotId)?.sceneId;
+      const sceneId = shots.find(s => s && s.id === shotId)?.sceneId;
       if (sceneId) {
         const updatedShots = await ShotsAPI.getShots(sceneId, token);
-        setShots([...shots.filter(s => s.sceneId !== sceneId), ...updatedShots]);
+        setShots([...shots.filter(s => s && s.sceneId !== sceneId), ...updatedShots]);
       }
       
       toast.success('Audio hochgeladen');
@@ -419,10 +425,10 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
       await ShotsAPI.addCharacterToShot(shotId, characterId, token);
       
       // Reload shot to get updated characters
-      const sceneId = shots.find(s => s.id === shotId)?.sceneId;
+      const sceneId = shots.find(s => s && s.id === shotId)?.sceneId;
       if (sceneId) {
         const updatedShots = await ShotsAPI.getShots(sceneId, token);
-        setShots([...shots.filter(s => s.sceneId !== sceneId), ...updatedShots]);
+        setShots([...shots.filter(s => s && s.sceneId !== sceneId), ...updatedShots]);
       }
       
       toast.success('Character hinzugefügt');
@@ -443,10 +449,10 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
       await ShotsAPI.removeCharacterFromShot(shotId, characterId, token);
       
       // Reload shot to get updated characters
-      const sceneId = shots.find(s => s.id === shotId)?.sceneId;
+      const sceneId = shots.find(s => s && s.id === shotId)?.sceneId;
       if (sceneId) {
         const updatedShots = await ShotsAPI.getShots(sceneId, token);
-        setShots([...shots.filter(s => s.sceneId !== sceneId), ...updatedShots]);
+        setShots([...shots.filter(s => s && s.sceneId !== sceneId), ...updatedShots]);
       }
       
       toast.success('Character entfernt');
@@ -551,7 +557,7 @@ export function FilmTimeline({ projectId }: FilmTimelineProps) {
               <ActContainer
                 key={act.id}
                 act={act}
-                sequences={sequences.filter(s => s.actId === act.id)}
+                sequences={sequences.filter(s => s && s.actId === act.id)}
                 scenes={scenes}
                 shots={shots}
                 isExpanded={expandedActs.has(act.id)}
@@ -677,7 +683,7 @@ function ActContainer({
                 <SequenceContainer
                   key={sequence.id}
                   sequence={sequence}
-                  scenes={scenes.filter(s => s.sequenceId === sequence.id)}
+                  scenes={scenes.filter(s => s && s.sequenceId === sequence.id)}
                   shots={shots}
                   isExpanded={expandedSequences.has(sequence.id)}
                   expandedScenes={expandedScenes}
@@ -792,11 +798,11 @@ function SequenceContainer({
             </div>
           ) : (
             <>
-              {scenes.map((scene) => (
+              {scenes.filter(scene => scene && scene.id).map((scene) => (
                 <SceneContainer
                   key={scene.id}
                   scene={scene}
-                  shots={shots.filter(s => s.sceneId === scene.id)}
+                  shots={shots.filter(s => s && s.sceneId === scene.id)}
                   isExpanded={expandedScenes.has(scene.id)}
                   onToggle={() => onToggleScene(scene.id)}
                   onAddShot={() => onAddShot(scene.id)}

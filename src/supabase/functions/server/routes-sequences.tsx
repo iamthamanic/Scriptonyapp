@@ -88,12 +88,26 @@ export function createSequencesRoutes(
         return c.json({ error: 'act_id is required' }, 400);
       }
 
-      if (sequence_number === undefined || sequence_number === null) {
-        console.error('[SEQUENCES] Missing sequence_number, received:', sequence_number, 'type:', typeof sequence_number);
-        return c.json({ error: 'sequence_number is required' }, 400);
-      }
-
       const supabase = getSupabaseClient();
+      
+      // Auto-calculate sequence_number if missing
+      let finalSequenceNumber = sequence_number;
+      if (finalSequenceNumber === undefined || finalSequenceNumber === null) {
+        console.warn('[SEQUENCES] ⚠️ Missing sequence_number, auto-calculating...');
+        
+        const { data: existingSequencesForNumber } = await supabase
+          .from('sequences')
+          .select('sequence_number')
+          .eq('act_id', act_id)
+          .order('sequence_number', { ascending: false })
+          .limit(1);
+        
+        finalSequenceNumber = existingSequencesForNumber && existingSequencesForNumber.length > 0
+          ? existingSequencesForNumber[0].sequence_number + 1
+          : 1;
+        
+        console.log('[SEQUENCES] ✅ Auto-calculated sequence_number:', finalSequenceNumber);
+      }
       
       // Get the act to get project_id
       const { data: act, error: actError } = await supabase
@@ -125,14 +139,13 @@ export function createSequencesRoutes(
         ? existingSequences[0].order_index + 1
         : 0;
 
-      console.log('[SEQUENCES] Inserting with:', { act_id, project_id, sequence_number, title, color, order_index: nextOrderIndex });
+      console.log('[SEQUENCES] Inserting with:', { act_id, sequence_number: finalSequenceNumber, title, color, order_index: nextOrderIndex });
 
       const { data, error } = await supabase
         .from('sequences')
         .insert({
           act_id,
-          project_id,
-          sequence_number,
+          sequence_number: finalSequenceNumber,
           title,
           description,
           color,

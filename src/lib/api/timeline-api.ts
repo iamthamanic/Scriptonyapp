@@ -130,16 +130,31 @@ export async function createSequence(
   sequenceData: Partial<Sequence>,
   token: string
 ): Promise<Sequence> {
+  // Transform camelCase to snake_case for backend
+  const backendData: any = {
+    act_id: actId,
+  };
+  
+  if (sequenceData.sequenceNumber !== undefined) {
+    backendData.sequence_number = sequenceData.sequenceNumber;
+  }
+  if (sequenceData.title !== undefined) {
+    backendData.title = sequenceData.title;
+  }
+  if (sequenceData.description !== undefined) {
+    backendData.description = sequenceData.description;
+  }
+  if (sequenceData.color !== undefined) {
+    backendData.color = sequenceData.color;
+  }
+
   const response = await fetch(`${API_BASE_URL}/sequences`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      act_id: actId,
-      ...sequenceData,
-    }),
+    body: JSON.stringify(backendData),
   });
 
   if (!response.ok) {
@@ -154,13 +169,29 @@ export async function updateSequence(
   updates: Partial<Sequence>,
   token: string
 ): Promise<Sequence> {
+  // Transform camelCase to snake_case for backend
+  const backendUpdates: any = {};
+  
+  if (updates.sequenceNumber !== undefined) {
+    backendUpdates.sequence_number = updates.sequenceNumber;
+  }
+  if (updates.title !== undefined) {
+    backendUpdates.title = updates.title;
+  }
+  if (updates.description !== undefined) {
+    backendUpdates.description = updates.description;
+  }
+  if (updates.color !== undefined) {
+    backendUpdates.color = updates.color;
+  }
+
   const response = await fetch(`${API_BASE_URL}/sequences/${sequenceId}`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(updates),
+    body: JSON.stringify(backendUpdates),
   });
 
   if (!response.ok) {
@@ -228,16 +259,35 @@ export async function createScene(
   sceneData: Partial<Scene>,
   token: string
 ): Promise<Scene> {
+  // Transform camelCase to snake_case for backend
+  const backendData: any = {
+    sequence_id: sequenceId,
+  };
+  
+  // Map number to scene_number (required field)
+  if (sceneData.number !== undefined) {
+    backendData.scene_number = sceneData.number;
+  }
+  if (sceneData.title !== undefined) {
+    backendData.title = sceneData.title;
+  }
+  if (sceneData.description !== undefined) {
+    backendData.description = sceneData.description;
+  }
+  if (sceneData.location !== undefined) {
+    backendData.location = sceneData.location;
+  }
+  if (sceneData.timeOfDay !== undefined) {
+    backendData.time_of_day = sceneData.timeOfDay;
+  }
+
   const response = await fetch(`${API_BASE_URL}/scenes`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      sequence_id: sequenceId,
-      ...sceneData,
-    }),
+    body: JSON.stringify(backendData),
   });
 
   if (!response.ok) {
@@ -252,13 +302,32 @@ export async function updateScene(
   updates: Partial<Scene>,
   token: string
 ): Promise<Scene> {
+  // Transform camelCase to snake_case for backend
+  const backendUpdates: any = {};
+  
+  if (updates.number !== undefined) {
+    backendUpdates.scene_number = updates.number;
+  }
+  if (updates.title !== undefined) {
+    backendUpdates.title = updates.title;
+  }
+  if (updates.description !== undefined) {
+    backendUpdates.description = updates.description;
+  }
+  if (updates.location !== undefined) {
+    backendUpdates.location = updates.location;
+  }
+  if (updates.timeOfDay !== undefined) {
+    backendUpdates.time_of_day = updates.timeOfDay;
+  }
+
   const response = await fetch(`${API_BASE_URL}/scenes/${sceneId}`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(updates),
+    body: JSON.stringify(backendUpdates),
   });
 
   if (!response.ok) {

@@ -465,7 +465,60 @@ app.route("/make-server-3b52693b/debug", createDebugRoutes());
 app.route("/make-server-3b52693b", aiChatRoutes);
 
 // =====================================================
-// EXPORT
+// STORAGE ROUTES
+// =====================================================
+app.get("/make-server-3b52693b/storage/usage", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const bucketName = "make-3b52693b-storage";
+
+    // List all files for user
+    const { data: files, error } = await supabase.storage
+      .from(bucketName)
+      .list(`uploads/${userId}`, {
+        limit: 1000,
+        sortBy: { column: "created_at", order: "desc" },
+      });
+
+    if (error) {
+      console.warn("[STORAGE] No files found or bucket doesn't exist, returning empty usage");
+      return c.json({ 
+        totalSize: 0,
+        fileCount: 0,
+        files: [],
+      });
+    }
+
+    const totalSize = files.reduce((sum, file) => sum + (file.metadata?.size || 0), 0);
+
+    return c.json({
+      totalSize,
+      fileCount: files.length,
+      files: files.map(f => ({
+        name: f.name,
+        size: f.metadata?.size || 0,
+        createdAt: f.created_at,
+      })),
+    });
+  } catch (error: any) {
+    console.error("[STORAGE] Error getting storage usage:", error);
+    // Return empty usage instead of error to prevent UI breaking
+    return c.json({ 
+      totalSize: 0,
+      fileCount: 0,
+      files: [],
+    });
+  }
+});
+
+// =====================================================
+// START SERVER
 // =====================================================
 
 console.log("🎉 Scriptony Server (Organization-based) is ready!");
@@ -474,6 +527,7 @@ console.log("✅ Routes: /projects, /worlds, /acts, /sequences, /shots");
 console.log("🎬 Enhanced: Shot uploads, characters, audio files");
 console.log("🎭 3-Act Init: POST /projects/:projectId/init-three-act");
 console.log("🤖 AI Chat: MINIMAL (settings, conversations) - Chat disabled");
+console.log("💾 Storage: Usage tracking enabled");
 console.log("🏢 Multi-Tenancy: Organization-based with auto-creation");
 
-export default app;
+Deno.serve(app.fetch);

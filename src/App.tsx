@@ -205,9 +205,14 @@ export default function App() {
         }
 
         console.log("\n📝 Schritt 2/4: Test-User erstellen...");
-        await seedTestUser();
-        localStorage.setItem(STORAGE_KEYS.HAS_SEEDED_USER, "true");
-        console.log("✅ Test-User bereit");
+        try {
+          await seedTestUser();
+          localStorage.setItem(STORAGE_KEYS.HAS_SEEDED_USER, "true");
+          console.log("✅ Test-User bereit");
+        } catch (seedError) {
+          console.warn("⚠️ Test-User-Seed fehlgeschlagen (optional, nicht kritisch):", seedError);
+          console.log("⏩ Fahre trotzdem mit Login fort...");
+        }
 
         console.log("\n📝 Schritt 3/4: Auto-Login...");
         const { TEST_USER } = await import("./lib/config");
