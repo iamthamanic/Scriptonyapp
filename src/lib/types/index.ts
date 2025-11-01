@@ -194,6 +194,7 @@ export interface Shot {
   orderIndex: number;
   createdAt: string;
   updatedAt: string;
+  updatedBy?: string; // User ID who last updated (TODO: Backend support needed)
   // Relations (populated by server)
   characters?: Character[];
   audioFiles?: ShotAudio[];

@@ -307,7 +307,7 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Name der Welt</Label>
-              <Input placeholder="z.B. Kontinent Silkat" className="h-11" />
+              <Input placeholder="z.B. Mittelerde, Westeros, Tatooine..." className="h-11" />
             </div>
             <div className="space-y-2">
               <Label>Beschreibung</Label>
@@ -583,70 +583,49 @@ function WorldDetail({ world, onBack, coverImage, onCoverImageChange, projects: 
       name: "Kultur",
       icon: Palette,
       description: "Traditionen, Kunst, Bräuche und Feste",
-      assets: [
-        { id: "cul-1", name: "Erntedankfest", description: "Jährliches Fest im Herbst" },
-        { id: "cul-2", name: "Malerei-Tradition", description: "Besondere Kunstform" },
-      ]
+      assets: []
     },
     {
       id: "history",
       name: "Geschichte",
       icon: History,
       description: "Wichtige Ereignisse, Epochen und Legenden",
-      assets: [
-        { id: "his-1", name: "Der Große Krieg", description: "Konflikt vor 100 Jahren" },
-        { id: "his-2", name: "Zeitalter der Magie", description: "Goldene Epoche" },
-      ]
+      assets: []
     },
     {
       id: "technology",
       name: "Technologie & Magie",
       icon: Zap,
       description: "Erfindungen, Magie-Systeme und Wissenschaft",
-      assets: [
-        { id: "tech-1", name: "Elementarmagie", description: "Magie der vier Elemente" },
-        { id: "tech-2", name: "Luftschiffe", description: "Fliegende Transportmittel" },
-      ]
+      assets: []
     },
     {
       id: "economy",
       name: "Wirtschaft",
       icon: Coins,
       description: "Handel, Währung, Ressourcen und Berufe",
-      assets: [
-        { id: "eco-1", name: "Goldmünzen", description: "Die Hauptwährung" },
-        { id: "eco-2", name: "Handelsrouten", description: "Wichtige Verbindungen" },
-      ]
+      assets: []
     },
     {
       id: "religion",
       name: "Religion & Mythologie",
       icon: BookOpen,
       description: "Götter, Glaubenssysteme und Rituale",
-      assets: [
-        { id: "rel-1", name: "Gott des Lichts", description: "Hauptgottheit" },
-        { id: "rel-2", name: "Tempel der Sonne", description: "Heiliger Ort" },
-      ]
+      assets: []
     },
     {
       id: "languages",
       name: "Sprachen",
       icon: Languages,
       description: "Dialekte, Schriften und Kommunikation",
-      assets: [
-        { id: "lang-1", name: "Alt-Silkatisch", description: "Alte Sprache der Gelehrten" },
-        { id: "lang-2", name: "Runen-Schrift", description: "Magische Symbole" },
-      ]
+      assets: []
     },
     {
       id: "flora-fauna",
       name: "Flora & Fauna",
       icon: TreePine,
       description: "Tiere, Pflanzen und Kreaturen",
-      assets: [
-        { id: "flora-1", name: "Schattenwald", description: "Mystischer Wald" },
-        { id: "flora-2", name: "Drachenwölfe", description: "Legendäre Kreaturen" },
-      ]
+      assets: []
     },
   ];
 

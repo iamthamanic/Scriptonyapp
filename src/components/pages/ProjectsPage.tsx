@@ -1735,29 +1735,8 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         console.error('Error loading scenes from localStorage:', e);
       }
     }
-    // Default scenes
-    return [
-      { 
-        id: "1", 
-        number: 1, 
-        title: "Opening Scene", 
-        description: "The spaceship launches from Earth with @Captain Sarah Chen at the helm, heading towards /Mount Silkar", 
-        lastEdited: new Date("2025-09-29T11:20:00"), 
-        image: undefined as string | undefined,
-        mentionedCharacters: ["1"] as string[], // IDs der erwähnten Charaktere
-        worldReferences: ["1"] as string[], // IDs der erwähnten World-Items
-      },
-      { 
-        id: "2", 
-        number: 2, 
-        title: "First Contact", 
-        description: "The crew encounters an alien signal. @Dr. Marcus Webb analyzes the data near /Delta River", 
-        lastEdited: new Date("2025-09-30T08:45:00"), 
-        image: undefined as string | undefined,
-        mentionedCharacters: ["2"] as string[],
-        worldReferences: ["2"] as string[],
-      },
-    ];
+    // Return empty array - scenes will be created by user
+    return [];
   };
 
   const [scenesState, setScenesState] = useState(getInitialScenes);
@@ -1892,57 +1871,10 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
     }
   };
 
-  // Characters State with localStorage persistence
+  // Characters State - NO MORE MOCK DATA! ✅
   const getInitialCharacters = () => {
-    const storageKey = `project-${project.id}-characters`;
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Convert date strings back to Date objects
-        return parsed.map((char: any) => ({
-          ...char,
-          lastEdited: new Date(char.lastEdited)
-        }));
-      } catch (e) {
-        console.error('Error loading characters from localStorage:', e);
-      }
-    }
-    // Default characters
-    return [
-      { 
-        id: "1", 
-        name: "Captain Sarah Chen", 
-        role: "Protagonist", 
-        description: "A fearless space explorer leading the mission",
-        age: "35",
-        gender: "Female",
-        species: "Human",
-        backgroundStory: "Former military pilot who transitioned to deep space exploration",
-        skills: "Piloting, Leadership, Combat",
-        strengths: "Decisive, Brave, Strategic thinker",
-        weaknesses: "Impatient, Struggles with delegation",
-        characterTraits: "Determined, Protective, Charismatic",
-        image: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400" as string | undefined, 
-        lastEdited: new Date("2025-09-28T16:30:00") 
-      },
-      { 
-        id: "2", 
-        name: "Dr. Marcus Webb", 
-        role: "Supporting", 
-        description: "The ship's chief scientist and researcher",
-        age: "42",
-        gender: "Male",
-        species: "Human",
-        backgroundStory: "Renowned astrophysicist with multiple published papers",
-        skills: "Research, Analysis, Xenobiology",
-        strengths: "Intelligent, Methodical, Curious",
-        weaknesses: "Overly cautious, Socially awkward",
-        characterTraits: "Inquisitive, Analytical, Reserved",
-        image: "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=400" as string | undefined, 
-        lastEdited: new Date("2025-09-29T14:10:00") 
-      },
-    ];
+    // Return empty array - characters will be loaded from backend
+    return [];
   };
 
   const [charactersState, setCharactersState] = useState(getInitialCharacters);
@@ -2378,7 +2310,6 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">Keine Welt verknüpft</SelectItem>
-                        <SelectItem value="1">Kontinent Silkat</SelectItem>
                       </SelectContent>
                     </Select>
                     <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" title="Neue Welt erstellen">
@@ -2416,14 +2347,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                 </div>
                 <div>
                   <p className="text-sm font-bold mb-1">Verknüpfte Welt</p>
-                  {project.linkedWorldId ? (
-                    <div className="flex items-center gap-2">
-                      <Globe className="size-4 text-primary" />
-                      <p className="text-sm">Kontinent Silkat</p>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">Keine Welt verknüpft</p>
-                  )}
+                  <p className="text-sm text-muted-foreground">Keine Welt verknüpft</p>
                 </div>
               </>
             )}
@@ -2704,7 +2628,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
             <div className="space-y-2">
               <Label>Name *</Label>
               <Input 
-                placeholder="z.B. Sarah Chen, Marcus Webb" 
+                placeholder="z.B. Max Weber, Sarah Johnson" 
                 className="h-11 border-2"
                 value={newCharacterName}
                 onChange={(e) => setNewCharacterName(e.target.value)}

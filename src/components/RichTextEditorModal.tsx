@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from './ui/dialog';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -89,6 +89,10 @@ interface RichTextEditorModalProps {
   onChange: (value: any) => void; // Passes JSON
   title: string;
   characters: Character[];
+  lastModified?: {
+    timestamp: string; // ISO timestamp
+    userName?: string; // Username who last modified
+  };
 }
 
 export function RichTextEditorModal({
@@ -97,19 +101,55 @@ export function RichTextEditorModal({
   value,
   onChange,
   title,
-  characters
+  characters,
+  lastModified
 }: RichTextEditorModalProps) {
   // CRITICAL: Store latest suggestion props for stable reference in button callbacks
   const latestPropsRef = useRef<any>(null);
   
+  // Local state for live timestamp updates
+  const [localLastModified, setLocalLastModified] = useState(lastModified);
+  const [updateCounter, setUpdateCounter] = useState(0);
+  
   // Use refs to avoid stale closures in editor callbacks
   const onChangeRef = useRef(onChange);
   const charactersRef = useRef(characters);
+  const lastModifiedRef = useRef(lastModified);
   
   useEffect(() => {
     onChangeRef.current = onChange;
     charactersRef.current = characters;
   }, [onChange, characters]);
+  
+  // Track if modal was previously open to detect open transitions
+  const wasOpenRef = useRef(false);
+  
+  // Update local timestamp ONLY when modal FIRST opens (not on every prop change while open)
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      // Modal just opened - initialize from prop
+      lastModifiedRef.current = lastModified;
+      setLocalLastModified(lastModified);
+      setUpdateCounter(0); // Reset counter
+    }
+    wasOpenRef.current = isOpen;
+  }, [isOpen, lastModified]);
+  
+  // Listen for content changes and update timestamp
+  useEffect(() => {
+    const handleContentChange = () => {
+      const now = new Date().toISOString();
+      console.log('[RichTextEditorModal] 🕐 Updating timestamp to NOW:', now);
+      setLocalLastModified({
+        timestamp: now,
+        userName: lastModifiedRef.current?.userName
+      });
+      setUpdateCounter(c => c + 1); // Force re-render
+    };
+    
+    window.addEventListener('tiptap-content-changed', handleContentChange);
+    return () => window.removeEventListener('tiptap-content-changed', handleContentChange);
+  }, []);
   
   const editor = useEditor(
     {
@@ -464,6 +504,10 @@ export function RichTextEditorModal({
       const json = editor.getJSON();
       console.log('[RichTextEditorModal] 💾 Saving JSON:', json);
       onChangeRef.current(json);
+      
+      // CRITICAL: Trigger timestamp update via DOM event
+      // We use a custom event because setState in this callback has stale closure
+      window.dispatchEvent(new CustomEvent('tiptap-content-changed'));
     },
   }
   // No dependencies - editor is created once and reused
@@ -539,20 +583,9 @@ export function RichTextEditorModal({
           Rich text editor with character mention support. Type @ to mention characters.
         </DialogDescription>
 
-        {/* Header with Title and Custom Close Button */}
+        {/* Header with Title */}
         <DialogHeader className="px-6 py-4 border-b border-yellow-400 dark:border-yellow-600 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <DialogTitle className="text-xl">{title}</DialogTitle>
-            <DialogClose asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </DialogClose>
-          </div>
+          <DialogTitle className="text-xl">{title}</DialogTitle>
         </DialogHeader>
 
         {/* Toolbar */}
@@ -666,14 +699,38 @@ export function RichTextEditorModal({
           <EditorContent editor={editor} />
         </div>
 
-        {/* Footer with character count */}
-        <div className="px-6 py-3 border-t border-border bg-muted/50 flex items-center justify-between flex-shrink-0">
+        {/* Footer with character count and last modified */}
+        <div className="px-6 py-3 border-t border-border bg-muted/50 flex items-center justify-between flex-shrink-0 gap-4">
           <p className="text-xs text-muted-foreground">
             Tipp: Tippe <kbd className="px-1.5 py-0.5 bg-background border border-border rounded text-xs">@</kbd> um Charaktere zu erwähnen
           </p>
-          <p className="text-xs text-muted-foreground">
-            {charCount} Zeichen
-          </p>
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            {localLastModified && (() => {
+              const formatted = new Date(localLastModified.timestamp).toLocaleString('de-DE', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+              console.log('[RichTextEditorModal] 🎨 Rendering timestamp (counter:', updateCounter, '):', localLastModified.timestamp, '→', formatted);
+              return (
+                <div className="flex items-center gap-1.5">
+                  <svg className="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <path d="M12 6v6l4 2"></path>
+                  </svg>
+                  <span>
+                    {formatted}
+                    {localLastModified.userName && ` • ${localLastModified.userName}`}
+                  </span>
+                </div>
+              );
+            })()}
+            <span>
+              {charCount} Zeichen
+            </span>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

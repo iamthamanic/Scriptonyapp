@@ -7,9 +7,11 @@ import { Textarea } from './ui/textarea';
 import { Button } from './ui/button';
 import { CharacterAutocomplete } from './CharacterAutocomplete';
 import { CharacterPicker } from './CharacterPicker';
+import { CharacterDetailModal } from './CharacterDetailModal';
 import { HighlightedTextarea } from './HighlightedTextarea';
 import { RichTextEditorModal } from './RichTextEditorModal';
 import { ReadonlyTiptapView } from './ReadonlyTiptapView';
+import { useAuth } from '../hooks/useAuth';
 import {
   Select,
   SelectContent,
@@ -136,6 +138,9 @@ export function ShotCard({
   onCharacterAdd,
   onCharacterRemove,
 }: ShotCardProps) {
+  // Auth context for user info
+  const { user } = useAuth();
+  
   // Unified edit state like Scene
   const [isEditing, setIsEditing] = useState(false);
   const [editValues, setEditValues] = useState({ shotNumber: String(shot.shotNumber), notes: shot.notes || '' });
@@ -170,6 +175,9 @@ export function ShotCard({
 
   // Details collapsible state (default open)
   const [detailsOpen, setDetailsOpen] = useState(true);
+  
+  // Dialog & Notes collapsible state (default open)
+  const [dialogNotesOpen, setDialogNotesOpen] = useState(true);
 
   // Save edited values
   const handleSaveEdit = () => {
@@ -189,6 +197,10 @@ export function ShotCard({
   // Audio edit state
   const [editingAudio, setEditingAudio] = useState<ShotAudio | null>(null);
   const [showAudioEditDialog, setShowAudioEditDialog] = useState(false);
+
+  // Character Detail Modal state
+  const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
+  const [showCharacterModal, setShowCharacterModal] = useState(false);
 
   // CRITICAL: Parse dialog JSON only when shot.dialog changes (not every render)
   const dialogContent = useMemo(() => {
@@ -550,10 +562,7 @@ export function ShotCard({
             <>
               <span 
                 className="flex-1 text-xs font-semibold cursor-pointer text-[14px] text-[rgb(208,135,0)]"
-                onClick={() => {
-                  setIsEditing(true);
-                  setEditValues({ shotNumber: String(shot.shotNumber), notes: shot.notes || '' });
-                }}
+                onClick={onToggleExpand}
               >
                 {shot.shotNumber}
               </span>
@@ -686,13 +695,22 @@ export function ShotCard({
                 <div className="flex gap-1 flex-wrap">
                   {shot.characters?.map((character) => (
                     <div key={character.id} className="relative group">
-                      <Avatar className="w-8 h-8">
+                      <Avatar 
+                        className="w-8 h-8 cursor-pointer hover:ring-2 hover:ring-[#6E59A5] transition-all"
+                        onClick={() => {
+                          setSelectedCharacter(character);
+                          setShowCharacterModal(true);
+                        }}
+                      >
                         <AvatarImage src={character.imageUrl} />
                         <AvatarFallback className="text-xs">{character.name?.[0] || '?'}</AvatarFallback>
                       </Avatar>
                       <button
-                        onClick={() => onCharacterRemove(shot.id, character.id)}
-                        className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCharacterRemove(shot.id, character.id);
+                        }}
+                        className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
                       >
                         <X className="w-2.5 h-2.5" />
                       </button>
@@ -927,70 +945,82 @@ export function ShotCard({
               </Collapsible>
               </div>
 
-              {/* BOTTOM ROW: Dialog + Notes */}
-              <div className="grid grid-cols-2 gap-2">
-                {/* Dialog */}
-                <div>
-                  <div className="flex items-center justify-between mb-0.5">
-                    <label className="text-neutral-400 text-[10px]">Dialog</label>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        console.log('[ShotCard] 🚀 Opening Dialog Modal');
-                        setShowDialogModal(true);
-                      }}
-                      className="h-4 px-1 text-[9px] text-purple-600 hover:text-purple-700"
-                    >
-                      Maximize
-                    </Button>
-                  </div>
-                  <div 
-                    className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] p-2 cursor-pointer overflow-y-auto"
-                    onClick={() => setShowDialogModal(true)}
-                  >
-                    {dialogContent?.content?.[0]?.content?.length > 0 ? (
-                      <ReadonlyTiptapView 
-                        content={dialogContent} 
-                        className="text-[13px] leading-tight"
-                      />
-                    ) : (
-                      <span className="text-gray-400 text-[13px]">@Charakter erwähnen...</span>
-                    )}
-                  </div>
-                </div>
+              {/* Dialog & Notes Collapsible */}
+              <Collapsible open={dialogNotesOpen} onOpenChange={setDialogNotesOpen} className="mt-2">
+                <CollapsibleTrigger className="flex items-center gap-1 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors w-full">
+                  {dialogNotesOpen ? (
+                    <ChevronDown className="size-4" />
+                  ) : (
+                    <ChevronRight className="size-4" />
+                  )}
+                  <span className="text-xs">Dialog & Notes</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* Dialog */}
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-neutral-400 text-[10px]">Dialog</label>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            console.log('[ShotCard] 🚀 Opening Dialog Modal');
+                            setShowDialogModal(true);
+                          }}
+                          className="h-4 px-1 text-[9px] text-purple-600 hover:text-purple-700"
+                        >
+                          Maximize
+                        </Button>
+                      </div>
+                      <div 
+                        className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] p-2 cursor-pointer overflow-y-auto"
+                        onClick={() => setShowDialogModal(true)}
+                      >
+                        {dialogContent?.content?.[0]?.content?.length > 0 ? (
+                          <ReadonlyTiptapView 
+                            content={dialogContent} 
+                            className="text-[13px] leading-tight"
+                          />
+                        ) : (
+                          <span className="text-gray-400 text-[13px]">@Charakter erwähnen...</span>
+                        )}
+                      </div>
+                    </div>
 
-                {/* Notes */}
-                <div>
-                  <div className="flex items-center justify-between mb-0.5">
-                    <label className="text-[rgb(161,161,161)] text-[10px]">Notes</label>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        console.log('[ShotCard] 🚀 Opening Notes Modal');
-                        setShowNotesModal(true);
-                      }}
-                      className="h-4 px-1 text-[9px] text-purple-600 hover:text-purple-700"
-                    >
-                      Maximize
-                    </Button>
+                    {/* Notes */}
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[rgb(161,161,161)] text-[10px]">Notes</label>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            console.log('[ShotCard] 🚀 Opening Notes Modal');
+                            setShowNotesModal(true);
+                          }}
+                          className="h-4 px-1 text-[9px] text-purple-600 hover:text-purple-700"
+                        >
+                          Maximize
+                        </Button>
+                      </div>
+                      <div 
+                        className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] p-2 cursor-pointer overflow-y-auto"
+                        onClick={() => setShowNotesModal(true)}
+                      >
+                        {notesContent?.content?.[0]?.content?.length > 0 ? (
+                          <ReadonlyTiptapView 
+                            content={notesContent} 
+                            className="text-[13px] leading-tight"
+                          />
+                        ) : (
+                          <span className="text-gray-400 text-[13px]">Notizen...</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div 
-                    className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] p-2 cursor-pointer overflow-y-auto"
-                    onClick={() => setShowNotesModal(true)}
-                  >
-                    {notesContent?.content?.[0]?.content?.length > 0 ? (
-                      <ReadonlyTiptapView 
-                        content={notesContent} 
-                        className="text-[13px] leading-tight"
-                      />
-                    ) : (
-                      <span className="text-gray-400 text-[13px]">Notizen...</span>
-                    )}
-                  </div>
-                </div>
-                </div>
+                </CollapsibleContent>
+              </Collapsible>
               </div>
             </div>
           </div>
@@ -1042,11 +1072,20 @@ export function ShotCard({
         value={dialogContent}
         onChange={(jsonDoc) => {
           // ✅ Save as JSON object directly (not string!)
+          const now = new Date().toISOString();
           console.log('[ShotCard] 💾 Saving dialog as JSON object:', jsonDoc);
-          onUpdate(shot.id, { dialog: jsonDoc });
+          console.log('[ShotCard] 🕐 Updating timestamp:', now);
+          onUpdate(shot.id, { 
+            dialog: jsonDoc,
+            updated_at: now  // ✅ Send timestamp to backend
+          });
         }}
         title="Dialog Editor"
         characters={projectCharacters}
+        lastModified={shot.updatedAt ? {
+          timestamp: shot.updatedAt,
+          userName: user?.name // TODO: Backend should track updatedBy user ID
+        } : undefined}
       />
 
       {/* Notes Rich Text Editor Modal */}
@@ -1056,11 +1095,37 @@ export function ShotCard({
         value={notesContent}
         onChange={(jsonDoc) => {
           // ✅ Save as JSON object directly (not string!)
+          const now = new Date().toISOString();
           console.log('[ShotCard] 💾 Saving notes as JSON object:', jsonDoc);
-          onUpdate(shot.id, { notes: jsonDoc });
+          console.log('[ShotCard] 🕐 Updating timestamp:', now);
+          onUpdate(shot.id, { 
+            notes: jsonDoc,
+            updated_at: now  // ✅ Send timestamp to backend
+          });
         }}
         title="Notes Editor"
         characters={projectCharacters}
+        lastModified={shot.updatedAt ? {
+          timestamp: shot.updatedAt,
+          userName: user?.name // TODO: Backend should track updatedBy user ID
+        } : undefined}
+      />
+
+      {/* Character Detail Modal */}
+      <CharacterDetailModal
+        character={selectedCharacter}
+        open={showCharacterModal}
+        onOpenChange={setShowCharacterModal}
+        onUpdate={(characterId, updates) => {
+          // TODO: Implement character update via API
+          toast.success('Character Update coming soon!');
+          console.log('Update character:', characterId, updates);
+        }}
+        onImageUpload={(characterId, imageUrl) => {
+          // TODO: Implement character image upload via API
+          toast.success('Image Upload coming soon!');
+          console.log('Upload image for character:', characterId, imageUrl);
+        }}
       />
     </div>
   );

@@ -1581,11 +1581,13 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
                       <span 
                         className="flex-1 font-semibold cursor-pointer text-[18px] text-[rgb(21,93,252)]"
                         onClick={() => {
-                          setEditingAct(act.id);
-                          setEditValues(prev => ({
-                            ...prev,
-                            [act.id]: { title: act.title, description: act.description }
-                          }));
+                          const next = new Set(expandedActs);
+                          if (isExpanded) {
+                            next.delete(act.id);
+                          } else {
+                            next.add(act.id);
+                          }
+                          setExpandedActs(next);
                         }}
                       >
                         {act.title}
@@ -1742,11 +1744,13 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
                                   <span 
                                     className="flex-1 text-sm font-semibold cursor-pointer text-[14px] text-[rgb(0,166,62)]"
                                     onClick={() => {
-                                      setEditingSequence(sequence.id);
-                                      setEditValues(prev => ({
-                                        ...prev,
-                                        [sequence.id]: { title: sequence.title, description: sequence.description }
-                                      }));
+                                      const next = new Set(expandedSequences);
+                                      if (isSeqExpanded) {
+                                        next.delete(sequence.id);
+                                      } else {
+                                        next.add(sequence.id);
+                                      }
+                                      setExpandedSequences(next);
                                     }}
                                   >
                                     {sequence.title}
@@ -1903,11 +1907,13 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
                                               <span 
                                                 className="flex-1 text-xs font-semibold cursor-pointer text-[14px] text-[rgb(230,0,118)]"
                                                 onClick={() => {
-                                                  setEditingScene(scene.id);
-                                                  setEditValues(prev => ({
-                                                    ...prev,
-                                                    [scene.id]: { title: scene.title, description: scene.description }
-                                                  }));
+                                                  const next = new Set(expandedScenes);
+                                                  if (isSceneExpanded) {
+                                                    next.delete(scene.id);
+                                                  } else {
+                                                    next.add(scene.id);
+                                                  }
+                                                  setExpandedScenes(next);
                                                 }}
                                               >
                                                 {scene.title}

@@ -39,78 +39,9 @@ export async function seedTestUser() {
 
 export async function seedInitialData() {
   try {
-    // Check if data already exists
-    const existingProjects = await projectsApi.getAll();
-    if (existingProjects && existingProjects.length > 0) {
-      console.log("Data already exists, skipping seed");
-      return;
-    }
-
-    console.log("Seeding initial data...");
-
-    // Create a world
-    const world = await worldsApi.create({
-      name: "Kontinent Silkat",
-      description: "Eine Fantasy-Welt voller Magie und Abenteuer",
-      type: "Fantasy",
-    });
-
-    console.log("Created world:", world.name);
-
-    // Create categories for the world
-    const geographyCategory = await categoriesApi.create(world.id, {
-      name: "Geographie",
-      type: "geography",
-      icon: "Mountain",
-      color: "#10B981",
-    });
-
-    const politicsCategory = await categoriesApi.create(world.id, {
-      name: "Politik",
-      type: "politics",
-      icon: "Users",
-      color: "#3B82F6",
-    });
-
-    console.log("Created categories");
-
-    // Create items
-    await itemsApi.create(world.id, geographyCategory.id, {
-      name: "Mount Silkar",
-      description: "Ein majestätischer Berg im Herzen des Kontinents",
-      category: "Geographie",
-      categoryType: "geography",
-    });
-
-    await itemsApi.create(world.id, geographyCategory.id, {
-      name: "Delta River",
-      description: "Ein wichtiger Fluss, der durch das Land fließt",
-      category: "Geographie",
-      categoryType: "geography",
-    });
-
-    await itemsApi.create(world.id, politicsCategory.id, {
-      name: "The Council of Seven",
-      description: "Das regierende Gremium des Kontinents",
-      category: "Politik",
-      categoryType: "politics",
-    });
-
-    console.log("Created worldbuilding items");
-
-    // Create a project
-    const project = await projectsApi.create({
-      title: "The Last Frontier",
-      logline: "Eine Sci-Fi-Thriller über die letzte Reise der Menschheit zu den Sternen",
-      type: "film",
-      genre: "Science Fiction, Thriller",
-      duration: "120",
-      linkedWorldId: world.id,
-    });
-
-    console.log("Created project:", project.title);
-
-    console.log("✅ Initial data seeded successfully!");
+    console.log("⚠️ seedInitialData() is deprecated - no mock data will be created");
+    console.log("ℹ️  Create your first project and world manually in the UI");
+    return;
   } catch (error) {
     console.error("Error seeding data:", error);
     throw error;

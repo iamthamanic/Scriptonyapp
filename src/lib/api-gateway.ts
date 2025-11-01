@@ -16,7 +16,10 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
  */
 export const EDGE_FUNCTIONS = {
   PROJECTS: 'scriptony-projects',
-  TIMELINE_V2: 'scriptony-timeline-v2', // Generic Timeline Engine (Nodes)
+  PROJECT_NODES: 'scriptony-project-nodes', // Generic Template Engine (Nodes) ✅ REFACTORED!
+  TIMELINE_V2: 'scriptony-timeline-v2', // DEPRECATED: Use PROJECT_NODES instead
+  SHOTS: 'scriptony-shots', // Shots Microservice (Film-specific) ✅ NEW!
+  CHARACTERS: 'scriptony-characters', // Characters Microservice (Universal) ✅ NEW!
   AUDIO: 'scriptony-audio', // Audio Processing (Upload, Waveform, Trim, Fade)
   WORLDBUILDING: 'scriptony-worldbuilding',
   ASSISTANT: 'scriptony-assistant',
@@ -49,15 +52,16 @@ const ROUTE_MAP: Record<string, string> = {
   // Projects
   '/projects': EDGE_FUNCTIONS.PROJECTS,
   
-  // Timeline V2 (Generic Nodes)
-  '/nodes': EDGE_FUNCTIONS.TIMELINE_V2,
-  '/initialize-project': EDGE_FUNCTIONS.TIMELINE_V2,
+  // Project Nodes (Generic Template Engine) ✅ REFACTORED!
+  '/nodes': EDGE_FUNCTIONS.PROJECT_NODES,
+  '/initialize-project': EDGE_FUNCTIONS.PROJECT_NODES,
   
-  // Shots (Images only - Audio is separate)
-  '/shots': EDGE_FUNCTIONS.TIMELINE_V2,
+  // Shots Microservice ✅ NEW!
+  '/shots': EDGE_FUNCTIONS.SHOTS,
   
-  // Timeline Characters (for @-mentions in shots)
-  '/timeline-characters': EDGE_FUNCTIONS.TIMELINE_V2,
+  // Characters Microservice ✅ NEW!
+  '/characters': EDGE_FUNCTIONS.CHARACTERS,
+  '/timeline-characters': EDGE_FUNCTIONS.CHARACTERS, // Legacy compatibility
   
   // Audio (Upload, Waveform, Trim, Fade)
   // Note: /shots/:id/upload-audio routes to AUDIO function
@@ -66,7 +70,6 @@ const ROUTE_MAP: Record<string, string> = {
   
   // Worldbuilding
   '/worlds': EDGE_FUNCTIONS.WORLDBUILDING,
-  '/characters': EDGE_FUNCTIONS.WORLDBUILDING, // Worldbuilding characters only
   '/locations': EDGE_FUNCTIONS.WORLDBUILDING,
   
   // Assistant (AI + RAG + MCP)

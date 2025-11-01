@@ -1,89 +1,12 @@
 // Fallback mock data when API is not available
 
-export const mockProjects = [
-  {
-    id: "mock-1",
-    title: "The Last Frontier",
-    logline: "A sci-fi thriller about humanity's final journey to the stars",
-    type: "Movie",
-    genre: "Sci-fi",
-    duration: "90 min",
-    createdAt: new Date("2024-01-15").toISOString(),
-    lastEdited: new Date("2025-09-28T14:30:00").toISOString(),
-    linkedWorldId: "mock-world-1",
-  },
-  {
-    id: "mock-2",
-    title: "Midnight in Paris",
-    logline: "A romantic comedy set in the streets of Paris",
-    type: "Movie",
-    genre: "Comedy",
-    duration: "105 min",
-    createdAt: new Date("2024-02-20").toISOString(),
-    lastEdited: new Date("2025-09-29T09:15:00").toISOString(),
-    linkedWorldId: undefined,
-  },
-];
+export const mockProjects: any[] = [];
 
-export const mockWorlds = [
-  { 
-    id: "mock-world-1", 
-    name: "Kontinent Silkat",
-    description: "A vast continent with diverse landscapes",
-    createdAt: new Date("2024-01-10").toISOString(),
-    lastEdited: new Date("2025-09-28T14:30:00").toISOString(),
-  },
-];
+export const mockWorlds: any[] = [];
 
-export const mockCategories = [
-  {
-    id: "mock-cat-1",
-    worldId: "mock-world-1",
-    name: "Geographie",
-    icon: "mountain",
-    createdAt: new Date("2024-01-11").toISOString(),
-  },
-  {
-    id: "mock-cat-2",
-    worldId: "mock-world-1",
-    name: "Politik",
-    icon: "landmark",
-    createdAt: new Date("2024-01-11").toISOString(),
-  },
-];
+export const mockCategories: any[] = [];
 
-export const mockItems = [
-  { 
-    id: "mock-item-1", 
-    worldId: "mock-world-1",
-    categoryId: "mock-cat-1",
-    name: "Mount Silkar", 
-    category: "Geographie", 
-    categoryType: "geography",
-    description: "The highest mountain in Silkat",
-    createdAt: new Date("2024-01-12").toISOString(),
-  },
-  { 
-    id: "mock-item-2", 
-    worldId: "mock-world-1",
-    categoryId: "mock-cat-1",
-    name: "Delta River", 
-    category: "Geographie", 
-    categoryType: "geography",
-    description: "A winding river through the valley",
-    createdAt: new Date("2024-01-12").toISOString(),
-  },
-  { 
-    id: "mock-item-3", 
-    worldId: "mock-world-1",
-    categoryId: "mock-cat-2",
-    name: "The Council of Seven", 
-    category: "Politik", 
-    categoryType: "politics",
-    description: "The ruling body of Silkat",
-    createdAt: new Date("2024-01-12").toISOString(),
-  },
-];
+export const mockItems: any[] = [];
 
 export const mockScenes = [
   {
@@ -99,18 +22,8 @@ export const mockScenes = [
   },
 ];
 
-export const mockCharacters = [
-  {
-    id: "mock-char-1",
-    projectId: "mock-1",
-    name: "Captain Sarah Chen",
-    role: "Protagonist",
-    description: "A seasoned space captain leading humanity's final mission",
-    age: "42",
-    gender: "Female",
-    createdAt: new Date("2024-01-16").toISOString(),
-  },
-];
+// No mock characters - empty array ✅
+export const mockCharacters: any[] = [];
 
 // In-memory storage for fallback mode
 let localProjects = [...mockProjects];

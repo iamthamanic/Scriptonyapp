@@ -1,8 +1,8 @@
 /**
  * 🎬 SCRIPTONY TIMELINE V2 - GENERISCHE EDGE FUNCTION
  * 
- * 🕐 LAST UPDATED: 2025-11-01 15:45 UTC
- * 📝 CHANGE: JSON Storage Fix - Dialog/Notes als JSON Object statt String
+ * 🕐 LAST UPDATED: 2025-11-01 20:00 UTC
+ * 📝 CHANGE: Last Modified Timestamp - Accept updated_at from client
  * 
  * Template Engine - Generisch für ALLE Project Templates!
  * 
@@ -1198,6 +1198,11 @@ app.put("/shots/:id", async (c) => {
       dbUpdates.notes = notes;
     }
     if (updates.orderIndex !== undefined) dbUpdates.order_index = updates.orderIndex;
+    
+    // ✅ TIMESTAMP: Accept updated_at from client for last modified tracking
+    if (updates.updated_at !== undefined || updates.updatedAt !== undefined) {
+      dbUpdates.updated_at = updates.updated_at || updates.updatedAt;
+    }
 
     console.log("📊 DB Updates object:", { dbUpdates, hasUpdates: Object.keys(dbUpdates).length > 0 });
 

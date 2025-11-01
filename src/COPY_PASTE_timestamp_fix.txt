@@ -1,0 +1,41 @@
+==============================================================================
+🕐 TIMESTAMP FIX - Code zum Einfügen in Edge Function
+==============================================================================
+
+DATEI: scriptony-timeline-v2/index.ts
+ZEILE: ~1200 (nach "if (updates.orderIndex !== undefined)")
+
+SUCHE NACH:
+------------
+    if (updates.orderIndex !== undefined) dbUpdates.order_index = updates.orderIndex;
+
+    console.log("📊 DB Updates object:", { dbUpdates, hasUpdates: Object.keys(dbUpdates).length > 0 });
+
+
+ERSETZE MIT:
+------------
+    if (updates.orderIndex !== undefined) dbUpdates.order_index = updates.orderIndex;
+    
+    // ✅ TIMESTAMP: Accept updated_at from client for last modified tracking
+    if (updates.updated_at !== undefined || updates.updatedAt !== undefined) {
+      dbUpdates.updated_at = updates.updated_at || updates.updatedAt;
+    }
+
+    console.log("📊 DB Updates object:", { dbUpdates, hasUpdates: Object.keys(dbUpdates).length > 0 });
+
+
+==============================================================================
+📋 ODER: Komplette Datei kopieren
+==============================================================================
+
+1. Öffne in Figma Make: /supabase/functions/scriptony-timeline-v2/index.ts
+2. Cmd+A (Alles auswählen)
+3. Cmd+C (Kopieren)
+4. Gehe zu Supabase Dashboard → Edge Functions → scriptony-timeline-v2
+5. Cmd+A im Editor
+6. Cmd+V (Einfügen)
+7. Deploy!
+
+✅ Die Datei enthält bereits den Fix!
+
+==============================================================================

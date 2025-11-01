@@ -353,9 +353,12 @@ html {
 }
 
 /* TipTap Mention Styling - Character Mentions */
+/* IMPORTANT: Use high specificity to override prose plugin */
 .tiptap .mention,
-.ProseMirror .mention {
-  color: var(--character-blue);
+.ProseMirror .mention,
+.prose .mention,
+span[data-type="character-mention"] {
+  color: var(--character-blue) !important;
   font-weight: 600;
   background-color: var(--character-blue-light);
   padding: 0.125rem 0.375rem;
@@ -365,18 +368,24 @@ html {
 }
 
 .tiptap .mention:hover,
-.ProseMirror .mention:hover {
+.ProseMirror .mention:hover,
+.prose .mention:hover,
+span[data-type="character-mention"]:hover {
   background-color: color-mix(in oklab, var(--character-blue) 20%, transparent);
 }
 
 .dark .tiptap .mention,
-.dark .ProseMirror .mention {
-  color: #60A5FA;
+.dark .ProseMirror .mention,
+.dark .prose .mention,
+.dark span[data-type="character-mention"] {
+  color: #60A5FA !important;
   background-color: rgba(59, 130, 246, 0.15);
 }
 
 .dark .tiptap .mention:hover,
-.dark .ProseMirror .mention:hover {
+.dark .ProseMirror .mention:hover,
+.dark .prose .mention:hover,
+.dark span[data-type="character-mention"]:hover {
   background-color: rgba(59, 130, 246, 0.25);
 }
 
