@@ -1,5 +1,8 @@
 /**
- * Scriptony Auth Edge Function
+ * 🔐 SCRIPTONY AUTH EDGE FUNCTION
+ * 
+ * 🕐 LAST UPDATED: 2025-10-10 10:50 UTC
+ * 📝 STABLE VERSION - No recent changes
  * 
  * Handles:
  * - Custom Signup with Organization Creation

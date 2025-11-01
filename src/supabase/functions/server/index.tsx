@@ -11,13 +11,14 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // AI Chat is now handled by scriptony-assistant Edge Function
 // import aiChatRoutes from "./routes-ai-minimal.tsx";
 
-// Timeline Routes (Acts, Sequences, Scenes, Shots)
-import shotsRoutes from "./routes-shots.tsx";
-import { createProjectsInitRoutes } from "./routes-projects-init.tsx";
-import { createActsRoutes } from "./routes-acts.tsx";
-import { createSequencesRoutes } from "./routes-sequences.tsx";
-import { createScenesRoutes } from "./routes-scenes.tsx";
-import { createDebugRoutes } from "./routes-debug.tsx";
+// Timeline Routes - MIGRATED to scriptony-timeline-v2 Edge Function
+// All timeline routes now use the new microservice architecture
+// import shotsRoutes from "./routes-shots.tsx";
+// import { createProjectsInitRoutes } from "./routes-projects-init.tsx";
+// import { createActsRoutes } from "./routes-acts.tsx";
+// import { createSequencesRoutes } from "./routes-sequences.tsx";
+// import { createScenesRoutes } from "./routes-scenes.tsx";
+// import { createDebugRoutes } from "./routes-debug.tsx";
 
 const app = new Hono();
 

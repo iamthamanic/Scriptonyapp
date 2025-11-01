@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Upload, Trash2, X, Music, Volume2, MoreVertical, Copy, ChevronDown, ChevronRight, Plus, GripVertical, Edit } from 'lucide-react';
 import { useDrag, useDrop } from 'react-dnd';
 import { toast } from 'sonner@2.0.3';
@@ -8,6 +8,8 @@ import { Button } from './ui/button';
 import { CharacterAutocomplete } from './CharacterAutocomplete';
 import { CharacterPicker } from './CharacterPicker';
 import { HighlightedTextarea } from './HighlightedTextarea';
+import { RichTextEditorModal } from './RichTextEditorModal';
+import { ReadonlyTiptapView } from './ReadonlyTiptapView';
 import {
   Select,
   SelectContent,
@@ -148,6 +150,16 @@ export function ShotCard({
   const [characterPickerPosition, setCharacterPickerPosition] = useState({ top: 0, left: 0 });
   const dialogRef = useRef<HTMLTextAreaElement>(null);
 
+  // Rich Text Editor Modals
+  const [showDialogModal, setShowDialogModal] = useState(false);
+  const [showNotesModal, setShowNotesModal] = useState(false);
+
+  // Debug modal state
+  useEffect(() => {
+    console.log('[ShotCard] 📝 showDialogModal:', showDialogModal);
+    console.log('[ShotCard] 📝 showNotesModal:', showNotesModal);
+  }, [showDialogModal, showNotesModal]);
+
   // Debug: Log autocomplete state
   useEffect(() => {
     console.log('[ShotCard] 🎯 showCharacterAutocomplete:', showCharacterAutocomplete);
@@ -177,6 +189,34 @@ export function ShotCard({
   // Audio edit state
   const [editingAudio, setEditingAudio] = useState<ShotAudio | null>(null);
   const [showAudioEditDialog, setShowAudioEditDialog] = useState(false);
+
+  // CRITICAL: Parse dialog JSON only when shot.dialog changes (not every render)
+  const dialogContent = useMemo(() => {
+    if (!shot.dialog) return { type: 'doc', content: [{ type: 'paragraph' }] };
+    if (typeof shot.dialog === 'string') {
+      try {
+        return JSON.parse(shot.dialog);
+      } catch {
+        // Fallback for legacy plain text
+        return { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: shot.dialog }] }] };
+      }
+    }
+    return shot.dialog;
+  }, [shot.dialog]);
+
+  // CRITICAL: Parse notes JSON only when shot.notes changes (not every render)
+  const notesContent = useMemo(() => {
+    if (!shot.notes) return { type: 'doc', content: [{ type: 'paragraph' }] };
+    if (typeof shot.notes === 'string') {
+      try {
+        return JSON.parse(shot.notes);
+      } catch {
+        // Fallback for legacy plain text
+        return { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: shot.notes }] }] };
+      }
+    }
+    return shot.notes;
+  }, [shot.notes]);
 
   // Drag & Drop
   const [{ isDragging }, drag] = useDrag({
@@ -891,36 +931,64 @@ export function ShotCard({
               <div className="grid grid-cols-2 gap-2">
                 {/* Dialog */}
                 <div>
-                  <label className="text-neutral-400 text-[10px] block mb-0.5">Dialog</label>
-                  <div className="relative">
-                    <HighlightedTextarea
-                      ref={dialogRef}
-                      value={shot.dialog || ''}
-                      onChange={(e) => handleDialogChange(e.target.value)}
-                      onKeyDown={(e) => {
-                        // Close character autocomplete on Escape
-                        if (e.key === 'Escape' && showCharacterAutocomplete) {
-                          e.preventDefault();
-                          setShowCharacterAutocomplete(false);
-                        }
+                  <div className="flex items-center justify-between mb-0.5">
+                    <label className="text-neutral-400 text-[10px]">Dialog</label>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        console.log('[ShotCard] 🚀 Opening Dialog Modal');
+                        setShowDialogModal(true);
                       }}
-                      highlightPattern={/@\w+/g}
-                      highlightClassName="text-[#60A5FA] font-bold"
-                      className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] resize-none p-2"
-                      placeholder="@Charakter erwähnen..."
-                    />
+                      className="h-4 px-1 text-[9px] text-purple-600 hover:text-purple-700"
+                    >
+                      Maximize
+                    </Button>
+                  </div>
+                  <div 
+                    className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] p-2 cursor-pointer overflow-y-auto"
+                    onClick={() => setShowDialogModal(true)}
+                  >
+                    {dialogContent?.content?.[0]?.content?.length > 0 ? (
+                      <ReadonlyTiptapView 
+                        content={dialogContent} 
+                        className="text-[13px] leading-tight"
+                      />
+                    ) : (
+                      <span className="text-gray-400 text-[13px]">@Charakter erwähnen...</span>
+                    )}
                   </div>
                 </div>
 
                 {/* Notes */}
                 <div>
-                  <label className="text-[rgb(161,161,161)] text-[10px] block mb-0.5">Notes</label>
-                  <Textarea
-                    value={shot.notes || ''}
-                    onChange={(e) => onUpdate(shot.id, { notes: e.target.value })}
-                    className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] resize-none p-2"
-                    placeholder="Notizen..."
-                  />
+                  <div className="flex items-center justify-between mb-0.5">
+                    <label className="text-[rgb(161,161,161)] text-[10px]">Notes</label>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        console.log('[ShotCard] 🚀 Opening Notes Modal');
+                        setShowNotesModal(true);
+                      }}
+                      className="h-4 px-1 text-[9px] text-purple-600 hover:text-purple-700"
+                    >
+                      Maximize
+                    </Button>
+                  </div>
+                  <div 
+                    className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] p-2 cursor-pointer overflow-y-auto"
+                    onClick={() => setShowNotesModal(true)}
+                  >
+                    {notesContent?.content?.[0]?.content?.length > 0 ? (
+                      <ReadonlyTiptapView 
+                        content={notesContent} 
+                        className="text-[13px] leading-tight"
+                      />
+                    ) : (
+                      <span className="text-gray-400 text-[13px]">Notizen...</span>
+                    )}
+                  </div>
                 </div>
                 </div>
               </div>
@@ -965,6 +1033,34 @@ export function ShotCard({
           url: editingAudio.fileUrl, // FIX: Use fileUrl from ShotAudio type
         } : null}
         onSave={handleAudioEditSave}
+      />
+
+      {/* Dialog Rich Text Editor Modal */}
+      <RichTextEditorModal
+        isOpen={showDialogModal}
+        onClose={() => setShowDialogModal(false)}
+        value={dialogContent}
+        onChange={(jsonDoc) => {
+          // ✅ Save as JSON object directly (not string!)
+          console.log('[ShotCard] 💾 Saving dialog as JSON object:', jsonDoc);
+          onUpdate(shot.id, { dialog: jsonDoc });
+        }}
+        title="Dialog Editor"
+        characters={projectCharacters}
+      />
+
+      {/* Notes Rich Text Editor Modal */}
+      <RichTextEditorModal
+        isOpen={showNotesModal}
+        onClose={() => setShowNotesModal(false)}
+        value={notesContent}
+        onChange={(jsonDoc) => {
+          // ✅ Save as JSON object directly (not string!)
+          console.log('[ShotCard] 💾 Saving notes as JSON object:', jsonDoc);
+          onUpdate(shot.id, { notes: jsonDoc });
+        }}
+        title="Notes Editor"
+        characters={projectCharacters}
       />
     </div>
   );

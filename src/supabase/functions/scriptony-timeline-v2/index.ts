@@ -1,6 +1,9 @@
 /**
  * 🎬 SCRIPTONY TIMELINE V2 - GENERISCHE EDGE FUNCTION
  * 
+ * 🕐 LAST UPDATED: 2025-11-01 15:45 UTC
+ * 📝 CHANGE: JSON Storage Fix - Dialog/Notes als JSON Object statt String
+ * 
  * Template Engine - Generisch für ALLE Project Templates!
  * 
  * Unterstützt:
@@ -1167,8 +1170,33 @@ app.put("/shots/:id", async (c) => {
     if (updates.reference_image_url !== undefined || updates.referenceImageUrl !== undefined) {
       dbUpdates.reference_image_url = updates.reference_image_url || updates.referenceImageUrl;
     }
-    if (updates.dialog !== undefined) dbUpdates.dialog = updates.dialog;
-    if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
+    
+    // ✅ DIALOG & NOTES: Accept both JSON object and string (backward compatibility)
+    if (updates.dialog !== undefined) {
+      let dialog = updates.dialog;
+      // If it's a string, try to parse it (legacy data)
+      if (typeof dialog === 'string') {
+        try {
+          dialog = JSON.parse(dialog);
+        } catch {
+          // Keep as string if not valid JSON
+        }
+      }
+      dbUpdates.dialog = dialog;
+    }
+    
+    if (updates.notes !== undefined) {
+      let notes = updates.notes;
+      // If it's a string, try to parse it (legacy data)
+      if (typeof notes === 'string') {
+        try {
+          notes = JSON.parse(notes);
+        } catch {
+          // Keep as string if not valid JSON
+        }
+      }
+      dbUpdates.notes = notes;
+    }
     if (updates.orderIndex !== undefined) dbUpdates.order_index = updates.orderIndex;
 
     console.log("📊 DB Updates object:", { dbUpdates, hasUpdates: Object.keys(dbUpdates).length > 0 });

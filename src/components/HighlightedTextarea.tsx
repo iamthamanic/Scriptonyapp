@@ -13,7 +13,17 @@ interface HighlightedTextareaProps extends React.TextareaHTMLAttributes<HTMLText
  * Uses backdrop technique: Normal text uses same color as regular textarea, @mentions are highlighted
  */
 export const HighlightedTextarea = forwardRef<HTMLTextAreaElement, HighlightedTextareaProps>(
-  ({ value = '', highlightPattern = /@\w+/g, highlightClassName = 'text-[#60A5FA] font-bold', className, onChange, onScroll, ...props }, ref) => {
+  (props, ref) => {
+    const { 
+      value = '', 
+      highlightPattern = /@\\w+/g, 
+      highlightClassName = 'text-[#60A5FA] font-bold', 
+      className, 
+      onChange, 
+      onScroll, 
+      ...restProps 
+    } = props;
+    
     const backdropRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -93,7 +103,7 @@ export const HighlightedTextarea = forwardRef<HTMLTextAreaElement, HighlightedTe
           style={{
             caretColor: 'inherit' // Make cursor visible
           }}
-          {...props}
+          {...restProps}
         />
 
         {/* Backdrop with syntax highlighting - POSITIONED ON TOP with higher z-index */}
