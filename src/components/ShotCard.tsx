@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { Upload, Trash2, X, Music, Volume2, MoreVertical, Copy, ChevronDown, ChevronRight, Plus, GripVertical, Edit } from 'lucide-react';
 import { useDrag, useDrop } from 'react-dnd';
 import { toast } from 'sonner@2.0.3';
+import shotPlaceholder from 'figma:asset/5bbfb6c934162456ce6c992c152322cee414939e.png';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Button } from './ui/button';
@@ -11,6 +12,7 @@ import { CharacterDetailModal } from './CharacterDetailModal';
 import { HighlightedTextarea } from './HighlightedTextarea';
 import { RichTextEditorModal } from './RichTextEditorModal';
 import { ReadonlyTiptapView } from './ReadonlyTiptapView';
+import { ShotImageCropDialog } from './ShotImageCropDialog';
 import { useAuth } from '../hooks/useAuth';
 import {
   Select,
@@ -120,7 +122,7 @@ interface ShotCardProps {
   onCharacterRemove: (shotId: string, characterId: string) => void;
 }
 
-export function ShotCard({
+export const ShotCard = memo(function ShotCard({
   shot,
   sceneId,
   projectId,
@@ -201,6 +203,10 @@ export function ShotCard({
   // Character Detail Modal state
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [showCharacterModal, setShowCharacterModal] = useState(false);
+
+  // Image Crop Dialog state
+  const [showImageCropDialog, setShowImageCropDialog] = useState(false);
+  const [tempImageForCrop, setTempImageForCrop] = useState<string>('');
 
   // CRITICAL: Parse dialog JSON only when shot.dialog changes (not every render)
   const dialogContent = useMemo(() => {
@@ -294,13 +300,98 @@ export function ShotCard({
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setIsUploadingImage(true);
-      try {
-        await onImageUpload(shot.id, file);
-      } finally {
-        setIsUploadingImage(false);
+      console.log('[ShotCard] 📤 Image selected:', file.name, file.size, 'bytes');
+      
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast.error('Bitte wähle eine Bilddatei aus');
+        e.target.value = '';
+        return;
       }
+      
+      // Validate file size (max 10MB)
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        toast.error('Bild zu groß (max 10MB)');
+        e.target.value = '';
+        return;
+      }
+      
+      // Convert to base64 for crop preview
+      const reader = new FileReader();
+      reader.onload = () => {
+        console.log('[ShotCard] ✅ Image converted to base64');
+        setTempImageForCrop(reader.result as string);
+        setShowImageCropDialog(true);
+      };
+      reader.onerror = () => {
+        console.error('[ShotCard] ❌ Failed to read file');
+        toast.error('Fehler beim Laden des Bildes');
+      };
+      reader.readAsDataURL(file);
     }
+    // Reset input so same file can be re-uploaded
+    e.target.value = '';
+  };
+
+  const handleImageCropComplete = async (croppedImageBase64: string) => {
+    console.log('[ShotCard] ⚡ OPTIMISTIC UI: Image appears INSTANTLY!');
+    
+    // 🚀 OPTIMISTIC UI: Zeige Bild SOFORT an!
+    const previousImageUrl = shot.imageUrl;
+    onShotUpdate(shot.id, { imageUrl: croppedImageBase64 });
+    
+    // Dialog sofort schließen
+    setShowImageCropDialog(false);
+    setTempImageForCrop('');
+    
+    // Upload im Hintergrund
+    setIsUploadingImage(true);
+    
+    try {
+      // Convert base64 to blob
+      const base64Data = croppedImageBase64.split(',')[1];
+      if (!base64Data) {
+        throw new Error('Invalid base64 data');
+      }
+      
+      const byteCharacters = atob(base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/jpeg' });
+      
+      // Convert blob to file
+      const file = new File([blob], `shot-${shot.id}-image.jpg`, { type: 'image/jpeg' });
+      
+      // Upload cropped image im Hintergrund
+      console.log('[ShotCard] 🌐 Background upload starting...');
+      await onImageUpload(shot.id, file);
+      
+      console.log('[ShotCard] ✅ Background upload complete!');
+    } catch (error) {
+      console.error('[ShotCard] ❌ Background upload failed:', error);
+      
+      // ROLLBACK bei Fehler
+      if (previousImageUrl) {
+        onShotUpdate(shot.id, { imageUrl: previousImageUrl });
+      } else {
+        onShotUpdate(shot.id, { imageUrl: '' });
+      }
+      
+      toast.error('Upload fehlgeschlagen - Bild entfernt');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleImageCropCancel = () => {
+    console.log('[ShotCard] ❌ Image crop cancelled');
+    setShowImageCropDialog(false);
+    setTempImageForCrop('');
+    setIsUploadingImage(false);
   };
 
   const handleAudioUpload = async (
@@ -529,7 +620,10 @@ export function ShotCard({
           className="absolute inset-0 rounded-lg bg-white/0 group-hover:bg-white/10 dark:group-hover:bg-white/5 transition-all duration-300 pointer-events-none"
         />
         {/* Shot Header */}
-        <div className="flex items-center gap-2 p-2">
+        <div className={cn(
+          "flex items-center gap-2 transition-all",
+          isExpanded ? "p-2" : "p-2 min-h-[56px]"
+        )}>
           <GripVertical className="size-3 text-muted-foreground cursor-move flex-shrink-0" />
           
           <button onClick={onToggleExpand} className="flex-shrink-0">
@@ -560,12 +654,41 @@ export function ShotCard({
             </>
           ) : (
             <>
-              <span 
-                className="flex-1 text-xs font-semibold cursor-pointer text-[14px] text-[rgb(208,135,0)]"
+              <div 
+                className="flex-1 cursor-pointer min-w-0"
                 onClick={onToggleExpand}
               >
-                {shot.shotNumber}
-              </span>
+                <div className="text-xs font-semibold text-[14px] text-[rgb(208,135,0)]">
+                  {shot.shotNumber}
+                </div>
+                {!isExpanded && shot.description && (
+                  <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate mt-0.5">
+                    {shot.description}
+                  </div>
+                )}
+              </div>
+              
+              {/* Thumbnail - ONLY in collapsed state - AFTER text */}
+              {!isExpanded && (
+                <div 
+                  className="relative w-[64px] h-[40px] flex-shrink-0 rounded overflow-hidden border border-yellow-400/50 bg-gray-100 dark:bg-gray-800 cursor-pointer"
+                  onClick={onToggleExpand}
+                >
+                  <img
+                    src={shot.imageUrl || shotPlaceholder}
+                    alt="Shot thumbnail"
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                  {isUploadingImage && (
+                    <div className="absolute inset-0 bg-purple-600/20 flex items-center justify-center">
+                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    </div>
+                  )}
+                </div>
+              )}
+              
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -654,14 +777,14 @@ export function ShotCard({
                       <img
                         src={shot.imageUrl}
                         alt="Shot preview"
-                        className={cn(
-                          "w-full h-full object-cover rounded-[5px]",
-                          isUploadingImage && "opacity-50"
-                        )}
+                        className="w-full h-full object-cover rounded-[5px]"
+                        loading="lazy"
+                        decoding="async"
                       />
                       {isUploadingImage && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-[5px]">
-                          <div className="w-8 h-8 border-3 border-white border-t-transparent rounded-full animate-spin" />
+                        <div className="absolute top-2 right-2 bg-purple-600/90 backdrop-blur-sm text-white text-[9px] px-2 py-1 rounded-md flex items-center gap-1.5 shadow-lg">
+                          <div className="w-2.5 h-2.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span>Saving...</span>
                         </div>
                       )}
                     </>
@@ -675,7 +798,8 @@ export function ShotCard({
                       ) : (
                         <>
                           <Upload className="w-4 h-4" />
-                          <span className="text-[9px]">Bild</span>
+                          <span className="text-[9px]">Bild hochladen</span>
+                          <span className="text-[8px] text-gray-400/70 mt-0.5">Empfohlen: 1920×1080 (16:9)</span>
                         </>
                       )}
                     </div>
@@ -702,7 +826,7 @@ export function ShotCard({
                           setShowCharacterModal(true);
                         }}
                       >
-                        <AvatarImage src={character.imageUrl} />
+                        <AvatarImage src={character.imageUrl} loading="lazy" />
                         <AvatarFallback className="text-xs">{character.name?.[0] || '?'}</AvatarFallback>
                       </Avatar>
                       <button
@@ -1127,6 +1251,15 @@ export function ShotCard({
           console.log('Upload image for character:', characterId, imageUrl);
         }}
       />
+
+      {/* Shot Image Crop Dialog */}
+      {showImageCropDialog && tempImageForCrop && (
+        <ShotImageCropDialog
+          image={tempImageForCrop}
+          onComplete={handleImageCropComplete}
+          onCancel={handleImageCropCancel}
+        />
+      )}
     </div>
   );
-}
+});
