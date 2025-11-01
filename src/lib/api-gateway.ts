@@ -5,7 +5,7 @@
  * This allows us to split the monolithic server into multiple smaller functions.
  */
 
-import { projectId, publicAnonKey } from './utils/supabase/info';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 // =============================================================================
 // EDGE FUNCTION DEFINITIONS
@@ -16,12 +16,13 @@ import { projectId, publicAnonKey } from './utils/supabase/info';
  */
 export const EDGE_FUNCTIONS = {
   PROJECTS: 'scriptony-projects',
-  TIMELINE: 'scriptony-timeline',
-  TIMELINE_V2: 'scriptony-timeline-v2',
+  TIMELINE_V2: 'scriptony-timeline-v2', // Generic Timeline Engine (Nodes)
+  AUDIO: 'scriptony-audio', // Audio Processing (Upload, Waveform, Trim, Fade)
   WORLDBUILDING: 'scriptony-worldbuilding',
   ASSISTANT: 'scriptony-assistant',
   GYM: 'scriptony-gym',
   AUTH: 'scriptony-auth',
+  SUPERADMIN: 'scriptony-superadmin',
 } as const;
 
 /**
@@ -48,19 +49,24 @@ const ROUTE_MAP: Record<string, string> = {
   // Projects
   '/projects': EDGE_FUNCTIONS.PROJECTS,
   
-  // Timeline (Old - Acts/Sequences/Scenes/Shots)
-  '/acts': EDGE_FUNCTIONS.TIMELINE,
-  '/sequences': EDGE_FUNCTIONS.TIMELINE,
-  '/scenes': EDGE_FUNCTIONS.TIMELINE,
-  '/shots': EDGE_FUNCTIONS.TIMELINE,
-  
-  // Timeline V2 (New - Generic Nodes)
+  // Timeline V2 (Generic Nodes)
   '/nodes': EDGE_FUNCTIONS.TIMELINE_V2,
   '/initialize-project': EDGE_FUNCTIONS.TIMELINE_V2,
   
+  // Shots (Images only - Audio is separate)
+  '/shots': EDGE_FUNCTIONS.TIMELINE_V2,
+  
+  // Timeline Characters (for @-mentions in shots)
+  '/timeline-characters': EDGE_FUNCTIONS.TIMELINE_V2,
+  
+  // Audio (Upload, Waveform, Trim, Fade)
+  // Note: /shots/:id/upload-audio routes to AUDIO function
+  // Note: /shots/:id/audio routes to AUDIO function  
+  // Note: /shots/audio/:id routes to AUDIO function
+  
   // Worldbuilding
   '/worlds': EDGE_FUNCTIONS.WORLDBUILDING,
-  '/characters': EDGE_FUNCTIONS.WORLDBUILDING,
+  '/characters': EDGE_FUNCTIONS.WORLDBUILDING, // Worldbuilding characters only
   '/locations': EDGE_FUNCTIONS.WORLDBUILDING,
   
   // Assistant (AI + RAG + MCP)
@@ -75,12 +81,23 @@ const ROUTE_MAP: Record<string, string> = {
   '/achievements': EDGE_FUNCTIONS.GYM,
   '/categories': EDGE_FUNCTIONS.GYM,
   '/daily-challenge': EDGE_FUNCTIONS.GYM,
+  
+  // Superadmin
+  '/superadmin': EDGE_FUNCTIONS.SUPERADMIN,
 };
 
 /**
  * Determines which Edge Function to use for a given route
  */
 function getEdgeFunctionForRoute(route: string): string {
+  // Special routing for Audio endpoints
+  // These have specific patterns that need to override the general /shots prefix
+  if (route.includes('/upload-audio') || 
+      route.includes('/shots/audio/') || 
+      route.match(/\/shots\/[^/]+\/audio$/)) {
+    return EDGE_FUNCTIONS.AUDIO;
+  }
+  
   // Find the matching route prefix
   const matchedPrefix = Object.keys(ROUTE_MAP).find(prefix => 
     route.startsWith(prefix)
@@ -152,22 +169,60 @@ export async function apiGateway<T = any>(
     ...headers,
   };
   
-  // Make request
-  const response = await fetch(url, {
-    method,
-    headers: requestHeaders,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  console.log(`[API Gateway] Fetching ${url}`);
+  console.log(`[API Gateway] Headers:`, requestHeaders);
+  console.log(`[API Gateway] Body (raw):`, body);
+  console.log(`[API Gateway] Body (stringified):`, body ? JSON.stringify(body) : 'undefined');
+  
+  // Make request with error handling
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: requestHeaders,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (fetchError: any) {
+    console.error(`[API Gateway] Network Error:`, {
+      url,
+      functionName,
+      error: fetchError.message,
+    });
+    console.error(`[API Gateway] Possible causes:`);
+    console.error(`  1. Edge Function "${functionName}" is not deployed`);
+    console.error(`  2. CORS issue (check function CORS settings)`);
+    console.error(`  3. Network/internet connection issue`);
+    console.error(`  4. Supabase project offline`);
+    throw new Error(`Cannot connect to ${functionName}: ${fetchError.message}`);
+  }
+  
+  console.log(`[API Gateway] Response received:`, response.status, response.statusText);
   
   // Handle response
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[API Gateway] Error:`, {
+    
+    // Try to parse error as JSON for better logging
+    let errorData;
+    try {
+      errorData = JSON.parse(errorText);
+    } catch {
+      errorData = errorText;
+    }
+    
+    console.error(`[API Gateway] Error Response:`, {
       url,
       status: response.status,
-      error: errorText,
+      statusText: response.statusText,
+      errorData,
     });
-    throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    
+    // Extract error message if available
+    const errorMessage = typeof errorData === 'object' 
+      ? (errorData.error || errorData.message || errorData.details || JSON.stringify(errorData))
+      : errorData;
+    
+    throw new Error(`API Error: ${response.status} - ${errorMessage}`);
   }
   
   return await response.json();
@@ -232,11 +287,4 @@ export function getApiBase(functionName: keyof typeof EDGE_FUNCTIONS): string {
   return getFunctionUrl(EDGE_FUNCTIONS[functionName]);
 }
 
-/**
- * Get API base URL for the monolithic function (backward compatibility)
- * 
- * @deprecated Use apiGateway() instead
- */
-export function getLegacyApiBase(): string {
-  return `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b`;
-}
+// Legacy API removed - all endpoints now use specialized Edge Functions via apiGateway()

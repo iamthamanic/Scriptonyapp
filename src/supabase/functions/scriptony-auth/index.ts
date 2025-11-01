@@ -16,7 +16,9 @@ import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const app = new Hono();
+// IMPORTANT: Supabase adds function name as prefix to all paths!
+// So requests to /scriptony-auth/* need to be handled
+const app = new Hono().basePath("/scriptony-auth");
 
 // Supabase Client
 const supabase = createClient(
@@ -147,6 +149,17 @@ async function getUserOrganizations(userId: string): Promise<string[]> {
 // =====================================================
 // HEALTH CHECK (NO AUTH REQUIRED)
 // =====================================================
+
+// Root handler (catch-all for health checks)
+app.get("/", async (c) => {
+  return c.json({
+    status: "ok",
+    service: "scriptony-auth",
+    version: "1.0.0",
+    message: "Scriptony Auth Service is running!",
+    timestamp: new Date().toISOString(),
+  });
+});
 
 app.get("/health", async (c) => {
   try {

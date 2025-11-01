@@ -18,7 +18,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // SETUP
 // =============================================================================
 
-const app = new Hono();
+// IMPORTANT: Supabase adds function name as prefix to all paths!
+const app = new Hono().basePath("/scriptony-projects");
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -173,7 +174,7 @@ app.post("/projects", async (c) => {
     }
 
     const body = await c.req.json();
-    const { title, description, type, template_id } = body;
+    const { title, description, type, logline, genre } = body;
 
     if (!title) {
       return c.json({ error: "title is required" }, 400);
@@ -183,9 +184,9 @@ app.post("/projects", async (c) => {
       .from("projects")
       .insert({
         title,
-        description,
+        logline: logline || description,
+        genre,
         type: type || 'film',
-        template_id: template_id || 'film-3act',
         organization_id: orgId,
       })
       .select()

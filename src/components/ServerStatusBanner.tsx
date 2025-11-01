@@ -6,16 +6,22 @@ import { supabaseConfig } from "../lib/env";
 import { API_CONFIG } from "../lib/config";
 
 export function ServerStatusBanner() {
-  const [status, setStatus] = useState<'checking' | 'online' | 'offline' | 'hidden'>('checking');
+  // 🎯 DEAKTIVIERT - Multi-Function Architektur hat keine zentrale /health endpoint mehr
+  // Jede Edge Function hat ihren eigenen Health Check
+  const [status, setStatus] = useState<'checking' | 'online' | 'offline' | 'hidden'>('hidden');
   const [showDetails, setShowDetails] = useState(false);
 
   useEffect(() => {
-    // Verzögerter Health Check (gibt dem Server Zeit zum Cold Start)
-    const timer = setTimeout(() => {
-      checkServerStatus();
-    }, 2000); // 2s Verzögerung
+    // Health Check deaktiviert - Multi-Function Architektur
+    // Falls benötigt, kann jede Function einzeln getestet werden
+    return;
     
-    return () => clearTimeout(timer);
+    // // Verzögerter Health Check (gibt dem Server Zeit zum Cold Start)
+    // const timer = setTimeout(() => {
+    //   checkServerStatus();
+    // }, 2000); // 2s Verzögerung
+    // 
+    // return () => clearTimeout(timer);
   }, []);
 
   const checkServerStatus = async () => {
@@ -154,7 +160,7 @@ export function ServerStatusBanner() {
                   </div>
                   <div>
                     <span className="text-muted-foreground">Function Name:</span>
-                    <div>make-server-3b52693b</div>
+                    <div>Multi-Function (scriptony-*)</div>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Status:</span>

@@ -1,30 +1,104 @@
 /**
  * Timeline API Client
- * Handles API calls for Acts, Sequences, and Scenes
+ * 
+ * 🚀 MIGRATED TO V2 NODES API
+ * 
+ * This file now wraps the V2 Nodes API and provides backward-compatible
+ * functions for Acts, Sequences, and Scenes using the generic Nodes system.
+ * 
+ * The Nodes API works with ALL templates (Film, Serie, Buch, Theater, Game)
+ * without requiring backend changes for new templates!
  */
 
-import { supabaseConfig } from '../env';
-import { API_CONFIG } from '../config';
+import * as NodesAPI from './timeline-api-v2';
 import type { Act, Sequence, Scene } from '../types';
+import type { TimelineNode } from './timeline-api-v2';
 
-const API_BASE_URL = `${supabaseConfig.url}/functions/v1${API_CONFIG.SERVER_BASE_PATH}`;
+// Re-export V2 types and functions for new code
+export type { TimelineNode, CreateNodeRequest, UpdateNodeRequest } from './timeline-api-v2';
+export { 
+  getNodes,
+  getNode,
+  getNodeChildren,
+  getNodePath,
+  createNode,
+  updateNode,
+  deleteNode,
+  reorderNodes,
+  bulkCreateNodes,
+  initializeProject,
+  buildNodeTree,
+  flattenNodeTree,
+  getAllProjectNodes,
+  getRootNodes,
+} from './timeline-api-v2';
 
 // =============================================================================
-// ACTS
+// HELPER FUNCTIONS - Node to Legacy Type Conversion
+// =============================================================================
+
+/**
+ * Convert TimelineNode (level 1) to Act
+ */
+function nodeToAct(node: TimelineNode): Act {
+  return {
+    id: node.id,
+    projectId: node.projectId,
+    actNumber: node.nodeNumber,
+    title: node.title,
+    description: node.description || '',
+    orderIndex: node.orderIndex,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+  };
+}
+
+/**
+ * Convert TimelineNode (level 2) to Sequence
+ */
+function nodeToSequence(node: TimelineNode): Sequence {
+  return {
+    id: node.id,
+    projectId: node.projectId,
+    actId: node.parentId!,
+    sequenceNumber: node.nodeNumber,
+    title: node.title,
+    description: node.description || '',
+    color: node.color,
+    orderIndex: node.orderIndex,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+  };
+}
+
+/**
+ * Convert TimelineNode (level 3) to Scene
+ */
+function nodeToScene(node: TimelineNode): Scene {
+  return {
+    id: node.id,
+    projectId: node.projectId,
+    sequenceId: node.parentId!,
+    sceneNumber: node.nodeNumber,
+    title: node.title,
+    description: node.description || '',
+    color: node.color,
+    orderIndex: node.orderIndex,
+    location: node.metadata?.location,
+    timeOfDay: node.metadata?.timeOfDay,
+    characters: node.metadata?.characters || [],
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+  };
+}
+
+// =============================================================================
+// ACTS - Backward Compatible Wrapper Functions
 // =============================================================================
 
 export async function getActs(projectId: string, token: string): Promise<Act[]> {
-  const response = await fetch(`${API_BASE_URL}/acts?project_id=${projectId}`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch acts: ${response.statusText}`);
-  }
-
-  return response.json();
+  const nodes = await NodesAPI.getActs(projectId);
+  return nodes.map(nodeToAct);
 }
 
 export async function createAct(
@@ -32,23 +106,17 @@ export async function createAct(
   actData: Partial<Act>,
   token: string
 ): Promise<Act> {
-  const response = await fetch(`${API_BASE_URL}/acts`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      project_id: projectId,
-      ...actData,
-    }),
+  const node = await NodesAPI.createNode({
+    projectId,
+    templateId: 'film-3-act', // TODO: Get from project
+    level: 1,
+    parentId: null,
+    nodeNumber: actData.actNumber!,
+    title: actData.title || `Akt ${actData.actNumber}`,
+    description: actData.description,
   });
-
-  if (!response.ok) {
-    throw new Error(`Failed to create act: ${response.statusText}`);
-  }
-
-  return response.json();
+  
+  return nodeToAct(node);
 }
 
 export async function updateAct(
@@ -56,33 +124,18 @@ export async function updateAct(
   updates: Partial<Act>,
   token: string
 ): Promise<Act> {
-  const response = await fetch(`${API_BASE_URL}/acts/${actId}`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(updates),
+  const node = await NodesAPI.updateNode(actId, {
+    nodeNumber: updates.actNumber,
+    title: updates.title,
+    description: updates.description,
+    orderIndex: updates.orderIndex,
   });
-
-  if (!response.ok) {
-    throw new Error(`Failed to update act: ${response.statusText}`);
-  }
-
-  return response.json();
+  
+  return nodeToAct(node);
 }
 
 export async function deleteAct(actId: string, token: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/acts/${actId}`, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to delete act: ${response.statusText}`);
-  }
+  await NodesAPI.deleteNode(actId);
 }
 
 export async function reorderActs(
@@ -90,39 +143,16 @@ export async function reorderActs(
   actIds: string[],
   token: string
 ): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/acts/reorder`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      project_id: projectId,
-      act_ids: actIds,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to reorder acts: ${response.statusText}`);
-  }
+  await NodesAPI.reorderNodes(actIds);
 }
 
 // =============================================================================
-// SEQUENCES
+// SEQUENCES - Backward Compatible Wrapper Functions
 // =============================================================================
 
 export async function getSequences(actId: string, token: string): Promise<Sequence[]> {
-  const response = await fetch(`${API_BASE_URL}/sequences/${actId}`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch sequences: ${response.statusText}`);
-  }
-
-  return response.json();
+  const nodes = await NodesAPI.getNodeChildren(actId);
+  return nodes.map(nodeToSequence);
 }
 
 export async function createSequence(
@@ -130,38 +160,21 @@ export async function createSequence(
   sequenceData: Partial<Sequence>,
   token: string
 ): Promise<Sequence> {
-  // Transform camelCase to snake_case for backend
-  const backendData: any = {
-    act_id: actId,
-  };
+  // Get act to get projectId
+  const act = await NodesAPI.getNode(actId);
   
-  if (sequenceData.sequenceNumber !== undefined) {
-    backendData.sequence_number = sequenceData.sequenceNumber;
-  }
-  if (sequenceData.title !== undefined) {
-    backendData.title = sequenceData.title;
-  }
-  if (sequenceData.description !== undefined) {
-    backendData.description = sequenceData.description;
-  }
-  if (sequenceData.color !== undefined) {
-    backendData.color = sequenceData.color;
-  }
-
-  const response = await fetch(`${API_BASE_URL}/sequences`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(backendData),
+  const node = await NodesAPI.createNode({
+    projectId: act.projectId,
+    templateId: act.templateId,
+    level: 2,
+    parentId: actId,
+    nodeNumber: sequenceData.sequenceNumber!,
+    title: sequenceData.title || `Sequenz ${sequenceData.sequenceNumber}`,
+    description: sequenceData.description,
+    color: sequenceData.color,
   });
-
-  if (!response.ok) {
-    throw new Error(`Failed to create sequence: ${response.statusText}`);
-  }
-
-  return response.json();
+  
+  return nodeToSequence(node);
 }
 
 export async function updateSequence(
@@ -169,49 +182,20 @@ export async function updateSequence(
   updates: Partial<Sequence>,
   token: string
 ): Promise<Sequence> {
-  // Transform camelCase to snake_case for backend
-  const backendUpdates: any = {};
-  
-  if (updates.sequenceNumber !== undefined) {
-    backendUpdates.sequence_number = updates.sequenceNumber;
-  }
-  if (updates.title !== undefined) {
-    backendUpdates.title = updates.title;
-  }
-  if (updates.description !== undefined) {
-    backendUpdates.description = updates.description;
-  }
-  if (updates.color !== undefined) {
-    backendUpdates.color = updates.color;
-  }
-
-  const response = await fetch(`${API_BASE_URL}/sequences/${sequenceId}`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(backendUpdates),
+  const node = await NodesAPI.updateNode(sequenceId, {
+    nodeNumber: updates.sequenceNumber,
+    title: updates.title,
+    description: updates.description,
+    color: updates.color,
+    orderIndex: updates.orderIndex,
+    parentId: updates.actId, // Support moving to different Act
   });
-
-  if (!response.ok) {
-    throw new Error(`Failed to update sequence: ${response.statusText}`);
-  }
-
-  return response.json();
+  
+  return nodeToSequence(node);
 }
 
 export async function deleteSequence(sequenceId: string, token: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/sequences/${sequenceId}`, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to delete sequence: ${response.statusText}`);
-  }
+  await NodesAPI.deleteNode(sequenceId);
 }
 
 export async function reorderSequences(
@@ -219,39 +203,16 @@ export async function reorderSequences(
   sequenceIds: string[],
   token: string
 ): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/sequences/reorder`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      act_id: actId,
-      sequence_ids: sequenceIds,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to reorder sequences: ${response.statusText}`);
-  }
+  await NodesAPI.reorderNodes(sequenceIds);
 }
 
 // =============================================================================
-// SCENES
+// SCENES - Backward Compatible Wrapper Functions
 // =============================================================================
 
 export async function getScenes(sequenceId: string, token: string): Promise<Scene[]> {
-  const response = await fetch(`${API_BASE_URL}/scenes/${sequenceId}`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch scenes: ${response.statusText}`);
-  }
-
-  return response.json();
+  const nodes = await NodesAPI.getNodeChildren(sequenceId);
+  return nodes.map(nodeToScene);
 }
 
 export async function createScene(
@@ -259,42 +220,26 @@ export async function createScene(
   sceneData: Partial<Scene>,
   token: string
 ): Promise<Scene> {
-  // Transform camelCase to snake_case for backend
-  const backendData: any = {
-    sequence_id: sequenceId,
-  };
+  // Get sequence to get projectId
+  const sequence = await NodesAPI.getNode(sequenceId);
   
-  // Map number to scene_number (required field)
-  if (sceneData.number !== undefined) {
-    backendData.scene_number = sceneData.number;
-  }
-  if (sceneData.title !== undefined) {
-    backendData.title = sceneData.title;
-  }
-  if (sceneData.description !== undefined) {
-    backendData.description = sceneData.description;
-  }
-  if (sceneData.location !== undefined) {
-    backendData.location = sceneData.location;
-  }
-  if (sceneData.timeOfDay !== undefined) {
-    backendData.time_of_day = sceneData.timeOfDay;
-  }
-
-  const response = await fetch(`${API_BASE_URL}/scenes`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
+  const node = await NodesAPI.createNode({
+    projectId: sequence.projectId,
+    templateId: sequence.templateId,
+    level: 3,
+    parentId: sequenceId,
+    nodeNumber: sceneData.sceneNumber!,
+    title: sceneData.title || `Szene ${sceneData.sceneNumber}`,
+    description: sceneData.description,
+    color: sceneData.color,
+    metadata: {
+      location: sceneData.location,
+      timeOfDay: sceneData.timeOfDay,
+      characters: sceneData.characters || [],
     },
-    body: JSON.stringify(backendData),
   });
-
-  if (!response.ok) {
-    throw new Error(`Failed to create scene: ${response.statusText}`);
-  }
-
-  return response.json();
+  
+  return nodeToScene(node);
 }
 
 export async function updateScene(
@@ -302,52 +247,29 @@ export async function updateScene(
   updates: Partial<Scene>,
   token: string
 ): Promise<Scene> {
-  // Transform camelCase to snake_case for backend
-  const backendUpdates: any = {};
+  // Get current scene to preserve metadata
+  const currentNode = await NodesAPI.getNode(sceneId);
   
-  if (updates.number !== undefined) {
-    backendUpdates.scene_number = updates.number;
-  }
-  if (updates.title !== undefined) {
-    backendUpdates.title = updates.title;
-  }
-  if (updates.description !== undefined) {
-    backendUpdates.description = updates.description;
-  }
-  if (updates.location !== undefined) {
-    backendUpdates.location = updates.location;
-  }
-  if (updates.timeOfDay !== undefined) {
-    backendUpdates.time_of_day = updates.timeOfDay;
-  }
-
-  const response = await fetch(`${API_BASE_URL}/scenes/${sceneId}`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(backendUpdates),
+  const metadata: any = { ...currentNode.metadata };
+  if (updates.location !== undefined) metadata.location = updates.location;
+  if (updates.timeOfDay !== undefined) metadata.timeOfDay = updates.timeOfDay;
+  if (updates.characters !== undefined) metadata.characters = updates.characters;
+  
+  const node = await NodesAPI.updateNode(sceneId, {
+    nodeNumber: updates.sceneNumber,
+    title: updates.title,
+    description: updates.description,
+    color: updates.color,
+    orderIndex: updates.orderIndex,
+    parentId: updates.sequenceId, // Support moving to different Sequence
+    metadata,
   });
-
-  if (!response.ok) {
-    throw new Error(`Failed to update scene: ${response.statusText}`);
-  }
-
-  return response.json();
+  
+  return nodeToScene(node);
 }
 
 export async function deleteScene(sceneId: string, token: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/scenes/${sceneId}`, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to delete scene: ${response.statusText}`);
-  }
+  await NodesAPI.deleteNode(sceneId);
 }
 
 export async function reorderScenes(
@@ -355,19 +277,31 @@ export async function reorderScenes(
   sceneIds: string[],
   token: string
 ): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/scenes/reorder`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      sequence_id: sequenceId,
-      scene_ids: sceneIds,
-    }),
-  });
+  await NodesAPI.reorderNodes(sceneIds);
+}
 
-  if (!response.ok) {
-    throw new Error(`Failed to reorder scenes: ${response.statusText}`);
-  }
+// =============================================================================
+// BULK LOADERS - Performance Optimized 🚀
+// =============================================================================
+
+/**
+ * Get ALL sequences for a project in ONE API call (Level 2 nodes)
+ */
+export async function getAllSequencesByProject(
+  projectId: string,
+  token: string
+): Promise<Sequence[]> {
+  const nodes = await NodesAPI.getNodes({ projectId, level: 2 });
+  return nodes.map(nodeToSequence);
+}
+
+/**
+ * Get ALL scenes for a project in ONE API call (Level 3 nodes)
+ */
+export async function getAllScenesByProject(
+  projectId: string,
+  token: string
+): Promise<Scene[]> {
+  const nodes = await NodesAPI.getNodes({ projectId, level: 3 });
+  return nodes.map(nodeToScene);
 }

@@ -19,7 +19,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // SETUP
 // =============================================================================
 
-const app = new Hono();
+// IMPORTANT: Supabase adds function name as prefix to all paths!
+const app = new Hono().basePath("/scriptony-worldbuilding");
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -55,9 +56,33 @@ async function getUserIdFromAuth(authHeader: string | undefined): Promise<string
   return user.id;
 }
 
+async function getUserOrganization(userId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("organization_id")
+    .eq("id", userId)
+    .single();
+  
+  if (error || !data) {
+    return null;
+  }
+  
+  return data.organization_id;
+}
+
 // =============================================================================
 // HEALTH CHECK
 // =============================================================================
+
+app.get("/", (c) => {
+  return c.json({ 
+    status: "ok", 
+    function: "scriptony-worldbuilding",
+    version: "1.0.0",
+    message: "Scriptony Worldbuilding Service is running!",
+    timestamp: new Date().toISOString(),
+  });
+});
 
 app.get("/health", (c) => {
   return c.json({ 
@@ -74,7 +99,7 @@ app.get("/health", (c) => {
 
 /**
  * GET /worlds
- * Get all worlds for a project
+ * Get all worlds for user's organization
  */
 app.get("/worlds", async (c) => {
   try {
@@ -85,16 +110,17 @@ app.get("/worlds", async (c) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
-    const projectId = c.req.query("project_id");
-
-    if (!projectId) {
-      return c.json({ error: "project_id is required" }, 400);
+    // Get user's organization
+    const orgId = await getUserOrganization(userId);
+    if (!orgId) {
+      return c.json({ error: "User has no organization" }, 403);
     }
 
+    // Get worlds for organization
     const { data, error } = await supabase
       .from("worlds")
       .select("*")
-      .eq("project_id", projectId)
+      .eq("organization_id", orgId)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -155,17 +181,23 @@ app.post("/worlds", async (c) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
-    const body = await c.req.json();
-    const { project_id, name, description, lore, image_url } = body;
+    // Get user's organization
+    const orgId = await getUserOrganization(userId);
+    if (!orgId) {
+      return c.json({ error: "User has no organization" }, 403);
+    }
 
-    if (!project_id || !name) {
-      return c.json({ error: "project_id and name are required" }, 400);
+    const body = await c.req.json();
+    const { name, description, lore, image_url } = body;
+
+    if (!name) {
+      return c.json({ error: "name is required" }, 400);
     }
 
     const { data, error } = await supabase
       .from("worlds")
       .insert({
-        project_id,
+        organization_id: orgId,
         name,
         description,
         lore,
@@ -259,7 +291,7 @@ app.delete("/worlds/:id", async (c) => {
 
 /**
  * GET /characters
- * Get all characters for a project
+ * Get all characters for user's organization
  */
 app.get("/characters", async (c) => {
   try {
@@ -270,17 +302,18 @@ app.get("/characters", async (c) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
-    const projectId = c.req.query("project_id");
-    const worldId = c.req.query("world_id");
-
-    if (!projectId) {
-      return c.json({ error: "project_id is required" }, 400);
+    // Get user's organization
+    const orgId = await getUserOrganization(userId);
+    if (!orgId) {
+      return c.json({ error: "User has no organization" }, 403);
     }
+
+    const worldId = c.req.query("world_id");
 
     let query = supabase
       .from("characters")
       .select("*")
-      .eq("project_id", projectId);
+      .eq("organization_id", orgId);
 
     if (worldId) {
       query = query.eq("world_id", worldId);
@@ -346,9 +379,14 @@ app.post("/characters", async (c) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
+    // Get user's organization
+    const orgId = await getUserOrganization(userId);
+    if (!orgId) {
+      return c.json({ error: "User has no organization" }, 403);
+    }
+
     const body = await c.req.json();
     const { 
-      project_id, 
       world_id, 
       name, 
       description, 
@@ -358,14 +396,14 @@ app.post("/characters", async (c) => {
       color 
     } = body;
 
-    if (!project_id || !name) {
-      return c.json({ error: "project_id and name are required" }, 400);
+    if (!name) {
+      return c.json({ error: "name is required" }, 400);
     }
 
     const { data, error } = await supabase
       .from("characters")
       .insert({
-        project_id,
+        organization_id: orgId,
         world_id,
         name,
         description,

@@ -20,7 +20,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // SETUP
 // =============================================================================
 
-const app = new Hono();
+// IMPORTANT: Supabase adds function name as prefix to all paths!
+const app = new Hono().basePath("/scriptony-assistant");
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -59,6 +60,17 @@ async function getUserIdFromAuth(authHeader: string | undefined): Promise<string
 // =============================================================================
 // HEALTH CHECK
 // =============================================================================
+
+app.get("/", (c) => {
+  return c.json({ 
+    status: "ok", 
+    function: "scriptony-assistant",
+    version: "1.0.0",
+    message: "Scriptony AI Assistant Service is running!",
+    features: ["ai-chat", "rag", "mcp-tools", "multi-provider"],
+    timestamp: new Date().toISOString(),
+  });
+});
 
 app.get("/health", (c) => {
   return c.json({ 
@@ -396,9 +408,9 @@ app.post("/ai/chat", async (c) => {
     }
 
     // TODO: Implement full AI chat logic
-    // For now, return placeholder
+    // AI Chat implementation placeholder
     return c.json({ 
-      message: "AI Chat implementation in progress. Use make-server-3b52693b for now.",
+      message: "AI Chat implementation in progress.",
       conversation_id,
       project_id,
     });

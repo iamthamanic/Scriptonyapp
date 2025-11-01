@@ -6,9 +6,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
-import { supabaseConfig } from "../../lib/env";
 import { toast } from "sonner@2.0.3";
 import { useAuth } from "../../hooks/useAuth";
+import { apiGateway } from "../../lib/api-gateway";
 
 interface SuperadminPageProps {
   onNavigate?: (page: string) => void;
@@ -75,20 +75,11 @@ export function SuperadminPage({ onNavigate }: SuperadminPageProps) {
         throw new Error("Nicht authentifiziert");
       }
 
-      const response = await fetch(
-        `${supabaseConfig.url}/functions/v1/make-server-3b52693b/superadmin/stats`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
+      const data = await apiGateway({
+        method: "GET",
+        route: "/superadmin/stats",
+        accessToken: token,
+      });
 
       setStats(data.stats);
     } catch (error: any) {
@@ -108,20 +99,11 @@ export function SuperadminPage({ onNavigate }: SuperadminPageProps) {
         throw new Error("Nicht authentifiziert");
       }
 
-      const response = await fetch(
-        `${supabaseConfig.url}/functions/v1/make-server-3b52693b/superadmin/users`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
+      const data = await apiGateway({
+        method: "GET",
+        route: "/superadmin/users",
+        accessToken: token,
+      });
 
       setUsers(data.users);
     } catch (error: any) {
@@ -141,20 +123,11 @@ export function SuperadminPage({ onNavigate }: SuperadminPageProps) {
         throw new Error("Nicht authentifiziert");
       }
 
-      const response = await fetch(
-        `${supabaseConfig.url}/functions/v1/make-server-3b52693b/superadmin/organizations`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
+      const data = await apiGateway({
+        method: "GET",
+        route: "/superadmin/organizations",
+        accessToken: token,
+      });
 
       setOrganizations(data.organizations);
     } catch (error: any) {
@@ -174,20 +147,11 @@ export function SuperadminPage({ onNavigate }: SuperadminPageProps) {
         throw new Error("Nicht authentifiziert");
       }
 
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b/superadmin/analytics`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
+      const data = await apiGateway({
+        method: "GET",
+        route: "/superadmin/analytics",
+        accessToken: token,
+      });
 
       setAnalytics(data.analytics);
     } catch (error: any) {

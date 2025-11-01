@@ -1,7 +1,5 @@
-import { projectId } from "./supabase/info";
 import { getAuthToken } from "../lib/auth/getAuthToken";
-
-const API_BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b`;
+import { apiGateway } from "../lib/api-gateway";
 
 interface UploadResult {
   url: string;
@@ -33,13 +31,19 @@ export async function uploadImage(
     formData.append("userId", userId);
     formData.append("folder", folder);
 
-    const response = await fetch(`${API_BASE_URL}/storage/upload`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    });
+    // Note: apiGateway doesn't support FormData yet, so we use fetch directly
+    // but with the correct Edge Function URL from the gateway
+    const { projectId } = await import("./supabase/info");
+    const response = await fetch(
+      `https://${projectId}.supabase.co/functions/v1/scriptony-auth/storage/upload`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      }
+    );
 
     if (!response.ok) {
       const error = await response.json();
@@ -75,18 +79,12 @@ export async function getStorageUsage(userId?: string): Promise<{
       throw new Error("Unauthorized - please log in");
     }
 
-    const response = await fetch(`${API_BASE_URL}/storage/usage`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+    // Use API Gateway for storage usage
+    return await apiGateway({
+      method: "GET",
+      route: "/storage/usage",
+      accessToken: token,
     });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: "Failed to get storage usage" }));
-      throw new Error(error.error || "Failed to get storage usage");
-    }
-
-    return await response.json();
   } catch (error) {
     console.error("Storage usage error:", error);
     throw error;

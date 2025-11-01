@@ -96,7 +96,8 @@ export interface Scene {
   episodeId?: string;
   sequenceId?: string; // NEW: Zuordnung zu Sequence
   actId?: string; // Legacy/Optional
-  number: number;
+  sceneNumber: number; // Konsistent mit API (Timeline API verwendet sceneNumber)
+  number?: number; // Legacy field for backwards compatibility
   title: string;
   description?: string;
   location?: string;
@@ -106,6 +107,7 @@ export interface Scene {
   status?: 'outline' | 'draft' | 'revision' | 'final';
   duration?: number; // in minutes
   orderIndex?: number; // Sortierung innerhalb Sequence
+  color?: string; // NEW: Farbe für Scene
   createdAt: string;
   updatedAt: string;
   // Relations
@@ -153,6 +155,12 @@ export interface ShotAudio {
   fileName: string;
   label?: string;
   fileSize?: number;
+  startTime?: number; // Trim start time in seconds
+  endTime?: number; // Trim end time in seconds
+  fadeIn?: number; // Fade in duration in seconds
+  fadeOut?: number; // Fade out duration in seconds
+  waveformData?: number[]; // Cached waveform peaks
+  duration?: number; // Audio duration in seconds
   createdAt: string;
 }
 

@@ -19,7 +19,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // SETUP
 // =============================================================================
 
-const app = new Hono();
+// IMPORTANT: Supabase adds function name as prefix to all paths!
+const app = new Hono().basePath("/scriptony-gym");
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -58,6 +59,16 @@ async function getUserIdFromAuth(authHeader: string | undefined): Promise<string
 // =============================================================================
 // HEALTH CHECK
 // =============================================================================
+
+app.get("/", (c) => {
+  return c.json({ 
+    status: "ok", 
+    function: "scriptony-gym",
+    version: "1.0.0",
+    message: "Scriptony Creative Gym Service is running!",
+    timestamp: new Date().toISOString(),
+  });
+});
 
 app.get("/health", (c) => {
   return c.json({ 

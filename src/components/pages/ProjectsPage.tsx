@@ -13,14 +13,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Calendar } from "../ui/calendar";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { SceneCharacterBadge } from "../SceneCharacterBadge";
 import { WorldReferenceAutocomplete } from "../WorldReferenceAutocomplete";
 import { useColoredTags } from "../hooks/useColoredTags";
 import { ImageCropDialog } from "../ImageCropDialog";
 import { LoadingSpinner } from "../LoadingSpinner";
-import { FilmTimeline } from "../FilmTimeline";
+import { FilmDropdown } from "../FilmTimeline"; // TODO: Rename FilmTimeline.tsx to FilmDropdown.tsx
 import { projectsApi, worldsApi, itemsApi } from "../../utils/api";
 import { toast } from "sonner@2.0.3";
+import { deleteCharacter as deleteCharacterApi, getCharacters, createCharacter as createCharacterApi, updateCharacter as updateCharacterApi } from "../../lib/api/characters-api";
+import { getAuthToken } from "../../lib/auth/getAuthToken";
 
 interface ProjectsPageProps {
   selectedProjectId?: string;
@@ -672,9 +675,10 @@ interface CharacterCardProps {
     weaknesses?: string;
     characterTraits?: string;
   }) => void;
+  onDelete: (characterId: string) => void;
 }
 
-function CharacterCard({ character, onImageUpload, onUpdateDetails }: CharacterCardProps) {
+function CharacterCard({ character, onImageUpload, onUpdateDetails, onDelete }: CharacterCardProps) {
   const characterImageInputRef = useRef<HTMLInputElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -799,6 +803,15 @@ function CharacterCard({ character, onImageUpload, onUpdateDetails }: CharacterC
                   <span className="text-xs">Bearbeiten</span>
                 </>
               )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onDelete(character.id)}
+              className="h-7 px-3 shrink-0 rounded-[10px] bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400"
+            >
+              <Trash2 className="size-3 mr-1" />
+              <span className="text-xs">Löschen</span>
             </Button>
             <Button
               variant="ghost"
@@ -1696,6 +1709,7 @@ interface ProjectDetailProps {
 }
 
 function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading }: ProjectDetailProps) {
+  const [structureView, setStructureView] = useState<"dropdown" | "timeline">("dropdown");
   const [showNewScene, setShowNewScene] = useState(false);
   const [showNewCharacter, setShowNewCharacter] = useState(false);
   const [isEditingInfo, setIsEditingInfo] = useState(false);
@@ -1932,8 +1946,62 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
   };
 
   const [charactersState, setCharactersState] = useState(getInitialCharacters);
+  const [charactersLoading, setCharactersLoading] = useState(true);
 
-  // Save characters to localStorage whenever they change
+  // Load characters from backend on mount
+  useEffect(() => {
+    const loadCharacters = async () => {
+      try {
+        setCharactersLoading(true);
+        const token = await getAuthToken();
+        if (!token) {
+          console.log("[ProjectDetail] No auth token, using localStorage characters");
+          setCharactersLoading(false);
+          return;
+        }
+
+        // Load characters from API
+        const characters = await getCharacters(project.id, token);
+        
+        console.log("[ProjectDetail] Loaded characters from backend:", characters);
+        console.log("[ProjectDetail] 📸 Character Images:", characters.map(c => ({
+          name: c.name,
+          imageUrl: c.imageUrl,
+          hasImage: !!c.imageUrl
+        })));
+        
+        // Transform to match local format
+        const transformedCharacters = characters.map((char: any) => ({
+          id: char.id,
+          name: char.name,
+          role: char.role || "Character",
+          description: char.description || "",
+          age: char.age || "",
+          gender: char.gender || "",
+          species: char.species || "",
+          backgroundStory: char.backstory || "",
+          skills: char.skills || "",
+          strengths: char.strengths || "",
+          weaknesses: char.weaknesses || "",
+          characterTraits: char.personality || "",
+          image: char.imageUrl || char.image_url,
+          imageUrl: char.imageUrl || char.image_url, // For timeline/shots
+          lastEdited: new Date(char.updatedAt || char.updated_at)
+        }));
+        
+        setCharactersState(transformedCharacters);
+      } catch (error: any) {
+        console.error("[ProjectDetail] Error loading characters:", error);
+        // Keep localStorage/mock characters on error
+      } finally {
+        setCharactersLoading(false);
+      }
+    };
+
+    loadCharacters();
+  }, [project.id]);
+
+  // Save characters to localStorage whenever they change (as backup)
   useEffect(() => {
     const storageKey = `project-${project.id}-characters`;
     localStorage.setItem(storageKey, JSON.stringify(charactersState));
@@ -1956,13 +2024,29 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
   const [showImageCropDialog, setShowImageCropDialog] = useState(false);
   const newCharacterImageInputRef = useRef<HTMLInputElement>(null);
 
-  const updateCharacterImage = (characterId: string, imageUrl: string) => {
+  const updateCharacterImage = async (characterId: string, imageUrl: string) => {
+    // Optimistic update
+    const previousCharacters = charactersState;
     setCharactersState(prev => prev.map(character => 
       character.id === characterId ? { ...character, image: imageUrl } : character
     ));
+
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        throw new Error("Nicht authentifiziert");
+      }
+
+      await updateCharacterApi(characterId, { imageUrl }, token);
+    } catch (error: any) {
+      console.error("[ProjectDetail] Error updating character image:", error);
+      // Rollback on error
+      setCharactersState(previousCharacters);
+      toast.error(error.message || "Fehler beim Aktualisieren des Bildes");
+    }
   };
 
-  const updateCharacterDetails = (characterId: string, updates: {
+  const updateCharacterDetails = async (characterId: string, updates: {
     name: string;
     role: string;
     description: string;
@@ -1975,31 +2059,154 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
     weaknesses?: string;
     characterTraits?: string;
   }) => {
+    // Optimistic update
+    const previousCharacters = charactersState;
     setCharactersState(prev => prev.map(character => 
       character.id === characterId ? { ...character, ...updates, lastEdited: new Date() } : character
     ));
+
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        throw new Error("Nicht authentifiziert");
+      }
+
+      // Transform to API format
+      await updateCharacterApi(characterId, {
+        name: updates.name,
+        role: updates.role,
+        description: updates.description,
+        age: updates.age,
+        gender: updates.gender,
+        species: updates.species,
+        backstory: updates.backgroundStory,
+        skills: updates.skills,
+        strengths: updates.strengths,
+        weaknesses: updates.weaknesses,
+        personality: updates.characterTraits,
+      }, token);
+
+      toast.success("Character aktualisiert");
+    } catch (error: any) {
+      console.error("[ProjectDetail] Error updating character:", error);
+      // Rollback on error
+      setCharactersState(previousCharacters);
+      toast.error(error.message || "Fehler beim Aktualisieren des Characters");
+    }
   };
 
-  const handleCreateCharacter = () => {
-    const newCharacter = {
-      id: Date.now().toString(),
-      name: newCharacterName,
-      role: newCharacterRole,
-      description: newCharacterDescription,
-      age: newCharacterAge,
-      gender: newCharacterGender,
-      species: newCharacterSpecies,
-      backgroundStory: newCharacterBackgroundStory,
-      skills: newCharacterSkills,
-      strengths: newCharacterStrengths,
-      weaknesses: newCharacterWeaknesses,
-      characterTraits: newCharacterTraits,
-      image: newCharacterImage,
-      lastEdited: new Date()
-    };
+  const deleteCharacter = async (characterId: string) => {
+    // Optimistic update: Sofort aus UI entfernen
+    const previousCharacters = charactersState;
+    setCharactersState(prev => prev.filter(character => character.id !== characterId));
+    
+    try {
+      // API Call zum Backend
+      const token = await getAuthToken();
+      if (!token) {
+        throw new Error("Nicht authentifiziert");
+      }
+      
+      await deleteCharacterApi(characterId, token);
+      toast.success("Character erfolgreich gelöscht");
+    } catch (error: any) {
+      console.error("[ProjectDetail] Error deleting character:", error);
+      // Bei Fehler: Rollback zum vorherigen State
+      setCharactersState(previousCharacters);
+      toast.error(error.message || "Fehler beim Löschen des Characters");
+    }
+  };
 
-    setCharactersState(prev => [...prev, newCharacter]);
-    resetNewCharacterForm();
+  const handleCreateCharacter = async () => {
+    try {
+      // Validation
+      if (!newCharacterName.trim()) {
+        toast.error("Bitte gib einen Namen ein");
+        return;
+      }
+
+      // Get auth token
+      const token = await getAuthToken();
+      if (!token) {
+        throw new Error("Nicht authentifiziert");
+      }
+
+      // Optimistic update: Sofort hinzufügen mit temporärer ID
+      const tempId = `temp-${Date.now()}`;
+      const tempCharacter = {
+        id: tempId,
+        name: newCharacterName,
+        role: newCharacterRole,
+        description: newCharacterDescription,
+        age: newCharacterAge,
+        gender: newCharacterGender,
+        species: newCharacterSpecies,
+        backgroundStory: newCharacterBackgroundStory,
+        skills: newCharacterSkills,
+        strengths: newCharacterStrengths,
+        weaknesses: newCharacterWeaknesses,
+        characterTraits: newCharacterTraits,
+        image: newCharacterImage,
+        lastEdited: new Date()
+      };
+
+      setCharactersState(prev => [...prev, tempCharacter]);
+      resetNewCharacterForm();
+
+      // API Call zum Backend
+      const createdCharacter = await createCharacterApi(
+        project.id,
+        {
+          name: newCharacterName,
+          role: newCharacterRole || "Character",
+          description: newCharacterDescription,
+          age: newCharacterAge,
+          gender: newCharacterGender,
+          species: newCharacterSpecies,
+          backstory: newCharacterBackgroundStory,
+          skills: newCharacterSkills,
+          strengths: newCharacterStrengths,
+          weaknesses: newCharacterWeaknesses,
+          personality: newCharacterTraits,
+          imageUrl: newCharacterImage,
+        },
+        token
+      );
+
+      console.log("[ProjectDetail] Character created:", createdCharacter);
+
+      // Replace temp character with real one from backend
+      setCharactersState(prev => 
+        prev.map(char => 
+          char.id === tempId 
+            ? {
+                id: createdCharacter.id,
+                name: createdCharacter.name,
+                role: createdCharacter.role || "Character",
+                description: createdCharacter.description || "",
+                age: createdCharacter.age || "",
+                gender: createdCharacter.gender || "",
+                species: createdCharacter.species || "",
+                backgroundStory: createdCharacter.backstory || "",
+                skills: createdCharacter.skills || "",
+                strengths: createdCharacter.strengths || "",
+                weaknesses: createdCharacter.weaknesses || "",
+                characterTraits: createdCharacter.personality || "",
+                image: createdCharacter.imageUrl || createdCharacter.image_url,
+                lastEdited: new Date(createdCharacter.updatedAt || createdCharacter.updated_at)
+              }
+            : char
+        )
+      );
+
+      toast.success("Character erfolgreich erstellt");
+    } catch (error: any) {
+      console.error("[ProjectDetail] Error creating character:", error);
+      toast.error(error.message || "Fehler beim Erstellen des Characters");
+      
+      // Remove temp character on error
+      setCharactersState(prev => prev.filter(char => !char.id.startsWith('temp-')));
+    }
   };
 
   const resetNewCharacterForm = () => {
@@ -2268,20 +2475,36 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
       {/* Film Timeline Section */}
       <section className="px-4 mb-8">
         <div className="mb-4">
-          <h2 className="text-scene-pink">#Storyboard Timeline</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Acts → Sequenzen → Szenen → Shots
-          </p>
+          <Badge className="bg-[#6E59A5] text-white h-8 flex items-center">Structure</Badge>
         </div>
 
-        {/* Film Timeline (3D Layer View) */}
-        <FilmTimeline projectId={project.id} />
+        <Tabs value={structureView} onValueChange={(value) => setStructureView(value as "dropdown" | "timeline")} className="w-full">
+          <TabsList className="grid w-full grid-cols-2 mb-4">
+            <TabsTrigger value="dropdown">Dropdown</TabsTrigger>
+            <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="dropdown" className="mt-0">
+            {/* Film Dropdown (Hierarchical View with Collapse/Expand) */}
+            <FilmDropdown 
+              projectId={project.id} 
+              characters={charactersState} 
+            />
+          </TabsContent>
+          
+          <TabsContent value="timeline" className="mt-0">
+            {/* Timeline View - Coming Soon */}
+            <div className="border-2 border-dashed border-muted-foreground/20 rounded-lg p-12 text-center">
+              <p className="text-muted-foreground">Timeline-Ansicht wird bald verfügbar sein</p>
+            </div>
+          </TabsContent>
+        </Tabs>
       </section>
 
       {/* Characters Section */}
       <section className="px-4">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-character-blue">@Charaktere ({charactersState.length})</h2>
+          <Badge className="bg-[#6E59A5] text-white h-8 flex items-center">Charaktere ({charactersState.length})</Badge>
           <Button 
             size="sm" 
             variant="secondary" 
@@ -2299,6 +2522,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
               character={character}
               onImageUpload={updateCharacterImage}
               onUpdateDetails={updateCharacterDetails}
+              onDelete={deleteCharacter}
             />
           ))}
         </div>

@@ -12,8 +12,10 @@
 export const API_CONFIG = {
   /**
    * Base path for all Supabase Edge Function routes
+   * DEPRECATED: Now using API Gateway with multi-function routing
+   * Keep empty for direct function calls via API Gateway
    */
-  SERVER_BASE_PATH: '/make-server-3b52693b',
+  SERVER_BASE_PATH: '',
   
   /**
    * Request timeout in milliseconds

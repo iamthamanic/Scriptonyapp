@@ -7,9 +7,9 @@ import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-// AI Chat Routes - MINIMAL VERSION (for testing)
-// Full version in routes-ai-chat.tsx has import issues
-import aiChatRoutes from "./routes-ai-minimal.tsx";
+// AI Chat Routes - DISABLED
+// AI Chat is now handled by scriptony-assistant Edge Function
+// import aiChatRoutes from "./routes-ai-minimal.tsx";
 
 // Timeline Routes (Acts, Sequences, Scenes, Shots)
 import shotsRoutes from "./routes-shots.tsx";
@@ -460,9 +460,10 @@ app.route("/make-server-3b52693b/projects", createProjectsInitRoutes(supabase, g
 app.route("/make-server-3b52693b/debug", createDebugRoutes());
 
 // =====================================================
-// AI CHAT ROUTES - MINIMAL VERSION
+// AI CHAT ROUTES - DISABLED
+// AI Chat is now handled by scriptony-assistant Edge Function
 // =====================================================
-app.route("/make-server-3b52693b", aiChatRoutes);
+// app.route("/make-server-3b52693b", aiChatRoutes);
 
 // =====================================================
 // STORAGE ROUTES

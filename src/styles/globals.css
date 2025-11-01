@@ -56,6 +56,19 @@
   --map-road: #000000;
   --map-forest: #2D5F3E;
   --map-city: #8B4513;
+  --timeline-container-radius: 5px;
+  --timeline-container-border: #bfbfbf;
+  --timeline-container-bg-act: #3B82F6;
+  --timeline-container-bg-sequence: #85ea78;
+  --timeline-container-bg-scene: #ea8778;
+  --timeline-container-bg-shot: #ffffff;
+  --input-bg-primary: #f8f3f3;
+  --input-bg-secondary: #ffffff;
+  --input-border: #bfbfbf;
+  --input-border-focus: #6E59A5;
+  --upload-border: #bfbfbf;
+  --upload-bg: #f8f3f3;
+  --upload-border-hover: #6E59A5;
 }
 
 .dark {
@@ -110,6 +123,19 @@
   --map-road: #000000;
   --map-forest: #3D7F5E;
   --map-city: #A65A2E;
+  --timeline-container-radius: 5px;
+  --timeline-container-border: #3E3A4A;
+  --timeline-container-bg-act: #60A5FA;
+  --timeline-container-bg-sequence: #6EBE62;
+  --timeline-container-bg-scene: #F4A294;
+  --timeline-container-bg-shot: #2E2A3A;
+  --input-bg-primary: #2E2A3A;
+  --input-bg-secondary: #222033;
+  --input-border: #3E3A4A;
+  --input-border-focus: #8E75D1;
+  --upload-border: #3E3A4A;
+  --upload-bg: #2E2A3A;
+  --upload-border-hover: #8E75D1;
 }
 
 @theme inline {
@@ -163,6 +189,18 @@
   --color-map-road: var(--map-road);
   --color-map-forest: var(--map-forest);
   --color-map-city: var(--map-city);
+  --color-timeline-container-bg-act: var(--timeline-container-bg-act);
+  --color-timeline-container-bg-sequence: var(--timeline-container-bg-sequence);
+  --color-timeline-container-bg-scene: var(--timeline-container-bg-scene);
+  --color-timeline-container-bg-shot: var(--timeline-container-bg-shot);
+  --color-timeline-container-border: var(--timeline-container-border);
+  --color-input-bg-primary: var(--input-bg-primary);
+  --color-input-bg-secondary: var(--input-bg-secondary);
+  --color-input-border: var(--input-border);
+  --color-input-border-focus: var(--input-border-focus);
+  --color-upload-border: var(--upload-border);
+  --color-upload-bg: var(--upload-bg);
+  --color-upload-border-hover: var(--upload-border-hover);
 }
 
 @layer base {
@@ -244,4 +282,18 @@ html {
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+}
+
+/* Animated grain texture for timeline containers */
+@keyframes grain {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-5%, -10%); }
+  20% { transform: translate(-15%, 5%); }
+  30% { transform: translate(7%, -25%); }
+  40% { transform: translate(-5%, 25%); }
+  50% { transform: translate(-15%, 10%); }
+  60% { transform: translate(15%, 0%); }
+  70% { transform: translate(0%, 15%); }
+  80% { transform: translate(3%, 35%); }
+  90% { transform: translate(-10%, 10%); }
 }

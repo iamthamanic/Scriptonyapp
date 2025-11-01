@@ -1,9 +1,13 @@
-import { useState } from 'react';
-import { Upload, Trash2, X, Music, Volume2 } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Upload, Trash2, X, Music, Volume2, MoreVertical, Copy, ChevronDown, ChevronRight, Plus, GripVertical, Edit } from 'lucide-react';
 import { useDrag, useDrop } from 'react-dnd';
+import { toast } from 'sonner@2.0.3';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Button } from './ui/button';
+import { CharacterAutocomplete } from './CharacterAutocomplete';
+import { CharacterPicker } from './CharacterPicker';
+import { HighlightedTextarea } from './HighlightedTextarea';
 import {
   Select,
   SelectContent,
@@ -11,10 +15,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from './ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from './ui/collapsible';
 import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar';
 import { Badge } from './ui/badge';
 import { cn } from './ui/utils';
 import type { Shot, Character, ShotAudio } from '../lib/types';
+import { AudioFileList } from './AudioFileList';
+import { AudioLabelDialog } from './AudioLabelDialog';
+import { AudioEditDialog } from './AudioEditDialog';
 
 const ItemTypes = {
   SHOT: 'shot',
@@ -84,12 +102,16 @@ interface ShotCardProps {
   sceneId: string;
   projectId: string;
   projectCharacters?: Character[]; // All characters in project for @-mention
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
   onUpdate: (shotId: string, updates: Partial<Shot>) => void;
   onDelete: (shotId: string) => void;
+  onDuplicate?: (shotId: string) => void;
   onReorder: (draggedId: string, targetId: string) => void;
   onImageUpload: (shotId: string, file: File) => Promise<void>;
-  onAudioUpload: (shotId: string, file: File, type: 'music' | 'sfx', label?: string) => Promise<void>;
+  onAudioUpload: (shotId: string, file: File, type: 'music' | 'sfx', label?: string, startTime?: number, endTime?: number, fadeIn?: number, fadeOut?: number) => Promise<void>;
   onAudioDelete: (audioId: string) => void;
+  onAudioUpdate: (audioId: string, updates: { label?: string; startTime?: number; endTime?: number; fadeIn?: number; fadeOut?: number }) => void;
   onCharacterAdd: (shotId: string, characterId: string) => void;
   onCharacterRemove: (shotId: string, characterId: string) => void;
 }
@@ -99,17 +121,62 @@ export function ShotCard({
   sceneId,
   projectId,
   projectCharacters = [],
+  isExpanded = false,
+  onToggleExpand,
   onUpdate,
   onDelete,
+  onDuplicate,
   onReorder,
   onImageUpload,
   onAudioUpload,
   onAudioDelete,
+  onAudioUpdate,
   onCharacterAdd,
   onCharacterRemove,
 }: ShotCardProps) {
+  // Unified edit state like Scene
   const [isEditing, setIsEditing] = useState(false);
-  const [showCharacterPicker, setShowCharacterPicker] = useState(false);
+  const [editValues, setEditValues] = useState({ shotNumber: String(shot.shotNumber), notes: shot.notes || '' });
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  
+  // Character Add Picker (for adding characters to shot)
+  const [showCharacterAddPicker, setShowCharacterAddPicker] = useState(false);
+  
+  // Character Autocomplete (for @-mentions in dialog)
+  const [showCharacterAutocomplete, setShowCharacterAutocomplete] = useState(false);
+  const [characterSearch, setCharacterSearch] = useState('');
+  const [characterPickerPosition, setCharacterPickerPosition] = useState({ top: 0, left: 0 });
+  const dialogRef = useRef<HTMLTextAreaElement>(null);
+
+  // Debug: Log autocomplete state
+  useEffect(() => {
+    console.log('[ShotCard] 🎯 showCharacterAutocomplete:', showCharacterAutocomplete);
+    console.log('[ShotCard] 🎯 characterSearch:', characterSearch);
+    console.log('[ShotCard] 🎯 characterPickerPosition:', characterPickerPosition);
+    console.log('[ShotCard] 🎯 projectCharacters:', projectCharacters.length);
+  }, [showCharacterAutocomplete, characterSearch, characterPickerPosition, projectCharacters]);
+
+  // Details collapsible state (default open)
+  const [detailsOpen, setDetailsOpen] = useState(true);
+
+  // Save edited values
+  const handleSaveEdit = () => {
+    const numValue = parseInt(editValues.shotNumber);
+    onUpdate(shot.id, { 
+      shotNumber: isNaN(numValue) ? editValues.shotNumber : numValue,
+      description: editValues.description 
+    });
+    setIsEditing(false);
+  };
+  
+  // Audio upload state
+  const [pendingAudioFile, setPendingAudioFile] = useState<{ file: File; type: 'music' | 'sfx'; url?: string } | null>(null);
+  const [showAudioLabelDialog, setShowAudioLabelDialog] = useState(false);
+  const [pendingAudioTrimming, setPendingAudioTrimming] = useState<{ startTime?: number; endTime?: number; fadeIn?: number; fadeOut?: number } | null>(null);
+  
+  // Audio edit state
+  const [editingAudio, setEditingAudio] = useState<ShotAudio | null>(null);
+  const [showAudioEditDialog, setShowAudioEditDialog] = useState(false);
 
   // Drag & Drop
   const [{ isDragging }, drag] = useDrag({
@@ -138,331 +205,767 @@ export function ShotCard({
     drop(node);
   };
 
-  // Handle image upload
+  // Update character picker position based on cursor/dialog field
+  const updateCharacterPickerPosition = () => {
+    if (dialogRef.current) {
+      const rect = dialogRef.current.getBoundingClientRect();
+      // Note: CharacterAutocomplete uses position:fixed, so we use viewport coordinates
+      setCharacterPickerPosition({
+        top: rect.bottom + 4, // 4px below textarea
+        left: rect.left
+      });
+      console.log('[ShotCard] 📍 Updated picker position:', { top: rect.bottom + 4, left: rect.left });
+    }
+  };
+
+  // Close character autocomplete on click outside
+  useEffect(() => {
+    if (!showCharacterAutocomplete) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Don't close if clicking on the autocomplete itself or the dialog textarea
+      if (
+        dialogRef.current?.contains(target) ||
+        target.closest('[role="listbox"]') || // Autocomplete dropdown
+        target.closest('.character-autocomplete') // Custom class if needed
+      ) {
+        return;
+      }
+      setShowCharacterAutocomplete(false);
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showCharacterAutocomplete]);
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      await onImageUpload(shot.id, file);
+      setIsUploadingImage(true);
+      try {
+        await onImageUpload(shot.id, file);
+      } finally {
+        setIsUploadingImage(false);
+      }
     }
   };
 
-  // Handle audio upload
-  const handleAudioUpload = async (type: 'music' | 'sfx', e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAudioUpload = async (
+    type: 'music' | 'sfx',
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = e.target.files?.[0];
     if (file) {
-      const label = prompt(`Label for ${type === 'music' ? 'Musik' : 'SFX'}:`);
-      await onAudioUpload(shot.id, file, type, label || undefined);
+      // Check file size (Supabase Free Tier limit: 50 MB)
+      const maxSizeMB = 50;
+      const maxSizeBytes = maxSizeMB * 1024 * 1024;
+      
+      if (file.size > maxSizeBytes) {
+        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        toast.error(`Audio-Datei zu groß: ${fileSizeMB} MB (Max: ${maxSizeMB} MB)`);
+        e.target.value = '';
+        return;
+      }
+      
+      // Create temporary URL for preview/editing
+      const tempUrl = URL.createObjectURL(file);
+      
+      // Open label dialog
+      setPendingAudioFile({ file, type, url: tempUrl });
+      setShowAudioLabelDialog(true);
+    }
+    // Reset input so same file can be uploaded again
+    e.target.value = '';
+  };
+
+  const handleAudioLabelConfirm = async (label: string, trimming?: { startTime?: number; endTime?: number }) => {
+    if (pendingAudioFile) {
+      // Upload with optional trimming and fade
+      const finalTrimming = trimming || pendingAudioTrimming;
+      await onAudioUpload(
+        shot.id, 
+        pendingAudioFile.file, 
+        pendingAudioFile.type, 
+        label, 
+        finalTrimming?.startTime, 
+        finalTrimming?.endTime,
+        finalTrimming?.fadeIn,
+        finalTrimming?.fadeOut
+      );
+      
+      // Clean up temp URL
+      if (pendingAudioFile.url) {
+        URL.revokeObjectURL(pendingAudioFile.url);
+      }
+      
+      setPendingAudioFile(null);
+      setShowAudioLabelDialog(false);
+      setPendingAudioTrimming(null);
     }
   };
 
-  // Handle @-mention in dialog
-  const handleDialogChange = (value: string) => {
-    // Check if @ was just typed
-    if (value.endsWith('@')) {
-      setShowCharacterPicker(true);
+  const handleAudioLabelCancel = () => {
+    // Clean up temp URL
+    if (pendingAudioFile?.url) {
+      URL.revokeObjectURL(pendingAudioFile.url);
     }
-    onUpdate(shot.id, { dialog: value });
-  };
-
-  // Insert character mention
-  const insertCharacterMention = (character: Character) => {
-    const currentDialog = shot.dialog || '';
-    const newDialog = currentDialog + character.name + ' ';
-    onUpdate(shot.id, { dialog: newDialog });
-    setShowCharacterPicker(false);
     
-    // Also add character to shot if not already there
-    if (!shot.characters?.find(c => c.id === character.id)) {
-      onCharacterAdd(shot.id, character.id);
+    setPendingAudioFile(null);
+    setShowAudioLabelDialog(false);
+    setPendingAudioTrimming(null);
+  };
+
+  const handleAudioEdit = (audioId: string) => {
+    const audio = shot.audioFiles?.find(a => a.id === audioId);
+    if (audio) {
+      setEditingAudio(audio);
+      setShowAudioEditDialog(true);
     }
   };
 
+  // Handle "Trim Audio" button click in upload dialog
+  const handleUploadAudioEdit = () => {
+    if (!pendingAudioFile) return;
+    
+    // Close label dialog
+    setShowAudioLabelDialog(false);
+    
+    // Open edit dialog with pending file
+    setEditingAudio({
+      id: 'temp-upload', // Temporary ID for upload
+      fileName: pendingAudioFile.file.name,
+      label: pendingAudioFile.file.name.replace(/\.[^/.]+$/, ''),
+      url: pendingAudioFile.url || '',
+      type: pendingAudioFile.type,
+      startTime: pendingAudioTrimming?.startTime,
+      endTime: pendingAudioTrimming?.endTime,
+    } as ShotAudio);
+    setShowAudioEditDialog(true);
+  };
+
+  // Handle Dialog changes with @-mention detection
+  const handleDialogChange = (value: string) => {
+    onUpdate(shot.id, { dialog: value });
+
+    // Check for @ character for character mentions
+    const cursorPosition = dialogRef.current?.selectionStart || 0;
+    const textBeforeCursor = value.substring(0, cursorPosition);
+    const atIndex = textBeforeCursor.lastIndexOf('@');
+
+    if (atIndex !== -1 && atIndex === textBeforeCursor.length - 1) {
+      // Just typed @, show all characters
+      console.log('[ShotCard] 🔵 @ detected! Opening autocomplete');
+      setCharacterSearch('');
+      setShowCharacterAutocomplete(true);
+      updateCharacterPickerPosition();
+    } else if (atIndex !== -1) {
+      // Check if we're still in the @-mention
+      const afterAt = textBeforeCursor.substring(atIndex + 1);
+      const hasSpace = afterAt.includes(' ');
+      
+      if (!hasSpace) {
+        // Still typing the mention
+        console.log('[ShotCard] 🔵 Still in @-mention, search:', afterAt);
+        setCharacterSearch(afterAt);
+        setShowCharacterAutocomplete(true);
+        updateCharacterPickerPosition();
+      } else {
+        // Space after @ means we finished the mention
+        setShowCharacterAutocomplete(false);
+      }
+    } else {
+      // No @ before cursor
+      setShowCharacterAutocomplete(false);
+    }
+  };
+
+  const insertCharacterMention = (characterName: string) => {
+    if (!dialogRef.current) return;
+
+    const currentValue = shot.dialog || '';
+    const cursorPosition = dialogRef.current.selectionStart || 0;
+    const textBeforeCursor = currentValue.substring(0, cursorPosition);
+    const textAfterCursor = currentValue.substring(cursorPosition);
+
+    // Find the @ symbol before cursor
+    const atIndex = textBeforeCursor.lastIndexOf('@');
+    
+    if (atIndex !== -1) {
+      const beforeAt = textBeforeCursor.substring(0, atIndex);
+      const newValue = `${beforeAt}@${characterName} ${textAfterCursor}`;
+      
+      onUpdate(shot.id, { dialog: newValue });
+      setShowCharacterAutocomplete(false);
+      
+      // Set cursor position after the inserted mention
+      setTimeout(() => {
+        if (dialogRef.current) {
+          const newPosition = atIndex + characterName.length + 2;
+          dialogRef.current.setSelectionRange(newPosition, newPosition);
+          dialogRef.current.focus();
+        }
+      }, 0);
+    }
+  };
+
+  const handleAudioEditSave = (audioId: string, updates: { label?: string; startTime?: number; endTime?: number; fadeIn?: number; fadeOut?: number }) => {
+    // Check if this is an upload edit (temp ID)
+    if (audioId === 'temp-upload' && pendingAudioFile) {
+      // Save trimming and fade for upload
+      setPendingAudioTrimming({
+        startTime: updates.startTime,
+        endTime: updates.endTime,
+        fadeIn: updates.fadeIn,
+        fadeOut: updates.fadeOut,
+      });
+      
+      // Re-open label dialog to confirm upload
+      setShowAudioEditDialog(false);
+      setEditingAudio(null);
+      setShowAudioLabelDialog(true);
+      
+      // Update pending audio file label if changed
+      if (updates.label) {
+        // Label will be passed in handleAudioLabelConfirm
+      }
+      
+      return;
+    }
+    
+    // Normal edit flow
+    onAudioUpdate(audioId, updates);
+    setShowAudioEditDialog(false);
+    setEditingAudio(null);
+  };
+
+  // ============================================================================
+  // SHOT CONTAINER - GLEICHE STRUKTUR WIE SCENE
+  // ============================================================================
   return (
-    <div
-      ref={combinedRef}
-      className={cn(
-        'bg-white rounded-[20px] border border-[#bfbfbf] p-6 transition-all',
-        isDragging && 'opacity-50',
-        isOver && 'ring-2 ring-purple-500 ring-offset-2'
-      )}
+    <div 
+      ref={combinedRef} 
+      className="relative group"
+      style={{
+        cursor: isDragging ? 'grabbing' : 'move',
+      }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-black">{shot.shotNumber}</h3>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => onDelete(shot.id)}
-          className="text-gray-400 hover:text-red-500"
-        >
-          <Trash2 className="w-4 h-4" />
-        </Button>
-      </div>
-
-      {/* Image Preview */}
-      <div className="mb-4">
-        <label className="block mb-2">
-          <div className="relative bg-[#f8f3f3] border border-[#bfbfbf] rounded-[20px] h-[86px] w-full flex items-center justify-center cursor-pointer hover:bg-gray-100">
-            {shot.imageUrl ? (
-              <img
-                src={shot.imageUrl}
-                alt="Shot preview"
-                className="w-full h-full object-cover rounded-[20px]"
-              />
-            ) : (
-              <div className="flex flex-col items-center gap-2 text-gray-400">
-                <Upload className="w-6 h-6" />
-                <span className="text-xs">Bild hochladen</span>
-              </div>
-            )}
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleImageUpload}
-              className="hidden"
-            />
-          </div>
-        </label>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="bg-[#f8f3f3] border border-[#bfbfbf] rounded-[20px] p-4 space-y-4">
-        {/* Characters */}
-        <div>
-          <label className="text-neutral-400 block mb-2">Charakter</label>
-          <div className="flex gap-2 flex-wrap">
-            {shot.characters?.map((character) => (
-              <div key={character.id} className="relative group">
-                <Avatar className="w-8 h-8">
-                  <AvatarImage src={character.imageUrl} />
-                  <AvatarFallback>{character.name[0]}</AvatarFallback>
-                </Avatar>
-                <button
-                  onClick={() => onCharacterRemove(shot.id, character.id)}
-                  className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-            <button
-              onClick={() => setShowCharacterPicker(!showCharacterPicker)}
-              className="w-8 h-8 rounded-full border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:border-purple-500 hover:text-purple-500"
-            >
-              +
-            </button>
-          </div>
+      {/* Shot Box - IMMER GLEICH IM COLLAPSED UND EXPANDED ZUSTAND */}
+      <div
+        className={cn(
+          'rounded-lg transition-all duration-200 bg-yellow-50 border-2 border-yellow-400 dark:bg-yellow-900/20 dark:border-yellow-600 relative overflow-hidden',
+          isDragging && 'opacity-50',
+          isOver && 'ring-2 ring-yellow-500 ring-offset-2'
+        )}
+      >
+        {/* Animated noise/grain background pattern - OPTIMIZED FOR YELLOW */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 pointer-events-none z-0 dark:opacity-30"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='5' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+            backgroundSize: '80px 80px',
+            opacity: 0.08,
+            mixBlendMode: 'darken',
+            animation: 'grain 8s steps(10) infinite',
+          }}
+        />
+        
+        {/* Subtle hover background glow effect */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 rounded-lg bg-white/0 group-hover:bg-white/10 dark:group-hover:bg-white/5 transition-all duration-300 pointer-events-none"
+        />
+        {/* Shot Header */}
+        <div className="flex items-center gap-2 p-2">
+          <GripVertical className="size-3 text-muted-foreground cursor-move flex-shrink-0" />
           
-          {/* Character Picker Dropdown */}
-          {showCharacterPicker && (
-            <div className="mt-2 bg-white border border-gray-200 rounded-lg shadow-lg p-2 max-h-48 overflow-y-auto">
-              {projectCharacters.map((character) => (
-                <button
-                  key={character.id}
-                  onClick={() => {
-                    onCharacterAdd(shot.id, character.id);
-                    setShowCharacterPicker(false);
-                  }}
-                  className="w-full flex items-center gap-2 p-2 hover:bg-gray-100 rounded"
-                >
-                  <Avatar className="w-6 h-6">
-                    <AvatarImage src={character.imageUrl} />
-                    <AvatarFallback>{character.name[0]}</AvatarFallback>
-                  </Avatar>
-                  <span className="text-sm">{character.name}</span>
-                </button>
-              ))}
-            </div>
+          <button onClick={onToggleExpand} className="flex-shrink-0">
+            {isExpanded ? (
+              <ChevronDown className="size-3.5" />
+            ) : (
+              <ChevronRight className="size-3.5" />
+            )}
+          </button>
+
+          {isEditing ? (
+            <>
+              <Input
+                type="text"
+                value={editValues.shotNumber}
+                onChange={(e) => setEditValues(prev => ({ ...prev, shotNumber: e.target.value }))}
+                className="h-6 flex-1 bg-white text-xs border-yellow-400 dark:border-yellow-600 focus:border-yellow-500 dark:focus:border-yellow-500 focus-visible:ring-yellow-400/20"
+                placeholder="Shot Number"
+              />
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleSaveEdit}
+                className="h-6 px-2 text-xs"
+              >
+                Speichern
+              </Button>
+            </>
+          ) : (
+            <>
+              <span 
+                className="flex-1 text-xs font-semibold cursor-pointer text-[14px] text-[rgb(208,135,0)]"
+                onClick={() => {
+                  setIsEditing(true);
+                  setEditValues({ shotNumber: String(shot.shotNumber), notes: shot.notes || '' });
+                }}
+              >
+                {shot.shotNumber}
+              </span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-1.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreVertical className="size-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem 
+                    onClick={() => {
+                      setIsEditing(true);
+                      setEditValues({ shotNumber: String(shot.shotNumber), notes: shot.notes || '' });
+                    }}
+                  >
+                    <Edit className="size-3 mr-2" />
+                    Edit Shot
+                  </DropdownMenuItem>
+                  {onDuplicate && (
+                    <DropdownMenuItem onClick={() => onDuplicate(shot.id)}>
+                      <Copy className="size-3 mr-2" />
+                      Duplicate Shot
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem 
+                    onClick={() => onDelete(shot.id)}
+                    className="text-red-600 focus:text-red-600"
+                  >
+                    <Trash2 className="size-3 mr-2" />
+                    Delete Shot
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
           )}
         </div>
 
-        {/* Camera Settings Grid */}
-        <div className="grid grid-cols-2 gap-3">
-          {/* Camera Angle */}
-          <div>
-            <label className="text-neutral-400 text-sm block mb-1">Camera Angle</label>
-            <Select
-              value={shot.cameraAngle || ''}
-              onValueChange={(value) => onUpdate(shot.id, { cameraAngle: value })}
-            >
-              <SelectTrigger className="bg-[#cacaca] border-0 h-[21px] text-[13px] rounded-[5px]">
-                <SelectValue placeholder="Front" />
-              </SelectTrigger>
-              <SelectContent>
-                {CAMERA_ANGLES.map((option) => (
-                  <SelectItem key={option.value} value={option.value} className="text-sm">
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Framing */}
-          <div>
-            <label className="text-neutral-400 text-sm block mb-1">Framing</label>
-            <Select
-              value={shot.framing || ''}
-              onValueChange={(value) => onUpdate(shot.id, { framing: value })}
-            >
-              <SelectTrigger className="bg-[#cacaca] border-0 h-[21px] text-[13px] rounded-[5px]">
-                <SelectValue placeholder="MS Halbnah" />
-              </SelectTrigger>
-              <SelectContent>
-                {FRAMING_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value} className="text-sm">
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Movement */}
-          <div>
-            <label className="text-neutral-400 text-sm block mb-1">Movement</label>
-            <Select
-              value={shot.cameraMovement || ''}
-              onValueChange={(value) => onUpdate(shot.id, { cameraMovement: value })}
-            >
-              <SelectTrigger className="bg-[#cacaca] border-0 h-[21px] text-[13px] rounded-[5px]">
-                <SelectValue placeholder="Static" />
-              </SelectTrigger>
-              <SelectContent>
-                {MOVEMENT_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value} className="text-sm">
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Lens */}
-          <div>
-            <label className="text-neutral-400 text-sm block mb-1">Lens</label>
-            <Select
-              value={shot.lens || ''}
-              onValueChange={(value) => onUpdate(shot.id, { lens: value })}
-            >
-              <SelectTrigger className="bg-[#cacaca] border-0 h-[21px] text-[13px] rounded-[5px]">
-                <SelectValue placeholder="35mm" />
-              </SelectTrigger>
-              <SelectContent>
-                {LENS_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value} className="text-sm">
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        {/* Shotlength */}
-        <div>
-          <label className="text-neutral-400 text-sm block mb-1">Shotlength</label>
-          <div className="flex gap-2 items-center">
-            <Input
-              type="number"
-              min="0"
-              max="999"
-              value={shot.shotlengthMinutes || 0}
-              onChange={(e) => onUpdate(shot.id, { shotlengthMinutes: parseInt(e.target.value) || 0 })}
-              className="bg-[#cacaca] border-0 h-[21px] text-[13px] rounded-[5px] w-16"
-              placeholder="Min"
-            />
-            <span className="text-sm">:</span>
-            <Input
-              type="number"
-              min="0"
-              max="59"
-              value={shot.shotlengthSeconds || 0}
-              onChange={(e) => onUpdate(shot.id, { shotlengthSeconds: parseInt(e.target.value) || 0 })}
-              className="bg-[#cacaca] border-0 h-[21px] text-[13px] rounded-[5px] w-16"
-              placeholder="Sek"
-            />
-          </div>
-        </div>
-
-        {/* Musik Upload */}
-        <div>
-          <label className="text-neutral-400 text-sm block mb-1">Musik</label>
-          <div className="flex gap-2">
-            <div className="flex-1 bg-[#f8f3f3] border border-[#bfbfbf] rounded-[5px] h-[21px] px-2 flex items-center text-xs text-gray-500">
-              {shot.audioFiles?.filter(a => a.type === 'music').map(a => a.label || a.fileName).join(', ') || 'Keine Datei'}
-            </div>
-            <label className="bg-[#f8f3f3] border border-[#bfbfbf] rounded-[5px] h-[21px] w-[34px] flex items-center justify-center cursor-pointer hover:bg-gray-200">
-              <Upload className="w-4 h-4 text-gray-500" />
-              <input
-                type="file"
-                accept="audio/*"
-                onChange={(e) => handleAudioUpload('music', e)}
-                className="hidden"
-              />
-            </label>
-          </div>
-        </div>
-
-        {/* SFX Upload */}
-        <div>
-          <label className="text-neutral-400 text-sm block mb-1">SFX</label>
-          <div className="flex gap-2">
-            <div className="flex-1 bg-[#f8f3f3] border border-[#bfbfbf] rounded-[5px] h-[21px] px-2 flex items-center text-xs text-gray-500">
-              {shot.audioFiles?.filter(a => a.type === 'sfx').map(a => a.label || a.fileName).join(', ') || 'Keine Datei'}
-            </div>
-            <label className="bg-[#f8f3f3] border border-[#bfbfbf] rounded-[5px] h-[21px] w-[34px] flex items-center justify-center cursor-pointer hover:bg-gray-200">
-              <Upload className="w-4 h-4 text-gray-500" />
-              <input
-                type="file"
-                accept="audio/*"
-                onChange={(e) => handleAudioUpload('sfx', e)}
-                className="hidden"
-              />
-            </label>
-          </div>
-        </div>
-
-        {/* Dialog & Notes in 2 columns */}
-        <div className="grid grid-cols-2 gap-3">
-          {/* Dialog */}
-          <div>
-            <label className="text-neutral-400 text-sm block mb-1">Dialog</label>
-            <div className="relative">
+        {/* Shot Description */}
+        {isExpanded && (
+          <div className="px-2 pb-2 space-y-2">
+            {isEditing ? (
               <Textarea
-                value={shot.dialog || ''}
-                onChange={(e) => handleDialogChange(e.target.value)}
-                className="bg-[#f8f3f3] border border-[#bfbfbf] rounded-[5px] h-[80px] text-sm resize-none"
-                placeholder="@Charakter erwähnen..."
+                value={editValues.description}
+                onChange={(e) => setEditValues(prev => ({ ...prev, description: e.target.value }))}
+                className="bg-white text-xs border-yellow-400 dark:border-yellow-600 focus:border-yellow-500 dark:focus:border-yellow-500 focus-visible:ring-yellow-400/20"
+                placeholder="Beschreibung"
+                rows={2}
               />
-              {showCharacterPicker && (
-                <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-2 z-10 max-h-32 overflow-y-auto w-full">
-                  {projectCharacters.map((character) => (
-                    <button
-                      key={character.id}
-                      onClick={() => insertCharacterMention(character)}
-                      className="w-full text-left p-2 hover:bg-gray-100 rounded text-sm"
-                    >
-                      @{character.name}
-                    </button>
-                  ))}
+            ) : (
+              <div
+                onClick={() => {
+                  setIsEditing(true);
+                  setEditValues({ shotNumber: String(shot.shotNumber), description: shot.description || '' });
+                }}
+                className="text-xs text-[rgb(208,135,0)] cursor-pointer hover:text-foreground transition-colors min-h-[1.5rem] flex items-center"
+              >
+                {shot.description || '+ Beschreibung'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* EXPANDED CONTENT - Innerhalb derselben Box */}
+        {isExpanded && (
+          <div className="relative px-2 pb-2">
+            <div className="max-h-[400px] md:max-h-[500px] overflow-y-auto overflow-x-hidden">
+              <div className="space-y-2">
+              {/* Image + Characters + Details */}
+              <div className="space-y-1.5">
+              {/* Hero Image - SMALLER */}
+              <label className="block">
+                <div 
+                  className="relative border-2 border-dashed rounded-[5px] w-full flex items-center justify-center cursor-pointer transition-colors aspect-[16/9] md:aspect-[21/9]"
+                  style={{
+                    backgroundColor: 'var(--color-upload-bg)',
+                    borderColor: 'var(--color-upload-border)',
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--color-upload-border-hover)'}
+                  onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--color-upload-border)'}
+                >
+                  {shot.imageUrl ? (
+                    <>
+                      <img
+                        src={shot.imageUrl}
+                        alt="Shot preview"
+                        className={cn(
+                          "w-full h-full object-cover rounded-[5px]",
+                          isUploadingImage && "opacity-50"
+                        )}
+                      />
+                      {isUploadingImage && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-[5px]">
+                          <div className="w-8 h-8 border-3 border-white border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center gap-0.5 text-gray-400">
+                      {isUploadingImage ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                          <span className="text-[9px]">Lädt...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4" />
+                          <span className="text-[9px]">Bild</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                  />
                 </div>
-              )}
+              </label>
+
+              {/* Characters */}
+              <div>
+                <label className="text-neutral-400 text-[10px] block mb-0.5 leading-[10px]">Charakter</label>
+                <div className="flex gap-1 flex-wrap">
+                  {shot.characters?.map((character) => (
+                    <div key={character.id} className="relative group">
+                      <Avatar className="w-8 h-8">
+                        <AvatarImage src={character.imageUrl} />
+                        <AvatarFallback className="text-xs">{character.name?.[0] || '?'}</AvatarFallback>
+                      </Avatar>
+                      <button
+                        onClick={() => onCharacterRemove(shot.id, character.id)}
+                        className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => setShowCharacterAddPicker(!showCharacterAddPicker)}
+                    className="w-8 h-8 rounded-full border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-gray-400 dark:text-gray-500 hover:border-purple-500 hover:text-purple-500 dark:hover:border-purple-400 dark:hover:text-purple-400 text-xs transition-colors"
+                    title="Charakter hinzufügen"
+                  >
+                    +
+                  </button>
+                </div>
+                
+                {/* Character Add Picker */}
+                {showCharacterAddPicker && (
+                  <CharacterPicker
+                    characters={projectCharacters}
+                    filterIds={shot.characters?.map(c => c.id) || []}
+                    onSelect={(character) => {
+                      onCharacterAdd(shot.id, character.id);
+                      setShowCharacterAddPicker(false);
+                    }}
+                    onClose={() => setShowCharacterAddPicker(false)}
+                    className="mt-1 relative z-10"
+                  />
+                )}
+              </div>
+
+              {/* Details Collapsible */}
+              <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen} className="mt-2">
+                <CollapsibleTrigger className="flex items-center gap-1 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors w-full">
+                      {detailsOpen ? (
+                        <ChevronDown className="size-4" />
+                      ) : (
+                        <ChevronRight className="size-4" />
+                      )}
+                  <span className="text-xs">Details</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2">
+                  <div className="grid grid-cols-[60px_1fr] md:grid-cols-[75px_1fr] gap-x-1.5 gap-y-1 items-center">
+                      {/* Camera Angle */}
+              <label className="text-neutral-400 text-[10px] leading-[20px] whitespace-nowrap overflow-hidden text-ellipsis">Camera Angle</label>
+              <Select
+                value={shot.cameraAngle || ''}
+                onValueChange={(value) => onUpdate(shot.id, { cameraAngle: value })}
+              >
+                <SelectTrigger 
+                  className="border border-yellow-400 bg-white/70 dark:bg-slate-800/70 !h-[20px] text-[9px] rounded-[5px] !px-1.5 !py-0 !min-h-0 min-w-0 w-full"
+                >
+                  <SelectValue placeholder="Front" className="truncate" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CAMERA_ANGLES.map((option) => (
+                    <SelectItem key={option.value} value={option.value} className="text-xs">
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* Framing */}
+              <label className="text-neutral-400 text-[10px] leading-[20px] whitespace-nowrap overflow-hidden text-ellipsis">Framing</label>
+              <Select
+                value={shot.framing || ''}
+                onValueChange={(value) => onUpdate(shot.id, { framing: value })}
+              >
+                <SelectTrigger 
+                  className="border border-yellow-400 bg-white/70 dark:bg-slate-800/70 !h-[20px] text-[9px] rounded-[5px] !px-1.5 !py-0 !min-h-0 min-w-0 w-full"
+                >
+                  <SelectValue placeholder="MS Halbnah" className="truncate" />
+                </SelectTrigger>
+                <SelectContent>
+                  {FRAMING_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value} className="text-xs">
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* Movement */}
+              <label className="text-neutral-400 text-[10px] leading-[20px] whitespace-nowrap overflow-hidden text-ellipsis">Movement</label>
+              <Select
+                value={shot.cameraMovement || ''}
+                onValueChange={(value) => onUpdate(shot.id, { cameraMovement: value })}
+              >
+                <SelectTrigger 
+                  className="border border-yellow-400 bg-white/70 dark:bg-slate-800/70 !h-[20px] text-[9px] rounded-[5px] !px-1.5 !py-0 !min-h-0 min-w-0 w-full"
+                >
+                  <SelectValue placeholder="Static" className="truncate" />
+                </SelectTrigger>
+                <SelectContent>
+                  {MOVEMENT_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value} className="text-xs">
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* Lens */}
+              <label className="text-neutral-400 text-[10px] leading-[20px] whitespace-nowrap overflow-hidden text-ellipsis">Lens</label>
+              <Select
+                value={shot.lens || ''}
+                onValueChange={(value) => onUpdate(shot.id, { lens: value })}
+              >
+                <SelectTrigger 
+                  className="border border-yellow-400 bg-white/70 dark:bg-slate-800/70 !h-[20px] text-[9px] rounded-[5px] !px-1.5 !py-0 !min-h-0 min-w-0 w-full"
+                >
+                  <SelectValue placeholder="35mm" className="truncate" />
+                </SelectTrigger>
+                <SelectContent>
+                  {LENS_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value} className="text-xs">
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* Shotlength */}
+              <label className="text-neutral-400 text-[10px] leading-[20px] whitespace-nowrap overflow-hidden text-ellipsis">Shotlength</label>
+              <div className="flex gap-1 items-center">
+                <div className="flex items-center gap-1 flex-1">
+                  <Input
+                    type="number"
+                    min="0"
+                    max="999"
+                    value={shot.shotlengthMinutes || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      onUpdate(shot.id, { shotlengthMinutes: val === '' ? null : parseInt(val) });
+                    }}
+                    className="border border-yellow-400 bg-white/70 h-[20px] text-[9px] rounded-[5px] flex-1 px-1.5"
+                    placeholder="00"
+                  />
+                  <span className="text-[9px] text-neutral-400 whitespace-nowrap">Min</span>
+                </div>
+                <div className="flex items-center gap-1 flex-1">
+                  <Input
+                    type="number"
+                    min="0"
+                    max="59"
+                    value={shot.shotlengthSeconds || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      onUpdate(shot.id, { shotlengthSeconds: val === '' ? null : parseInt(val) });
+                    }}
+                    className="border border-yellow-400 bg-white/70 h-[20px] text-[9px] rounded-[5px] flex-1 px-1.5"
+                    placeholder="00"
+                  />
+                  <span className="text-[9px] text-neutral-400 whitespace-nowrap">Sec</span>
+                </div>
+              </div>
+
+              {/* Audio - Musik */}
+              <label className="text-neutral-400 text-[10px] leading-[20px] whitespace-nowrap overflow-hidden text-ellipsis">Musik</label>
+              <div className="flex gap-1 items-start">
+                <div className="flex-1 border border-yellow-400 bg-white/70 dark:bg-slate-800/70 rounded-[5px] min-h-[20px] max-h-[80px] overflow-y-auto px-1.5 py-1 text-[9px] text-gray-500">
+                  {shot.audioFiles?.filter(a => a.type === 'music').length === 0 ? (
+                    <span className="opacity-50">Keine Datei</span>
+                  ) : (
+                    <AudioFileList
+                      files={shot.audioFiles?.filter(a => a.type === 'music').map(a => ({
+                        id: a.id,
+                        fileName: a.fileName,
+                        label: a.label,
+                        url: a.fileUrl,
+                        type: 'music' as const,
+                        startTime: a.startTime,
+                        endTime: a.endTime,
+                      })) || []}
+                      type="music"
+                      onDelete={onAudioDelete}
+                      onEdit={handleAudioEdit}
+                    />
+                  )}
+                </div>
+                <label 
+                  className="border border-yellow-400 bg-white/70 dark:bg-slate-800/70 rounded-[5px] h-[20px] w-[28px] flex items-center justify-center cursor-pointer hover:opacity-70 flex-shrink-0"
+                  title="Upload Music"
+                >
+                  <Plus className="w-3.5 h-3.5 text-gray-500" />
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={(e) => handleAudioUpload('music', e)}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* Audio - SFX */}
+              <label className="text-neutral-400 text-[10px] leading-[20px] whitespace-nowrap overflow-hidden text-ellipsis">SFX</label>
+              <div className="flex gap-1 items-start">
+                <div className="flex-1 border border-yellow-400 bg-white/70 dark:bg-slate-800/70 rounded-[5px] min-h-[20px] max-h-[80px] overflow-y-auto px-1.5 py-1 text-[9px] text-gray-500">
+                  {shot.audioFiles?.filter(a => a.type === 'sfx').length === 0 ? (
+                    <span className="opacity-50">Keine Datei</span>
+                  ) : (
+                    <AudioFileList
+                      files={shot.audioFiles?.filter(a => a.type === 'sfx').map(a => ({
+                        id: a.id,
+                        fileName: a.fileName,
+                        label: a.label,
+                        url: a.fileUrl,
+                        type: 'sfx' as const,
+                        startTime: a.startTime,
+                        endTime: a.endTime,
+                      })) || []}
+                      type="sfx"
+                      onDelete={onAudioDelete}
+                      onEdit={handleAudioEdit}
+                    />
+                  )}
+                </div>
+                <label 
+                  className="border border-yellow-400 bg-white/70 dark:bg-slate-800/70 rounded-[5px] h-[20px] w-[28px] flex items-center justify-center cursor-pointer hover:opacity-70 flex-shrink-0"
+                  title="Upload SFX"
+                >
+                  <Plus className="w-3.5 h-3.5 text-gray-500" />
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    onChange={(e) => handleAudioUpload('sfx', e)}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+              </div>
+
+              {/* BOTTOM ROW: Dialog + Notes */}
+              <div className="grid grid-cols-2 gap-2">
+                {/* Dialog */}
+                <div>
+                  <label className="text-neutral-400 text-[10px] block mb-0.5">Dialog</label>
+                  <div className="relative">
+                    <HighlightedTextarea
+                      ref={dialogRef}
+                      value={shot.dialog || ''}
+                      onChange={(e) => handleDialogChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Close character autocomplete on Escape
+                        if (e.key === 'Escape' && showCharacterAutocomplete) {
+                          e.preventDefault();
+                          setShowCharacterAutocomplete(false);
+                        }
+                      }}
+                      highlightPattern={/@\w+/g}
+                      highlightClassName="text-[#60A5FA] font-bold"
+                      className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] resize-none p-2"
+                      placeholder="@Charakter erwähnen..."
+                    />
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label className="text-[rgb(161,161,161)] text-[10px] block mb-0.5">Notes</label>
+                  <Textarea
+                    value={shot.notes || ''}
+                    onChange={(e) => onUpdate(shot.id, { notes: e.target.value })}
+                    className="border border-yellow-400 bg-white/70 rounded-[5px] h-[80px] text-[13px] resize-none p-2"
+                    placeholder="Notizen..."
+                  />
+                </div>
+                </div>
+              </div>
             </div>
           </div>
-
-          {/* Notes */}
-          <div>
-            <label className="text-black text-sm block mb-1">Notes</label>
-            <Textarea
-              value={shot.notes || ''}
-              onChange={(e) => onUpdate(shot.id, { notes: e.target.value })}
-              className="bg-[#f8f3f3] border border-[#bfbfbf] rounded-[5px] h-[80px] text-sm resize-none"
-              placeholder="Notizen..."
-            />
-          </div>
-        </div>
+        )}
       </div>
+
+      {/* Character Autocomplete (for @-mentions) */}
+      {showCharacterAutocomplete && (
+        <CharacterAutocomplete
+          characters={projectCharacters}
+          search={characterSearch}
+          position={characterPickerPosition}
+          onSelect={insertCharacterMention}
+        />
+      )}
+
+      {/* Audio Label Dialog */}
+      {pendingAudioFile && (
+        <AudioLabelDialog
+          isOpen={showAudioLabelDialog}
+          fileName={pendingAudioFile.file.name}
+          type={pendingAudioFile.type}
+          audioUrl={pendingAudioFile.url}
+          onConfirm={handleAudioLabelConfirm}
+          onCancel={handleAudioLabelCancel}
+          onEdit={handleUploadAudioEdit}
+        />
+      )}
+
+      {/* Audio Edit Dialog */}
+      <AudioEditDialog
+        open={showAudioEditDialog}
+        onOpenChange={setShowAudioEditDialog}
+        audioFile={editingAudio ? {
+          id: editingAudio.id,
+          fileName: editingAudio.fileName,
+          label: editingAudio.label,
+          startTime: editingAudio.startTime,
+          endTime: editingAudio.endTime,
+          url: editingAudio.fileUrl, // FIX: Use fileUrl from ShotAudio type
+        } : null}
+        onSave={handleAudioEditSave}
+      />
     </div>
   );
 }

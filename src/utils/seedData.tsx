@@ -1,11 +1,16 @@
 import { projectsApi, worldsApi, categoriesApi, itemsApi } from "./api";
-import { projectId, publicAnonKey } from "./supabase/info";
+import { publicAnonKey } from "./supabase/info";
+import { apiGateway } from "../lib/api-gateway";
 
 export async function seedTestUser() {
   try {
-    console.log("🔗 Calling seed-test-user endpoint...");
+    console.log("🔗 Calling seed-test-user endpoint via API Gateway...");
+    
+    // Note: Seed endpoint is on scriptony-auth function
+    // But it needs to be accessible without auth, so we use direct fetch
+    const { projectId } = await import("./supabase/info");
     const response = await fetch(
-      `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b/auth/seed-test-user`,
+      `https://${projectId}.supabase.co/functions/v1/scriptony-auth/auth/seed-test-user`,
       {
         method: "POST",
         headers: {

@@ -1,12 +1,15 @@
 /**
  * 🎬 TIMELINE API V2 - Generic Template Engine Client
  * 
+ * 🚀 MIGRATED TO API GATEWAY
+ * 
  * API Client für die generische Timeline Engine.
  * Funktioniert mit ALLEN Templates (Film, Serie, Buch, Theater, Game, ...)
+ * 
+ * Uses API Gateway for routing to scriptony-timeline-v2 function.
  */
 
-import { projectId, publicAnonKey } from '../supabase/info';
-import { getAuthToken } from '../auth/getAuthToken';
+import { apiGet, apiPost, apiPut, apiDelete, unwrapApiResult } from '../api-client';
 
 // =============================================================================
 // TYPES
@@ -74,12 +77,6 @@ export interface InitializeProjectRequest {
 }
 
 // =============================================================================
-// BASE URL
-// =============================================================================
-
-const BASE_URL = `https://${projectId}.supabase.co/functions/v1/scriptony-timeline-v2`;
-
-// =============================================================================
 // API CLIENT
 // =============================================================================
 
@@ -92,8 +89,6 @@ export async function getNodes(filters: {
   parentId?: string | null;
   templateId?: string;
 }): Promise<TimelineNode[]> {
-  const token = await getAuthToken();
-  
   const params = new URLSearchParams({
     project_id: filters.projectId,
   });
@@ -110,44 +105,18 @@ export async function getNodes(filters: {
     params.append('template_id', filters.templateId);
   }
 
-  const response = await fetch(`${BASE_URL}/nodes?${params}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to fetch nodes');
-  }
-
-  const data = await response.json();
-  return data.nodes;
+  const result = await apiGet(`/nodes?${params}`);
+  const data = unwrapApiResult(result);
+  return data?.nodes || [];
 }
 
 /**
  * Get single node by ID
  */
 export async function getNode(nodeId: string): Promise<TimelineNode> {
-  const token = await getAuthToken();
-
-  const response = await fetch(`${BASE_URL}/nodes/${nodeId}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to fetch node');
-  }
-
-  const data = await response.json();
-  return data.node;
+  const result = await apiGet(`/nodes/${nodeId}`);
+  const data = unwrapApiResult(result);
+  return data?.node || data;
 }
 
 /**
@@ -157,75 +126,45 @@ export async function getNodeChildren(
   nodeId: string, 
   recursive = false
 ): Promise<TimelineNode[]> {
-  const token = await getAuthToken();
-  
   const params = new URLSearchParams();
   if (recursive) {
     params.append('recursive', 'true');
   }
 
-  const response = await fetch(`${BASE_URL}/nodes/${nodeId}/children?${params}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to fetch children');
-  }
-
-  const data = await response.json();
-  return data.children;
+  const result = await apiGet(`/nodes/${nodeId}/children?${params}`);
+  const data = unwrapApiResult(result);
+  return data?.children || [];
 }
 
 /**
  * Get node path (from root to node)
  */
 export async function getNodePath(nodeId: string): Promise<any[]> {
-  const token = await getAuthToken();
-
-  const response = await fetch(`${BASE_URL}/nodes/${nodeId}/path`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to fetch path');
-  }
-
-  const data = await response.json();
-  return data.path;
+  const result = await apiGet(`/nodes/${nodeId}/path`);
+  const data = unwrapApiResult(result);
+  return data?.path || [];
 }
 
 /**
  * Create new node
  */
 export async function createNode(request: CreateNodeRequest): Promise<TimelineNode> {
-  const token = await getAuthToken();
-
-  const response = await fetch(`${BASE_URL}/nodes`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to create node');
+  console.log('[Timeline API V2] Creating node:', request);
+  
+  try {
+    const result = await apiPost('/nodes', request);
+    console.log('[Timeline API V2] Raw result:', result);
+    const data = unwrapApiResult(result);
+    console.log('[Timeline API V2] Node created successfully:', data);
+    return data?.node || data;
+  } catch (error) {
+    console.error('[Timeline API V2] Error creating node:', {
+      request,
+      error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
-
-  const data = await response.json();
-  return data.node;
 }
 
 /**
@@ -235,65 +174,25 @@ export async function updateNode(
   nodeId: string, 
   updates: UpdateNodeRequest
 ): Promise<TimelineNode> {
-  const token = await getAuthToken();
-
-  const response = await fetch(`${BASE_URL}/nodes/${nodeId}`, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(updates),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to update node');
-  }
-
-  const data = await response.json();
-  return data.node;
+  const result = await apiPut(`/nodes/${nodeId}`, updates);
+  const data = unwrapApiResult(result);
+  return data?.node || data;
 }
 
 /**
  * Delete node
  */
 export async function deleteNode(nodeId: string): Promise<void> {
-  const token = await getAuthToken();
-
-  const response = await fetch(`${BASE_URL}/nodes/${nodeId}`, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to delete node');
-  }
+  const result = await apiDelete(`/nodes/${nodeId}`);
+  unwrapApiResult(result);
 }
 
 /**
  * Reorder nodes within parent
  */
 export async function reorderNodes(nodeIds: string[]): Promise<void> {
-  const token = await getAuthToken();
-
-  const response = await fetch(`${BASE_URL}/nodes/reorder`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ nodeIds }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to reorder nodes');
-  }
+  const result = await apiPost('/nodes/reorder', { nodeIds });
+  unwrapApiResult(result);
 }
 
 /**
@@ -302,24 +201,9 @@ export async function reorderNodes(nodeIds: string[]): Promise<void> {
 export async function bulkCreateNodes(
   request: BulkCreateRequest
 ): Promise<TimelineNode[]> {
-  const token = await getAuthToken();
-
-  const response = await fetch(`${BASE_URL}/nodes/bulk`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to bulk create nodes');
-  }
-
-  const data = await response.json();
-  return data.nodes;
+  const result = await apiPost('/nodes/bulk', request);
+  const data = unwrapApiResult(result);
+  return data?.nodes || [];
 }
 
 /**
@@ -328,24 +212,9 @@ export async function bulkCreateNodes(
 export async function initializeProject(
   request: InitializeProjectRequest
 ): Promise<TimelineNode[]> {
-  const token = await getAuthToken();
-
-  const response = await fetch(`${BASE_URL}/initialize-project`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to initialize project');
-  }
-
-  const data = await response.json();
-  return data.nodes;
+  const result = await apiPost('/initialize-project', request);
+  const data = unwrapApiResult(result);
+  return data?.nodes || [];
 }
 
 // =============================================================================

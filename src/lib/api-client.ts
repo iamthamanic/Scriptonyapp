@@ -3,10 +3,13 @@
  * 
  * Provides a unified interface for making HTTP requests to the Supabase Edge Functions.
  * Handles authentication, error handling, logging, and request/response transformation.
+ * 
+ * NOTE: This now uses API Gateway for automatic routing to the correct Edge Function.
  */
 
 import { supabaseConfig } from './env';
 import { API_CONFIG } from './config';
+import { apiGateway as internalApiGateway } from './api-gateway';
 
 // =============================================================================
 // Types
@@ -40,7 +43,11 @@ interface RequestOptions extends RequestInit {
 // Configuration
 // =============================================================================
 
-const API_BASE_URL = `${supabaseConfig.url}/functions/v1${API_CONFIG.SERVER_BASE_PATH}`;
+// LEGACY: Keep for backward compatibility with old auth routes
+const API_BASE_URL_LEGACY = `${supabaseConfig.url}/functions/v1${API_CONFIG.SERVER_BASE_PATH}`;
+
+// NEW: Use API Gateway for multi-function routing
+const USE_API_GATEWAY = true;
 
 // =============================================================================
 // Helpers
@@ -116,11 +123,57 @@ export async function apiRequest<T = any>(
     ...fetchOptions
   } = options;
 
-  const url = `${API_BASE_URL}${endpoint}`;
   const method = fetchOptions.method || 'GET';
 
-  // Debug log
-  console.log(`[API Client] Initializing ${method} request to ${url}`);
+  // Use API Gateway for automatic routing to correct Edge Function
+  if (USE_API_GATEWAY) {
+    console.log(`[API Client] Using API Gateway for ${method} ${endpoint}`);
+    
+    try {
+      // Get auth token if required
+      let authToken: string | null = null;
+      if (requireAuth) {
+        authToken = await getAuthToken();
+        if (!authToken) {
+          console.error('[API Client] No auth token available for', method, endpoint);
+          return {
+            error: {
+              message: 'Unauthorized - please log in',
+              status: 401,
+              statusText: 'Unauthorized',
+            },
+          };
+        }
+        console.log(`[API Client] Auth token acquired for ${method} ${endpoint}`);
+      }
+      
+      // Call API Gateway
+      const body = fetchOptions.body ? JSON.parse(fetchOptions.body as string) : undefined;
+      const data = await internalApiGateway<T>({
+        method: method as any,
+        route: endpoint,
+        body,
+        headers,
+        accessToken: authToken || undefined,
+      });
+      
+      return { data };
+    } catch (error: any) {
+      console.error(`[API Client via Gateway] Error:`, error);
+      return {
+        error: {
+          message: error.message || 'Request failed',
+          status: error.status,
+          statusText: error.statusText,
+          details: error,
+        },
+      };
+    }
+  }
+  
+  // LEGACY: Fallback to old direct function call (for backward compatibility)
+  const url = `${API_BASE_URL_LEGACY}${endpoint}`;
+  console.log(`[API Client] LEGACY MODE: ${method} request to ${url}`);
 
   try {
     // Get auth token if required
