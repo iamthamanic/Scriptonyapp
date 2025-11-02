@@ -1,59 +1,89 @@
 import { useState, useEffect } from "react";
-import { Clock, Quote, ChevronRight } from "lucide-react";
+import { Clock, Quote, ChevronRight, Film, Globe } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Badge } from "../ui/badge";
 import { LoadingSpinner } from "../LoadingSpinner";
-import { projectsApi } from "../../utils/api";
+import { projectsApi, worldsApi } from "../../utils/api";
 
 interface HomePageProps {
   onNavigate: (page: string, id?: string) => void;
 }
 
+type RecentItem = {
+  id: string;
+  title: string;
+  description: string;
+  lastEdited: Date;
+  type: 'project' | 'world';
+  thumbnailUrl?: string;
+  genre?: string;
+  projectType?: string;
+};
+
 export function HomePage({ onNavigate }: HomePageProps) {
-  const [recentProjects, setRecentProjects] = useState<any[]>([]);
+  const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadProjects();
+    loadRecentItems();
   }, []);
 
-  const loadProjects = async () => {
+  const loadRecentItems = async () => {
     try {
       setLoading(true);
-      const projects = await projectsApi.getAll();
-      // Sort by lastEdited and take top 3
-      if (projects && Array.isArray(projects) && projects.length > 0) {
-        const sorted = projects
-          .sort((a: any, b: any) => {
-            const dateA = new Date(b.lastEdited || b.createdAt);
-            const dateB = new Date(a.lastEdited || a.createdAt);
-            return dateA.getTime() - dateB.getTime();
-          })
-          .slice(0, 3);
-        setRecentProjects(sorted);
-      } else {
-        setRecentProjects([]);
+      const [projects, worlds] = await Promise.all([
+        projectsApi.getAll(),
+        worldsApi.getAll(),
+      ]);
+
+      // Combine and normalize projects and worlds
+      const items: RecentItem[] = [];
+
+      if (projects && Array.isArray(projects)) {
+        projects.forEach((p: any) => {
+          items.push({
+            id: p.id,
+            title: p.title,
+            description: p.logline || '',
+            lastEdited: new Date(p.last_edited || p.created_at),
+            type: 'project',
+            thumbnailUrl: p.thumbnailUrl,
+            genre: p.genre,
+            projectType: p.type,
+          });
+        });
       }
+
+      if (worlds && Array.isArray(worlds)) {
+        worlds.forEach((w: any) => {
+          items.push({
+            id: w.id,
+            title: w.name,
+            description: w.description || '',
+            lastEdited: new Date(w.updated_at || w.created_at),
+            type: 'world',
+            thumbnailUrl: w.thumbnailUrl,
+          });
+        });
+      }
+
+      // Sort by lastEdited and take top 5
+      const sorted = items
+        .sort((a, b) => {
+          return b.lastEdited.getTime() - a.lastEdited.getTime();
+        })
+        .slice(0, 5);
+
+      setRecentItems(sorted);
     } catch (error) {
-      console.error("Error loading projects:", error);
-      setRecentProjects([]);
+      console.error("Error loading recent items:", error);
+      setRecentItems([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const formatTimeAgo = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 60) return `Vor ${diffMins} Minuten`;
-    if (diffHours < 24) return `Vor ${diffHours} Stunden`;
-    if (diffDays === 1) return "Gestern";
-    return `Vor ${diffDays} Tagen`;
-  };
 
   const quote = {
     text: "The scariest moment is always just before you start.",
@@ -77,49 +107,91 @@ export function HomePage({ onNavigate }: HomePageProps) {
         </p>
       </div>
 
-      {/* Recent Projects */}
+      {/* Recent Items */}
       <section className="px-4 mb-8">
         <div className="flex items-center justify-between mb-4">
           <h2>Zuletzt bearbeitet</h2>
-          <button 
-            onClick={() => onNavigate("projects")}
-            className="text-sm text-primary flex items-center gap-1"
-          >
-            Alle
-            <ChevronRight className="size-4" />
-          </button>
         </div>
-        {recentProjects.length === 0 ? (
+        {recentItems.length === 0 ? (
           <Card>
             <CardContent className="p-8 text-center text-muted-foreground">
-              Noch keine Projekte. Erstelle dein erstes Projekt!
+              Noch keine Inhalte. Erstelle dein erstes Projekt oder deine erste Welt!
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-3">
-            {recentProjects.map((project) => (
+            {recentItems.map((item) => (
               <Card 
-                key={project.id}
-                className="active:scale-[0.98] transition-transform cursor-pointer"
-                onClick={() => onNavigate("projects", project.id)}
+                key={item.id}
+                className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
+                onClick={() => onNavigate(item.type === 'project' ? 'projects' : 'worldbuilding', item.id)}
               >
-                <CardHeader className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <CardTitle className="text-base mb-1 truncate">
-                        {project.title}
-                      </CardTitle>
-                      <CardDescription className="text-sm line-clamp-2">
-                        {project.logline}
-                      </CardDescription>
-                      <div className="flex items-center gap-1.5 mt-3 text-xs text-muted-foreground">
+                <div className="flex items-center gap-3 p-3">
+                  {/* Thumbnail Left */}
+                  <div 
+                    className="w-[100px] h-[56px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0"
+                    style={item.thumbnailUrl ? { 
+                      backgroundImage: `url(${item.thumbnailUrl})`, 
+                      backgroundSize: 'cover', 
+                      backgroundPosition: 'center',
+                      backgroundBlendMode: 'overlay'
+                    } : {}}
+                  >
+                    {!item.thumbnailUrl && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {item.type === 'project' ? (
+                          <Film className="size-5 text-primary/40" />
+                        ) : (
+                          <Globe className="size-5 text-primary/40" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Content Right */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <h3 className="font-semibold text-sm leading-snug line-clamp-1">
+                        {item.title}
+                      </h3>
+                      <ChevronRight className="size-4 text-muted-foreground shrink-0 mt-0.5" />
+                    </div>
+                    
+                    {item.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-1 mb-2">
+                        {item.description}
+                      </p>
+                    )}
+
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Badge variant={item.type === 'project' ? 'secondary' : 'outline'} className="text-[10px] h-5 px-1.5">
+                        {item.type === 'project' ? '🎬 Projekt' : '🌍 Welt'}
+                      </Badge>
+                      {item.projectType && (
+                        <Badge variant="outline" className="text-[10px] h-5 px-1.5">
+                          {item.projectType}
+                        </Badge>
+                      )}
+                      {item.genre && (
+                        <Badge variant="outline" className="text-[10px] h-5 px-1.5">
+                          {item.genre}
+                        </Badge>
+                      )}
+                      <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                         <Clock className="size-3" />
-                        <span>{formatTimeAgo(project.lastEdited)}</span>
+                        <span>
+                          Zuletzt: {item.lastEdited.toLocaleDateString("de-DE", { 
+                            day: "2-digit", 
+                            month: "2-digit" 
+                          })}, {item.lastEdited.toLocaleTimeString("de-DE", { 
+                            hour: "2-digit", 
+                            minute: "2-digit" 
+                          })}
+                        </span>
                       </div>
                     </div>
-                    <ChevronRight className="size-5 text-muted-foreground shrink-0 mt-1" />
                   </div>
-                </CardHeader>
+                </div>
               </Card>
             ))}
           </div>

@@ -172,9 +172,9 @@ export default function App() {
   const [migrationComplete, setMigrationComplete] =
     useState(false);
 
-  // Auto-migrate on first app load
+  // Auto-setup on first app load
   useEffect(() => {
-    const runAutoMigration = async () => {
+    const runAutoSetup = async () => {
       // Check localStorage first (fast path)
       const hasMigrated = localStorage.getItem(
         STORAGE_KEYS.HAS_MIGRATED,
@@ -182,77 +182,20 @@ export default function App() {
 
       if (hasMigrated) {
         console.log(
-          "✅ Migration bereits durchgeführt - App wird geladen",
+          "✅ Setup bereits durchgeführt - App wird geladen",
         );
         setMigrationComplete(true);
         return;
       }
 
-      console.log("🚀 Scriptony Auto-Migration startet...");
+      console.log("🚀 Scriptony Auto-Setup startet...");
       console.log("⏰ Start:", new Date().toISOString());
 
       try {
-        // SCHRITT 1: Prüfe SOFORT ob Migration bereits durchgeführt wurde (VOR Login!)
         console.log(
-          "\n📝 Schritt 1/4: Prüfe ob Migration bereits durchgeführt wurde...",
+          "\n📝 Schritt 1/2: Test-User erstellen (falls nicht vorhanden)...",
         );
-
-        const { supabaseConfig } = await import("./lib/env");
-        const { API_CONFIG } = await import("./lib/config");
-
-        const statusUrl = `${supabaseConfig.url}/functions/v1${API_CONFIG.SERVER_BASE_PATH}/migration-status`;
-
-        try {
-          const statusResponse = await fetch(statusUrl, {
-            method: "GET",
-          });
-
-          if (statusResponse.ok) {
-            const statusData = await statusResponse.json();
-
-            if (statusData.migrationDone) {
-              console.log(
-                "✅ Migration bereits in Datenbank vorhanden!",
-              );
-              console.log(
-                "⏩ Überspringe Migration und fahre mit Login fort...",
-              );
-              localStorage.setItem(
-                STORAGE_KEYS.HAS_MIGRATED,
-                "true",
-              );
-
-              // Login still needed for app to work
-              console.log("\n📝 Schritt 2/4: Auto-Login...");
-              const { TEST_USER } = await import(
-                "./lib/config"
-              );
-              await getAuthClient().signInWithPassword(
-                TEST_USER.EMAIL,
-                TEST_USER.PASSWORD,
-              );
-
-              console.log("✅ Eingeloggt als Test-User");
-              console.log("\n🎉 App ist bereit!");
-              setMigrationComplete(true);
-              return;
-            }
-
-            console.log(
-              "📝 Migration noch nicht durchgeführt - starte Migrations-Prozess...",
-            );
-          }
-        } catch (statusError) {
-          console.warn(
-            "⚠️ Migration-Status-Check fehlgeschlagen:",
-            statusError,
-          );
-          console.log(
-            "📝 Fahre mit normaler Migration fort...",
-          );
-        }
-
-        console.log("\n📝 Schritt 2/4: Test-User erstellen...");
+        
         try {
           await seedTestUser();
           localStorage.setItem(
@@ -260,34 +203,26 @@ export default function App() {
             "true",
           );
           console.log("✅ Test-User bereit");
-        } catch (seedError) {
-          console.warn(
-            "⚠️ Test-User-Seed fehlgeschlagen (optional, nicht kritisch):",
-            seedError,
-          );
-          console.log("⏩ Fahre trotzdem mit Login fort...");
+        } catch (seedError: any) {
+          // Ignore if user already exists
+          if (seedError?.message?.includes("already")) {
+            console.log("✅ Test-User existiert bereits");
+          } else {
+            console.warn(
+              "⚠️ Test-User-Seed fehlgeschlagen (nicht kritisch):",
+              seedError?.message || seedError,
+            );
+          }
         }
 
-        console.log("\n📝 Schritt 3/4: Auto-Login...");
+        console.log("\n📝 Schritt 2/2: Auto-Login vorbereiten...");
         const { TEST_USER } = await import("./lib/config");
-        const session =
-          await getAuthClient().signInWithPassword(
-            TEST_USER.EMAIL,
-            TEST_USER.PASSWORD,
-          );
-
-        console.log("✅ Eingeloggt als Test-User (Superadmin)");
-
-        const token = session.accessToken;
-        if (!token) {
-          throw new Error("Kein Auth-Token erhalten");
-        }
-
-        console.log(
-          "\n📝 Schritt 4/4: Setup abgeschlossen (Migrations werden via Supabase verwaltet)...",
-        );
         
-        // Mark migration as complete (we use Supabase migrations now, not runtime migration)
+        // Let AuthProvider handle the actual login to avoid race conditions
+        console.log("✅ Auto-Login-Daten geladen");
+        console.log(`ℹ️  Bitte einloggen mit: ${TEST_USER.EMAIL}`);
+        
+        // Mark setup as complete
         localStorage.setItem(STORAGE_KEYS.HAS_MIGRATED, "true");
         
         console.log(
@@ -296,7 +231,7 @@ export default function App() {
         console.log("⏰ Ende:", new Date().toISOString());
 
         await new Promise((resolve) =>
-          setTimeout(resolve, 500),
+          setTimeout(resolve, 300),
         );
       } catch (error: any) {
         console.error("\n❌ Auto-Setup Fehler:", error);
@@ -315,7 +250,7 @@ export default function App() {
       }
     };
 
-    runAutoMigration();
+    runAutoSetup();
   }, []);
 
   // Show loading during migration
@@ -335,10 +270,10 @@ export default function App() {
               Scriptony wird vorbereitet...
             </h2>
             <p className="text-muted-foreground">
-              Migration zu PostgreSQL läuft
+              Test-User wird erstellt
             </p>
             <p className="text-sm text-muted-foreground">
-              Dies dauert nur einmalig ~30 Sekunden
+              Dies dauert nur einmalig ~5 Sekunden
             </p>
           </div>
         </div>

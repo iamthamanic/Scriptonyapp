@@ -26,6 +26,8 @@ export const EDGE_FUNCTIONS = {
   GYM: 'scriptony-gym',
   AUTH: 'scriptony-auth',
   SUPERADMIN: 'scriptony-superadmin',
+  STATS: 'scriptony-stats', // Statistics & Analytics ✅ PHASE 2!
+  LOGS: 'scriptony-logs', // Activity Logging & Audit Trail ✅ PHASE 2!
 } as const;
 
 /**
@@ -62,6 +64,10 @@ const ROUTE_MAP: Record<string, string> = {
   // Characters Microservice ✅ NEW!
   '/characters': EDGE_FUNCTIONS.CHARACTERS,
   '/timeline-characters': EDGE_FUNCTIONS.CHARACTERS, // Legacy compatibility
+  
+  // Stats & Logs ✅ PHASE 2!
+  '/stats': EDGE_FUNCTIONS.STATS,
+  '/logs': EDGE_FUNCTIONS.LOGS,
   
   // Audio (Upload, Waveform, Trim, Fade)
   // Note: /shots/:id/upload-audio routes to AUDIO function

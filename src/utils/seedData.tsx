@@ -4,13 +4,12 @@ import { apiGateway } from "../lib/api-gateway";
 
 export async function seedTestUser() {
   try {
-    console.log("🔗 Calling seed-test-user endpoint via API Gateway...");
+    console.log("🔗 Calling create-demo-user endpoint...");
     
-    // Note: Seed endpoint is on scriptony-auth function
-    // But it needs to be accessible without auth, so we use direct fetch
+    // Use the existing /create-demo-user endpoint
     const { projectId } = await import("./supabase/info");
     const response = await fetch(
-      `https://${projectId}.supabase.co/functions/v1/scriptony-auth/auth/seed-test-user`,
+      `https://${projectId}.supabase.co/functions/v1/scriptony-auth/create-demo-user`,
       {
         method: "POST",
         headers: {
@@ -24,15 +23,15 @@ export async function seedTestUser() {
 
     if (response.ok) {
       const result = await response.json();
-      console.log("✅ Test user seed:", result.message);
+      console.log("✅ Demo user created:", result.email);
       return result;
     } else {
       const errorText = await response.text();
-      console.error("❌ Failed to seed test user:", errorText);
+      console.error("❌ Failed to seed demo user:", errorText);
       throw new Error(`Seed failed: ${errorText}`);
     }
   } catch (error) {
-    console.error("❌ Error seeding test user:", error);
+    console.error("❌ Error seeding demo user:", error);
     throw error;
   }
 }

@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { Globe, Plus, Mountain, Landmark, Users, Palette, Building, FileText, ArrowLeft, ChevronRight, ChevronDown, Upload, Search, Calendar as CalendarIcon, X, Camera, Edit2, Save, History, Zap, Coins, BookOpen, Languages, TreePine, Film, Trash2, AlertTriangle, Loader2 } from "lucide-react";
-import { projectsApi, charactersApi, worldsApi } from "../../utils/api";
+import { Globe, Plus, Mountain, Landmark, Users, Palette, Building, FileText, ArrowLeft, ChevronRight, ChevronDown, Upload, Search, Calendar as CalendarIcon, X, Camera, Edit2, Save, History, Zap, Coins, BookOpen, Languages, TreePine, Film, Trash2, AlertTriangle, Loader2, LayoutGrid, List } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { projectsApi, worldsApi } from "../../utils/api";
+import { getCharacters } from "../../lib/api/characters-api";
+import { getAuthToken } from "../../lib/auth/getAuthToken";
 import { MapBuilder } from "../MapBuilder";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
@@ -34,53 +37,52 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
   const [projects, setProjects] = useState<any[]>([]);
   const [worlds, setWorlds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"grid" | "list">("list"); // Default: List View
   
   // Delete World States
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  // New World Form States
+  const [newWorldName, setNewWorldName] = useState("");
+  const [newWorldDescription, setNewWorldDescription] = useState("");
+  const [newWorldLinkedProject, setNewWorldLinkedProject] = useState("none");
+  const [createLoading, setCreateLoading] = useState(false);
+
+  // Simple cache to avoid reloading on every mount
+  const dataLoadedRef = useRef(false);
+
   // Load projects and worlds from API
   useEffect(() => {
+    // Only load data once per session (simple cache)
+    if (dataLoadedRef.current) return;
+
     async function loadData() {
       try {
         setLoading(true);
         
-        // Load projects
-        const projectsData = await projectsApi.getAll();
+        // Load projects and worlds in parallel (NO characters yet - lazy load later)
+        const [projectsData, worldsData] = await Promise.all([
+          projectsApi.getAll(),
+          worldsApi.getAll(),
+        ]);
         
-        // Load characters for each project
-        const projectsWithCharacters = await Promise.all(
-          projectsData.map(async (project: any) => {
-            try {
-              const characters = await charactersApi.getAll(project.id);
-              return {
-                ...project,
-                characters: characters.map((char: any) => ({
-                  id: char.id,
-                  name: char.name,
-                  color: "#3B82F6", // Default color
-                  imageUrl: char.image || undefined,
-                  image: char.image || undefined
-                }))
-              };
-            } catch (error) {
-              console.error(`Error loading characters for project ${project.id}:`, error);
-              return { ...project, characters: [] };
-            }
-          })
-        );
+        // Set projects WITHOUT characters (lazy load when needed)
+        setProjects(projectsData.map((project: any) => ({
+          ...project,
+          characters: [] // Empty array, will be loaded on-demand
+        })));
         
-        setProjects(projectsWithCharacters);
-        
-        // Load worlds
-        const worldsData = await worldsApi.getAll();
+        // Set worlds
         const worldsWithDates = worldsData.map((world: any) => ({
           ...world,
-          lastEdited: new Date(world.lastEdited)
+          lastEdited: new Date(world.updated_at || world.created_at)
         }));
         setWorlds(worldsWithDates);
         
+        // Mark data as loaded (cache)
+        dataLoadedRef.current = true;
       } catch (error) {
         console.error("Error loading data:", error);
       } finally {
@@ -90,6 +92,42 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
     
     loadData();
   }, []);
+
+  const handleCreateWorld = async () => {
+    if (!newWorldName.trim()) {
+      toast.error("Bitte Namen eingeben");
+      return;
+    }
+
+    setCreateLoading(true);
+
+    try {
+      const newWorld = await worldsApi.create({
+        name: newWorldName,
+        description: newWorldDescription,
+        linkedProjectId: newWorldLinkedProject !== "none" ? newWorldLinkedProject : null,
+      });
+
+      // Add to local state with formatted date
+      setWorlds([...worlds, {
+        ...newWorld,
+        lastEdited: new Date(newWorld.updated_at || new Date())
+      }]);
+
+      // Reset form
+      setNewWorldName("");
+      setNewWorldDescription("");
+      setNewWorldLinkedProject("none");
+      setShowNewWorldDialog(false);
+
+      toast.success("Welt erfolgreich erstellt!");
+    } catch (error: any) {
+      console.error("Error creating world:", error);
+      toast.error(error.message || "Fehler beim Erstellen der Welt");
+    } finally {
+      setCreateLoading(false);
+    }
+  };
 
   const handleDeleteWorld = async () => {
     if (!deletePassword.trim()) {
@@ -160,6 +198,26 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9 h-9"
             />
+          </div>
+
+          {/* View Mode Toggle */}
+          <div className="flex border rounded-lg p-0.5 bg-muted/30 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode("grid")}
+              className={`h-8 w-8 p-0 ${viewMode === "grid" ? "bg-background shadow-sm" : ""}`}
+            >
+              <LayoutGrid className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode("list")}
+              className={`h-8 w-8 p-0 ${viewMode === "list" ? "bg-background shadow-sm" : ""}`}
+            >
+              <List className="size-4" />
+            </Button>
           </div>
           
           {/* Date Filter - Ultra Compact */}
@@ -257,43 +315,100 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
             onAction={() => setShowNewWorldDialog(true)}
           />
         ) : (
-          <div className="space-y-3">
-            {worlds
-              .filter(world => 
-                searchQuery === "" || 
-                world.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                world.description.toLowerCase().includes(searchQuery.toLowerCase())
-              )
-              .map((world) => (
-              <Card 
-                key={world.id} 
-                className="cursor-pointer active:scale-[0.98] transition-transform"
-                onClick={() => onNavigate("worldbuilding", world.id)}
-              >
-                <CardHeader className="p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <CardTitle className="mb-2">{world.name}</CardTitle>
-                      <CardDescription className="mb-3 line-clamp-2">
-                        {world.description}
-                      </CardDescription>
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5">
-                        {world.lastEdited.toLocaleDateString("de-DE", { 
-                          day: "2-digit", 
-                          month: "2-digit", 
-                          year: "2-digit" 
-                        })}, {world.lastEdited.toLocaleTimeString("de-DE", { 
-                          hour: "2-digit", 
-                          minute: "2-digit" 
-                        })}
-                      </Badge>
-                    </div>
-                    <ChevronRight className="size-5 text-muted-foreground shrink-0 mt-1" />
-                  </div>
-                </CardHeader>
-              </Card>
-            ))}
-        </div>
+          <motion.div 
+            className={viewMode === "grid" ? "space-y-3" : "space-y-2"}
+            layout
+          >
+            <AnimatePresence mode="popLayout">
+              {worlds
+                .filter(world => 
+                  searchQuery === "" || 
+                  world.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  world.description.toLowerCase().includes(searchQuery.toLowerCase())
+                )
+                .map((world) => (
+                  <motion.div
+                    key={world.id}
+                    layout
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {viewMode === "grid" ? (
+                      // GRID VIEW (Original)
+                      <Card 
+                        className="cursor-pointer active:scale-[0.98] transition-transform"
+                        onClick={() => onNavigate("worldbuilding", world.id)}
+                      >
+                        <CardHeader className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <CardTitle className="mb-2">{world.name}</CardTitle>
+                              <CardDescription className="mb-3 line-clamp-2">
+                                {world.description}
+                              </CardDescription>
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5">
+                                {world.lastEdited.toLocaleDateString("de-DE", { 
+                                  day: "2-digit", 
+                                  month: "2-digit", 
+                                  year: "2-digit" 
+                                })}, {world.lastEdited.toLocaleTimeString("de-DE", { 
+                                  hour: "2-digit", 
+                                  minute: "2-digit" 
+                                })}
+                              </Badge>
+                            </div>
+                            <ChevronRight className="size-5 text-muted-foreground shrink-0 mt-1" />
+                          </div>
+                        </CardHeader>
+                      </Card>
+                    ) : (
+                      // LIST VIEW (NEW!)
+                      <Card
+                        className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
+                        onClick={() => onNavigate("worldbuilding", world.id)}
+                      >
+                        <div className="flex items-center gap-3 p-3">
+                          {/* Icon/Thumbnail Left */}
+                          <div className="w-[140px] h-[79px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0 flex items-center justify-center">
+                            <Globe className="size-8 text-primary/40" />
+                          </div>
+
+                          {/* Content Right */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2 mb-1.5">
+                              <h3 className="font-semibold text-sm leading-snug line-clamp-1">
+                                {world.name}
+                              </h3>
+                              <ChevronRight className="size-4 text-muted-foreground shrink-0 mt-0.5" />
+                            </div>
+                            
+                            {world.description && (
+                              <p className="text-xs text-muted-foreground line-clamp-2 mb-2">
+                                {world.description}
+                              </p>
+                            )}
+
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] text-muted-foreground">
+                                Zuletzt: {world.lastEdited.toLocaleDateString("de-DE", { 
+                                  day: "2-digit", 
+                                  month: "2-digit" 
+                                })}, {world.lastEdited.toLocaleTimeString("de-DE", { 
+                                  hour: "2-digit", 
+                                  minute: "2-digit" 
+                                })}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    )}
+                  </motion.div>
+                ))}
+            </AnimatePresence>
+          </motion.div>
         )}
       </div>
 
@@ -307,15 +422,25 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Name der Welt</Label>
-              <Input placeholder="z.B. Mittelerde, Westeros, Tatooine..." className="h-11" />
+              <Input 
+                placeholder="z.B. Mittelerde, Westeros, Tatooine..." 
+                className="h-11"
+                value={newWorldName}
+                onChange={(e) => setNewWorldName(e.target.value)}
+              />
             </div>
             <div className="space-y-2">
               <Label>Beschreibung</Label>
-              <Textarea placeholder="Eine kurze Beschreibung deiner Welt..." rows={3} />
+              <Textarea 
+                placeholder="Eine kurze Beschreibung deiner Welt..." 
+                rows={3}
+                value={newWorldDescription}
+                onChange={(e) => setNewWorldDescription(e.target.value)}
+              />
             </div>
             <div className="space-y-2">
               <Label>Verknüpftes Projekt (Optional)</Label>
-              <Select defaultValue="none">
+              <Select value={newWorldLinkedProject} onValueChange={setNewWorldLinkedProject}>
                 <SelectTrigger className="h-11">
                   <SelectValue placeholder="Kein Projekt verknüpft" />
                 </SelectTrigger>
@@ -344,11 +469,32 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setShowNewWorldDialog(false)} className="h-11">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setShowNewWorldDialog(false);
+                setNewWorldName("");
+                setNewWorldDescription("");
+                setNewWorldLinkedProject("none");
+              }} 
+              className="h-11"
+              disabled={createLoading}
+            >
               Abbrechen
             </Button>
-            <Button onClick={() => setShowNewWorldDialog(false)} className="h-11">
-              Welt erstellen
+            <Button 
+              onClick={handleCreateWorld} 
+              className="h-11"
+              disabled={createLoading}
+            >
+              {createLoading ? (
+                <>
+                  <Loader2 className="size-4 mr-2 animate-spin" />
+                  Wird erstellt...
+                </>
+              ) : (
+                "Welt erstellen"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

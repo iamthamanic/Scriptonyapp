@@ -6,6 +6,7 @@ let supabaseInstance: SupabaseClient | null = null;
 
 export const getSupabaseClient = (): SupabaseClient => {
   if (!supabaseInstance) {
+    console.log('[Supabase Client] Creating new singleton instance');
     supabaseInstance = createClient(
       supabaseConfig.url,
       supabaseConfig.publicAnonKey,
@@ -14,9 +15,12 @@ export const getSupabaseClient = (): SupabaseClient => {
           persistSession: true,
           autoRefreshToken: true,
           detectSessionInUrl: true,
+          // Prevent multiple simultaneous auth requests
+          flowType: 'pkce',
         },
       }
     );
+    console.log('[Supabase Client] Singleton instance created');
   }
   return supabaseInstance;
 };

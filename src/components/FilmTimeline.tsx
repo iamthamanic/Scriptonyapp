@@ -10,6 +10,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, MoreVertical, Copy, Edit } from 'lucide-react';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
+import { motion } from 'motion/react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
@@ -42,17 +43,82 @@ const ItemTypes = {
 };
 
 // =====================================================
-// DRAGGABLE ACT CONTAINER
+// DROP ZONE (Einfügemarke zwischen Items) - volle Höhe!
+// =====================================================
+
+interface DropZoneProps {
+  type: string;
+  index: number;
+  onDrop: (draggedItemId: string, targetIndex: number) => void;
+  label: string;
+  height?: 'act' | 'sequence' | 'scene' | 'shot';
+}
+
+function DropZone({ type, index, onDrop, label, height = 'act' }: DropZoneProps) {
+  const [{ isOver, canDrop }, drop] = useDrop({
+    accept: type,
+    drop: (item: { id: string; index: number }) => {
+      onDrop(item.id, index);
+    },
+    collect: (monitor) => ({
+      isOver: monitor.isOver(),
+      canDrop: monitor.canDrop(),
+    }),
+  });
+
+  // Höhe basierend auf Item-Typ (eingeklappt)
+  const heightClass = {
+    act: 'h-20',      // Act Header Höhe
+    sequence: 'h-14', // Sequence Header Höhe
+    scene: 'h-12',    // Scene Header Höhe
+    shot: 'h-24',     // Shot Card Höhe
+  }[height];
+
+  const normalHeight = {
+    act: 'h-8',       // Basis-Höhe wenn nicht gehovered
+    sequence: 'h-6',
+    scene: 'h-6',
+    shot: 'h-8',
+  }[height];
+
+  return (
+    <div
+      ref={drop}
+      className={cn(
+        'transition-all duration-100 flex items-center justify-center my-1',
+        canDrop ? (isOver ? heightClass : normalHeight) : 'h-1'
+      )}
+    >
+      {canDrop && (
+        <div className={cn(
+          'w-full h-full rounded-lg flex items-center justify-center transition-all duration-100',
+          isOver 
+            ? 'border-2 border-dashed border-violet-400 dark:border-violet-500 bg-violet-50/60 dark:bg-violet-900/20'
+            : 'border border-dashed border-gray-300/50 dark:border-gray-600/30 bg-transparent'
+        )}>
+          {isOver && (
+            <span className="text-violet-700 dark:text-violet-300 text-sm font-medium">
+              ↓ {label} hier einfügen
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================
+// DRAGGABLE ACT CONTAINER (mit Swap-Drop)
 // =====================================================
 
 interface DraggableActProps {
   act: Act;
   index: number;
-  moveAct: (draggedId: string, targetId: string) => void;
+  onSwap: (draggedId: string, targetId: string) => void;
   children: React.ReactNode;
 }
 
-function DraggableAct({ act, index, moveAct, children }: DraggableActProps) {
+function DraggableAct({ act, index, onSwap, children }: DraggableActProps) {
   const [{ isDragging }, drag] = useDrag({
     type: ItemTypes.ACT,
     item: { id: act.id, index },
@@ -65,7 +131,7 @@ function DraggableAct({ act, index, moveAct, children }: DraggableActProps) {
     accept: ItemTypes.ACT,
     drop: (item: { id: string; index: number }) => {
       if (item.id !== act.id) {
-        moveAct(item.id, act.id);
+        onSwap(item.id, act.id);
       }
     },
     collect: (monitor) => ({
@@ -74,32 +140,46 @@ function DraggableAct({ act, index, moveAct, children }: DraggableActProps) {
   });
 
   return (
-    <div
+    <motion.div
       ref={(node) => drag(drop(node))}
-      className={cn(
-        'transition-opacity',
-        isDragging && 'opacity-50',
-        isOver && 'ring-2 ring-purple-500'
-      )}
+      layout
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: isDragging ? 0.4 : 1, y: 0, scale: isDragging ? 0.98 : 1 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ 
+        layout: { duration: 0.3, ease: [0.4, 0, 0.2, 1] },
+        opacity: { duration: 0.2 },
+        y: { duration: 0.3, ease: [0.4, 0, 0.2, 1] },
+        scale: { duration: 0.1 }
+      }}
+      className="relative"
     >
+      {/* Swap Indicator - dezent */}
+      {isOver && !isDragging && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="absolute -inset-0.5 border-2 border-blue-400 dark:border-blue-500 bg-blue-50/20 dark:bg-blue-900/10 rounded-lg pointer-events-none z-10" 
+        />
+      )}
+      
       {children}
-    </div>
+    </motion.div>
   );
 }
 
 // =====================================================
-// DRAGGABLE SEQUENCE CONTAINER (accepts SCENE drops)
+// DRAGGABLE SEQUENCE CONTAINER (mit Swap-Drop)
 // =====================================================
 
 interface DraggableSequenceProps {
   sequence: Sequence;
   index: number;
-  moveSequence: (draggedId: string, targetId: string) => void;
-  onSceneMoveToSequence?: (sceneId: string, targetSequenceId: string) => void;
+  onSwap: (draggedId: string, targetId: string) => void;
   children: React.ReactNode;
 }
 
-function DraggableSequence({ sequence, index, moveSequence, onSceneMoveToSequence, children }: DraggableSequenceProps) {
+function DraggableSequence({ sequence, index, onSwap, children }: DraggableSequenceProps) {
   const [{ isDragging }, drag] = useDrag({
     type: ItemTypes.SEQUENCE,
     item: { id: sequence.id, index },
@@ -108,50 +188,58 @@ function DraggableSequence({ sequence, index, moveSequence, onSceneMoveToSequenc
     }),
   });
 
-  const [{ isOver, canDrop }, drop] = useDrop({
-    accept: [ItemTypes.SEQUENCE, ItemTypes.SCENE],
-    drop: (item: { id: string; index: number }, monitor) => {
-      const itemType = monitor.getItemType();
-      
-      if (itemType === ItemTypes.SEQUENCE && item.id !== sequence.id) {
-        moveSequence(item.id, sequence.id);
-      } else if (itemType === ItemTypes.SCENE && onSceneMoveToSequence) {
-        onSceneMoveToSequence(item.id, sequence.id);
+  const [{ isOver }, drop] = useDrop({
+    accept: ItemTypes.SEQUENCE,
+    drop: (item: { id: string; index: number }) => {
+      if (item.id !== sequence.id) {
+        onSwap(item.id, sequence.id);
       }
     },
     collect: (monitor) => ({
       isOver: monitor.isOver(),
-      canDrop: monitor.canDrop(),
     }),
   });
 
   return (
-    <div
+    <motion.div
       ref={(node) => drag(drop(node))}
-      className={cn(
-        'transition-opacity',
-        isDragging && 'opacity-50',
-        isOver && canDrop && 'ring-2 ring-green-500'
-      )}
+      layout
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: isDragging ? 0.4 : 1, y: 0, scale: isDragging ? 0.98 : 1 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ 
+        layout: { duration: 0.3, ease: [0.4, 0, 0.2, 1] },
+        opacity: { duration: 0.2 },
+        y: { duration: 0.3, ease: [0.4, 0, 0.2, 1] },
+        scale: { duration: 0.1 }
+      }}
+      className="relative"
     >
+      {isOver && !isDragging && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="absolute -inset-0.5 border-2 border-green-400 dark:border-green-500 bg-green-50/20 dark:bg-green-900/10 rounded-lg pointer-events-none z-10" 
+        />
+      )}
+      
       {children}
-    </div>
+    </motion.div>
   );
 }
 
 // =====================================================
-// DRAGGABLE SCENE CONTAINER (accepts SHOT drops)
+// DRAGGABLE SCENE CONTAINER (mit Swap-Drop)
 // =====================================================
 
 interface DraggableSceneProps {
   scene: Scene;
   index: number;
-  moveScene: (draggedId: string, targetId: string) => void;
-  onShotMoveToScene?: (shotId: string, targetSceneId: string) => void;
+  onSwap: (draggedId: string, targetId: string) => void;
   children: React.ReactNode;
 }
 
-function DraggableScene({ scene, index, moveScene, onShotMoveToScene, children }: DraggableSceneProps) {
+function DraggableScene({ scene, index, onSwap, children }: DraggableSceneProps) {
   const [{ isDragging }, drag] = useDrag({
     type: ItemTypes.SCENE,
     item: { id: scene.id, index },
@@ -160,34 +248,103 @@ function DraggableScene({ scene, index, moveScene, onShotMoveToScene, children }
     }),
   });
 
-  const [{ isOver, canDrop }, drop] = useDrop({
-    accept: [ItemTypes.SCENE, ItemTypes.SHOT],
-    drop: (item: { id: string; index: number }, monitor) => {
-      const itemType = monitor.getItemType();
-      
-      if (itemType === ItemTypes.SCENE && item.id !== scene.id) {
-        moveScene(item.id, scene.id);
-      } else if (itemType === ItemTypes.SHOT && onShotMoveToScene) {
-        onShotMoveToScene(item.id, scene.id);
+  const [{ isOver }, drop] = useDrop({
+    accept: ItemTypes.SCENE,
+    drop: (item: { id: string; index: number }) => {
+      if (item.id !== scene.id) {
+        onSwap(item.id, scene.id);
       }
     },
     collect: (monitor) => ({
       isOver: monitor.isOver(),
-      canDrop: monitor.canDrop(),
     }),
   });
 
   return (
-    <div
+    <motion.div
       ref={(node) => drag(drop(node))}
-      className={cn(
-        'transition-opacity',
-        isDragging && 'opacity-50',
-        isOver && canDrop && 'ring-2 ring-yellow-500'
-      )}
+      layout
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: isDragging ? 0.4 : 1, y: 0, scale: isDragging ? 0.98 : 1 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ 
+        layout: { duration: 0.3, ease: [0.4, 0, 0.2, 1] },
+        opacity: { duration: 0.2 },
+        y: { duration: 0.3, ease: [0.4, 0, 0.2, 1] },
+        scale: { duration: 0.1 }
+      }}
+      className="relative"
     >
+      {isOver && !isDragging && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="absolute -inset-0.5 border-2 border-orange-400 dark:border-orange-500 bg-orange-50/20 dark:bg-orange-900/10 rounded-lg pointer-events-none z-10" 
+        />
+      )}
+      
       {children}
-    </div>
+    </motion.div>
+  );
+}
+
+// =====================================================
+// DRAGGABLE SHOT CONTAINER (mit Swap-Drop)
+// =====================================================
+
+interface DraggableShotProps {
+  shot: Shot;
+  index: number;
+  onSwap: (draggedId: string, targetId: string) => void;
+  children: React.ReactNode;
+}
+
+function DraggableShot({ shot, index, onSwap, children }: DraggableShotProps) {
+  const [{ isDragging }, drag] = useDrag({
+    type: ItemTypes.SHOT,
+    item: { id: shot.id, index },
+    collect: (monitor) => ({
+      isDragging: monitor.isDragging(),
+    }),
+  });
+
+  const [{ isOver }, drop] = useDrop({
+    accept: ItemTypes.SHOT,
+    drop: (item: { id: string; index: number }) => {
+      if (item.id !== shot.id) {
+        onSwap(item.id, shot.id);
+      }
+    },
+    collect: (monitor) => ({
+      isOver: monitor.isOver(),
+    }),
+  });
+
+  return (
+    <motion.div
+      ref={(node) => drag(drop(node))}
+      layout
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: isDragging ? 0.4 : 1, y: 0, scale: isDragging ? 0.98 : 1 }}
+      exit={{ opacity: 0, y: -20 }}
+      transition={{ 
+        layout: { duration: 0.3, ease: [0.4, 0, 0.2, 1] },
+        opacity: { duration: 0.2 },
+        y: { duration: 0.3, ease: [0.4, 0, 0.2, 1] },
+        scale: { duration: 0.1 }
+      }}
+      className="relative"
+    >
+      {isOver && !isDragging && (
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="absolute -inset-0.5 border-2 border-red-400 dark:border-red-500 bg-red-50/20 dark:bg-red-900/10 rounded-lg pointer-events-none z-10" 
+        />
+      )}
+      
+      {children}
+    </motion.div>
   );
 }
 
@@ -1008,7 +1165,38 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
   // DRAG & DROP HANDLERS
   // =====================================================
 
-  const handleActReorder = async (draggedId: string, targetId: string) => {
+  // ACTS - Einfügen an Index (Drop Zone)
+  const handleActDropAtIndex = (draggedId: string, targetIndex: number) => {
+    const draggedIndex = acts.findIndex(a => a.id === draggedId);
+    if (draggedIndex === -1) return;
+
+    const adjustedTargetIndex = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+
+    const reordered = [...acts];
+    const [removed] = reordered.splice(draggedIndex, 1);
+    reordered.splice(adjustedTargetIndex, 0, removed);
+
+    // Optimistic Update - SOFORT!
+    setActs(reordered);
+
+    // Backend async
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          const actIds = reordered.map(a => a.id);
+          await TimelineAPI.reorderNodes(actIds, token);
+        }
+      } catch (error) {
+        console.error('Error reordering acts:', error);
+        toast.error('Fehler beim Sortieren');
+        loadTimelineData();
+      }
+    })();
+  };
+
+  // ACTS - Platz tauschen (Drop auf Item)
+  const handleActSwap = (draggedId: string, targetId: string) => {
     const draggedIndex = acts.findIndex(a => a.id === draggedId);
     const targetIndex = acts.findIndex(a => a.id === targetId);
 
@@ -1018,23 +1206,63 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
     const [removed] = reordered.splice(draggedIndex, 1);
     reordered.splice(targetIndex, 0, removed);
 
+    // Optimistic Update - SOFORT!
     setActs(reordered);
 
-    try {
-      const token = await getAccessToken();
-      if (token) {
-        const actIds = reordered.map(a => a.id);
-        await TimelineAPI.reorderNodes(actIds, token);
-        toast.success('Akt-Reihenfolge aktualisiert');
+    // Backend async
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          const actIds = reordered.map(a => a.id);
+          await TimelineAPI.reorderNodes(actIds, token);
+        }
+      } catch (error) {
+        console.error('Error swapping acts:', error);
+        toast.error('Fehler beim Tauschen');
+        loadTimelineData();
       }
-    } catch (error) {
-      console.error('Error reordering acts:', error);
-      toast.error('Fehler beim Sortieren');
-      loadTimelineData();
-    }
+    })();
   };
 
-  const handleSequenceReorder = async (draggedId: string, targetId: string) => {
+  // SEQUENCES - Einfügen an Index
+  const handleSequenceDropAtIndex = (draggedId: string, targetIndex: number, actId: string) => {
+    const draggedSeq = sequences.find(s => s.id === draggedId);
+    if (!draggedSeq || draggedSeq.actId !== actId) return;
+
+    const actSequences = sequences.filter(s => s.actId === actId);
+    const draggedIndex = actSequences.findIndex(s => s.id === draggedId);
+    if (draggedIndex === -1) return;
+
+    const adjustedTargetIndex = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+
+    const reordered = [...actSequences];
+    const [removed] = reordered.splice(draggedIndex, 1);
+    reordered.splice(adjustedTargetIndex, 0, removed);
+
+    const otherSequences = sequences.filter(s => s.actId !== actId);
+    
+    // Optimistic Update - SOFORT!
+    setSequences([...otherSequences, ...reordered]);
+
+    // Backend async
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          const seqIds = reordered.map(s => s.id);
+          await TimelineAPI.reorderNodes(seqIds, token);
+        }
+      } catch (error) {
+        console.error('Error reordering sequences:', error);
+        toast.error('Fehler beim Sortieren');
+        loadTimelineData();
+      }
+    })();
+  };
+
+  // SEQUENCES - Platz tauschen
+  const handleSequenceSwap = (draggedId: string, targetId: string) => {
     const draggedSeq = sequences.find(s => s.id === draggedId);
     const targetSeq = sequences.find(s => s.id === targetId);
     
@@ -1051,23 +1279,64 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
     reordered.splice(targetIndex, 0, removed);
 
     const otherSequences = sequences.filter(s => s.actId !== draggedSeq.actId);
+    
+    // Optimistic Update - SOFORT!
     setSequences([...otherSequences, ...reordered]);
 
-    try {
-      const token = await getAccessToken();
-      if (token) {
-        const seqIds = reordered.map(s => s.id);
-        await TimelineAPI.reorderNodes(seqIds, token);
-        toast.success('Sequenz-Reihenfolge aktualisiert');
+    // Backend async
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          const seqIds = reordered.map(s => s.id);
+          await TimelineAPI.reorderNodes(seqIds, token);
+        }
+      } catch (error) {
+        console.error('Error swapping sequences:', error);
+        toast.error('Fehler beim Tauschen');
+        loadTimelineData();
       }
-    } catch (error) {
-      console.error('Error reordering sequences:', error);
-      toast.error('Fehler beim Sortieren');
-      loadTimelineData();
-    }
+    })();
   };
 
-  const handleSceneReorder = async (draggedId: string, targetId: string) => {
+  // SCENES - Einfügen an Index
+  const handleSceneDropAtIndex = (draggedId: string, targetIndex: number, sequenceId: string) => {
+    const draggedScene = scenes.find(s => s.id === draggedId);
+    if (!draggedScene || draggedScene.sequenceId !== sequenceId) return;
+
+    const seqScenes = scenes.filter(s => s.sequenceId === sequenceId);
+    const draggedIndex = seqScenes.findIndex(s => s.id === draggedId);
+    if (draggedIndex === -1) return;
+
+    const adjustedTargetIndex = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+
+    const reordered = [...seqScenes];
+    const [removed] = reordered.splice(draggedIndex, 1);
+    reordered.splice(adjustedTargetIndex, 0, removed);
+
+    const otherScenes = scenes.filter(s => s.sequenceId !== sequenceId);
+    
+    // Optimistic Update - SOFORT!
+    setScenes([...otherScenes, ...reordered]);
+
+    // Backend async
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          const sceneIds = reordered.map(s => s.id);
+          await TimelineAPI.reorderNodes(sceneIds, token);
+        }
+      } catch (error) {
+        console.error('Error reordering scenes:', error);
+        toast.error('Fehler beim Sortieren');
+        loadTimelineData();
+      }
+    })();
+  };
+
+  // SCENES - Platz tauschen
+  const handleSceneSwap = (draggedId: string, targetId: string) => {
     const draggedScene = scenes.find(s => s.id === draggedId);
     const targetScene = scenes.find(s => s.id === targetId);
     
@@ -1084,20 +1353,24 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
     reordered.splice(targetIndex, 0, removed);
 
     const otherScenes = scenes.filter(s => s.sequenceId !== draggedScene.sequenceId);
+    
+    // Optimistic Update - SOFORT!
     setScenes([...otherScenes, ...reordered]);
 
-    try {
-      const token = await getAccessToken();
-      if (token) {
-        const sceneIds = reordered.map(s => s.id);
-        await TimelineAPI.reorderNodes(sceneIds, token);
-        toast.success('Szenen-Reihenfolge aktualisiert');
+    // Backend async
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          const sceneIds = reordered.map(s => s.id);
+          await TimelineAPI.reorderNodes(sceneIds, token);
+        }
+      } catch (error) {
+        console.error('Error swapping scenes:', error);
+        toast.error('Fehler beim Tauschen');
+        loadTimelineData();
       }
-    } catch (error) {
-      console.error('Error reordering scenes:', error);
-      toast.error('Fehler beim Sortieren');
-      loadTimelineData();
-    }
+    })();
   };
 
   // =====================================================
@@ -1228,7 +1501,44 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
     }
   };
 
-  const handleShotReorder = async (draggedId: string, targetId: string) => {
+  // SHOTS - Einfügen an Index
+  const handleShotDropAtIndex = (draggedId: string, targetIndex: number, sceneId: string) => {
+    const draggedShot = shots.find(s => s.id === draggedId);
+    if (!draggedShot || draggedShot.sceneId !== sceneId) return;
+
+    const sceneShots = shots.filter(s => s.sceneId === sceneId);
+    const draggedIndex = sceneShots.findIndex(s => s.id === draggedId);
+    if (draggedIndex === -1) return;
+
+    const adjustedTargetIndex = draggedIndex < targetIndex ? targetIndex - 1 : targetIndex;
+
+    const reordered = [...sceneShots];
+    const [removed] = reordered.splice(draggedIndex, 1);
+    reordered.splice(adjustedTargetIndex, 0, removed);
+
+    const otherShots = shots.filter(s => s.sceneId !== sceneId);
+    
+    // Optimistic Update - SOFORT!
+    setShots([...otherShots, ...reordered]);
+
+    // Backend async
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          const shotIds = reordered.map(s => s.id);
+          await ShotsAPI.reorderShots(sceneId, shotIds, token);
+        }
+      } catch (error) {
+        console.error('Error reordering shots:', error);
+        toast.error('Fehler beim Sortieren');
+        loadTimelineData();
+      }
+    })();
+  };
+
+  // SHOTS - Platz tauschen
+  const handleShotSwap = (draggedId: string, targetId: string) => {
     const draggedShot = shots.find(s => s.id === draggedId);
     const targetShot = shots.find(s => s.id === targetId);
     
@@ -1245,20 +1555,24 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
     reordered.splice(targetIndex, 0, removed);
 
     const otherShots = shots.filter(s => s.sceneId !== draggedShot.sceneId);
+    
+    // Optimistic Update - SOFORT!
     setShots([...otherShots, ...reordered]);
 
-    try {
-      const token = await getAccessToken();
-      if (token) {
-        const shotIds = reordered.map(s => s.id);
-        await ShotsAPI.reorderShots(draggedShot.sceneId, shotIds, token);
-        toast.success('Shot-Reihenfolge aktualisiert');
+    // Backend async
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          const shotIds = reordered.map(s => s.id);
+          await ShotsAPI.reorderShots(draggedShot.sceneId, shotIds, token);
+        }
+      } catch (error) {
+        console.error('Error swapping shots:', error);
+        toast.error('Fehler beim Tauschen');
+        loadTimelineData();
       }
-    } catch (error) {
-      console.error('Error reordering shots:', error);
-      toast.error('Fehler beim Sortieren');
-      loadTimelineData();
-    }
+    })();
   };
 
   const handleShotImageUpload = async (shotId: string, file: File) => {
@@ -1515,7 +1829,7 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
           Act hinzufügen
         </Button>
 
-        {/* Acts */}
+        {/* Acts mit Drop Zones */}
         {acts.map((act, actIndex) => {
           const actSequences = sequences.filter(s => s.actId === act.id);
           const isExpanded = expandedActs.has(act.id);
@@ -1523,17 +1837,27 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
           const isPending = pendingIds.has(act.id);
 
           return (
-            <DraggableAct
-              key={act.id}
-              act={act}
-              index={actIndex}
-              moveAct={handleActReorder}
-            >
-              <div className={cn(
-                "border-2 rounded-lg bg-blue-50 border-blue-200 dark:bg-blue-950/40 dark:border-blue-700",
-                isPending && "opacity-60"
-              )}>
-                {/* Act Header */}
+            <div key={act.id}>
+              {/* Drop Zone VOR diesem Act */}
+              <DropZone
+                type={ItemTypes.ACT}
+                index={actIndex}
+                onDrop={handleActDropAtIndex}
+                label="Act"
+                height="act"
+              />
+              
+              {/* Act selbst (droppable für Swap) */}
+              <DraggableAct
+                act={act}
+                index={actIndex}
+                onSwap={handleActSwap}
+              >
+                <div className={cn(
+                  "border-2 rounded-lg bg-blue-50 border-blue-200 dark:bg-blue-950/40 dark:border-blue-700",
+                  isPending && "opacity-60"
+                )}>
+                  {/* Act Header */}
                 <div className="flex items-center gap-2 py-4 px-3">
                   <GripVertical className="size-4 text-muted-foreground cursor-move flex-shrink-0" />
                   
@@ -1685,18 +2009,27 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
                       const isSeqPending = pendingIds.has(sequence.id);
 
                       return (
-                        <DraggableSequence
-                          key={sequence.id}
-                          sequence={sequence}
-                          index={seqIndex}
-                          moveSequence={handleSequenceReorder}
-                          onSceneMoveToSequence={handleSceneMoveToSequence}
-                        >
-                          <div className={cn(
-                            "border-2 rounded-lg bg-green-50 border-green-200 dark:bg-green-950/40 dark:border-green-700",
-                            isSeqPending && "opacity-60"
-                          )}>
-                            {/* Sequence Header */}
+                        <div key={sequence.id}>
+                          {/* Drop Zone VOR dieser Sequence */}
+                          <DropZone
+                            type={ItemTypes.SEQUENCE}
+                            index={seqIndex}
+                            onDrop={(draggedId, targetIndex) => handleSequenceDropAtIndex(draggedId, targetIndex, act.id)}
+                            label="Sequence"
+                            height="sequence"
+                          />
+                          
+                          {/* Sequence selbst (droppable für Swap) */}
+                          <DraggableSequence
+                            sequence={sequence}
+                            index={seqIndex}
+                            onSwap={handleSequenceSwap}
+                          >
+                            <div className={cn(
+                              "border-2 rounded-lg bg-green-50 border-green-200 dark:bg-green-950/40 dark:border-green-700",
+                              isSeqPending && "opacity-60"
+                            )}>
+                              {/* Sequence Header */}
                             <div className="flex items-center gap-2 p-2">
                               <GripVertical className="size-3 text-muted-foreground cursor-move flex-shrink-0" />
                               
@@ -1848,13 +2181,22 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
                                   const isScenePending = pendingIds.has(scene.id);
 
                                   return (
-                                    <DraggableScene
-                                      key={scene.id}
-                                      scene={scene}
-                                      index={sceneIndex}
-                                      moveScene={handleSceneReorder}
-                                      onShotMoveToScene={handleShotMoveToScene}
-                                    >
+                                    <div key={scene.id}>
+                                      {/* Drop Zone VOR dieser Scene */}
+                                      <DropZone
+                                        type={ItemTypes.SCENE}
+                                        index={sceneIndex}
+                                        onDrop={(draggedId, targetIndex) => handleSceneDropAtIndex(draggedId, targetIndex, sequence.id)}
+                                        label="Scene"
+                                        height="scene"
+                                      />
+                                      
+                                      {/* Scene selbst (droppable für Swap) */}
+                                      <DraggableScene
+                                        scene={scene}
+                                        index={sceneIndex}
+                                        onSwap={handleSceneSwap}
+                                      >
                                       <div className={cn(
                                         "border-2 rounded-lg bg-pink-50 border-pink-200 dark:bg-pink-950/40 dark:border-pink-700",
                                         isScenePending && "opacity-60"
@@ -2005,50 +2347,113 @@ export function FilmDropdown({ projectId, characters: externalCharacters }: Film
                                             </Button>
 
                                             {sceneShots.map((shot, shotIndex) => (
-                                              <ShotCard
-                                                key={shot.id}
-                                                shot={shot}
-                                                sceneId={scene.id}
-                                                projectId={projectId}
-                                                projectCharacters={characters}
-                                                isExpanded={expandedShots.has(shot.id)}
-                                                onToggleExpand={() => {
-                                                  const next = new Set(expandedShots);
-                                                  if (expandedShots.has(shot.id)) {
-                                                    next.delete(shot.id);
-                                                  } else {
-                                                    next.add(shot.id);
-                                                  }
-                                                  setExpandedShots(next);
-                                                }}
-                                                onUpdate={handleUpdateShot}
-                                                onDelete={handleDeleteShot}
-                                                onDuplicate={handleDuplicateShot}
-                                                onReorder={handleShotReorder}
-                                                onImageUpload={handleShotImageUpload}
-                                                onAudioUpload={handleShotAudioUpload}
-                                                onAudioDelete={handleShotAudioDelete}
-                                                onAudioUpdate={handleShotAudioUpdate}
-                                                onCharacterAdd={handleShotCharacterAdd}
-                                                onCharacterRemove={handleShotCharacterRemove}
-                                              />
+                                              <div key={shot.id}>
+                                                {/* Drop Zone VOR diesem Shot */}
+                                                <DropZone
+                                                  type={ItemTypes.SHOT}
+                                                  index={shotIndex}
+                                                  onDrop={(draggedId, targetIndex) => handleShotDropAtIndex(draggedId, targetIndex, scene.id)}
+                                                  label="Shot"
+                                                  height="shot"
+                                                />
+                                                
+                                                {/* Shot selbst (droppable für Swap) */}
+                                                <DraggableShot
+                                                  shot={shot}
+                                                  index={shotIndex}
+                                                  onSwap={handleShotSwap}
+                                                >
+                                                  <ShotCard
+                                                  shot={shot}
+                                                  sceneId={scene.id}
+                                                  projectId={projectId}
+                                                  projectCharacters={characters}
+                                                  isExpanded={expandedShots.has(shot.id)}
+                                                  onToggleExpand={() => {
+                                                    const next = new Set(expandedShots);
+                                                    if (expandedShots.has(shot.id)) {
+                                                      next.delete(shot.id);
+                                                    } else {
+                                                      next.add(shot.id);
+                                                    }
+                                                    setExpandedShots(next);
+                                                  }}
+                                                  onUpdate={handleUpdateShot}
+                                                  onDelete={handleDeleteShot}
+                                                  onDuplicate={handleDuplicateShot}
+                                                  onImageUpload={handleShotImageUpload}
+                                                  onAudioUpload={handleShotAudioUpload}
+                                                  onAudioDelete={handleShotAudioDelete}
+                                                  onAudioUpdate={handleShotAudioUpdate}
+                                                  onCharacterAdd={handleShotCharacterAdd}
+                                                  onCharacterRemove={handleShotCharacterRemove}
+                                                />
+                                              </DraggableShot>
+                                              
+                                              {/* Drop Zone NACH diesem Shot (nur beim letzten) */}
+                                              {shotIndex === sceneShots.length - 1 && (
+                                                <DropZone
+                                                  type={ItemTypes.SHOT}
+                                                  index={sceneShots.length}
+                                                  onDrop={(draggedId, targetIndex) => handleShotDropAtIndex(draggedId, targetIndex, scene.id)}
+                                                  label="Shot"
+                                                  height="shot"
+                                                />
+                                              )}
+                                            </div>
                                             ))}
                                           </div>
                                         )}
                                       </div>
                                     </DraggableScene>
+                                    
+                                    {/* Drop Zone NACH dieser Scene (nur beim letzten) */}
+                                    {sceneIndex === seqScenes.length - 1 && (
+                                      <DropZone
+                                        type={ItemTypes.SCENE}
+                                        index={seqScenes.length}
+                                        onDrop={(draggedId, targetIndex) => handleSceneDropAtIndex(draggedId, targetIndex, sequence.id)}
+                                        label="Scene"
+                                        height="scene"
+                                      />
+                                    )}
+                                  </div>
                                   );
                                 })}
                               </div>
                             )}
                           </div>
                         </DraggableSequence>
+                        
+                        {/* Drop Zone NACH dieser Sequence (nur beim letzten) */}
+                        {seqIndex === actSequences.length - 1 && (
+                          <DropZone
+                            type={ItemTypes.SEQUENCE}
+                            index={actSequences.length}
+                            onDrop={(draggedId, targetIndex) => handleSequenceDropAtIndex(draggedId, targetIndex, act.id)}
+                            label="Sequence"
+                            height="sequence"
+                          />
+                        )}
+                      </div>
                       );
                     })}
                   </div>
                 )}
               </div>
             </DraggableAct>
+            
+            {/* Drop Zone NACH diesem Act (nur beim letzten) */}
+            {actIndex === acts.length - 1 && (
+              <DropZone
+                type={ItemTypes.ACT}
+                index={acts.length}
+                onDrop={handleActDropAtIndex}
+                label="Act"
+                height="act"
+              />
+            )}
+          </div>
           );
         })}
       </div>

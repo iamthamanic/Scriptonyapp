@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from "react";
-import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2 } from "lucide-react";
+import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2, LayoutGrid, List, MoreVertical, Copy, BarChart3 } from "lucide-react";
 import { DndProvider, useDrag, useDrop } from "react-dnd";
+import { motion, AnimatePresence } from "motion/react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../ui/alert-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
@@ -20,6 +22,7 @@ import { useColoredTags } from "../hooks/useColoredTags";
 import { ImageCropDialog } from "../ImageCropDialog";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { FilmDropdown } from "../FilmTimeline"; // TODO: Rename FilmTimeline.tsx to FilmDropdown.tsx
+import { ProjectStatsLogsDialog } from "../ProjectStatsLogsDialog";
 import { projectsApi, worldsApi, itemsApi } from "../../utils/api";
 import { toast } from "sonner@2.0.3";
 import { deleteCharacter as deleteCharacterApi, getCharacters, createCharacter as createCharacterApi, updateCharacter as updateCharacterApi } from "../../lib/api/characters-api";
@@ -39,6 +42,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
   const [projectCoverImages, setProjectCoverImages] = useState<Record<string, string>>({});
+  const [viewMode, setViewMode] = useState<"grid" | "list">("list"); // Default: List View
   
   // API State
   const [projects, setProjects] = useState<any[]>([]);
@@ -57,9 +61,20 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+  
+  // Stats & Logs Dialog
+  const [showStatsDialog, setShowStatsDialog] = useState(false);
+  const [selectedStatsProject, setSelectedStatsProject] = useState<any | null>(null);
+
+  // Simple cache to avoid reloading on every mount
+  const dataLoadedRef = useRef(false);
 
   useEffect(() => {
-    loadData();
+    // Only load data once per session (simple cache)
+    if (!dataLoadedRef.current) {
+      loadData();
+      dataLoadedRef.current = true;
+    }
   }, []);
 
   // Sync selectedProject state with selectedProjectId prop
@@ -192,6 +207,43 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
     }
   };
 
+  const handleDuplicateProject = async (projectId: string) => {
+    try {
+      const originalProject = projects.find(p => p.id === projectId);
+      if (!originalProject) return;
+
+      const duplicated = await projectsApi.create({
+        title: `${originalProject.title} (Kopie)`,
+        logline: originalProject.logline,
+        type: originalProject.type,
+        genre: originalProject.genre,
+        duration: originalProject.duration,
+        linkedWorldId: originalProject.linkedWorldId,
+        coverImage: projectCoverImages[projectId],
+      });
+
+      setProjects([...projects, duplicated]);
+      
+      if (projectCoverImages[projectId]) {
+        setProjectCoverImages(prev => ({
+          ...prev,
+          [duplicated.id]: projectCoverImages[projectId]
+        }));
+      }
+
+      toast.success("Projekt erfolgreich dupliziert!");
+    } catch (error) {
+      console.error("Error duplicating project:", error);
+      toast.error("Fehler beim Duplizieren des Projekts");
+    }
+  };
+
+  const handleOpenStatsDialog = (project: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedStatsProject(project);
+    setShowStatsDialog(true);
+  };
+
   const currentProject = projects.find(p => p.id === selectedProjectId);
 
   if (loading) {
@@ -222,6 +274,13 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         deletePassword={deletePassword}
         setDeletePassword={setDeletePassword}
         deleteLoading={deleteLoading}
+        onDuplicate={() => handleDuplicateProject(currentProject.id)}
+        onShowStats={() => {
+          setSelectedStatsProject(currentProject);
+          setShowStatsDialog(true);
+        }}
+        showStatsDialog={showStatsDialog}
+        setShowStatsDialog={setShowStatsDialog}
       />
     );
   }
@@ -239,6 +298,26 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9 h-9"
             />
+          </div>
+
+          {/* View Mode Toggle */}
+          <div className="flex border rounded-lg p-0.5 bg-muted/30 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode("grid")}
+              className={`h-8 w-8 p-0 ${viewMode === "grid" ? "bg-background shadow-sm" : ""}`}
+            >
+              <LayoutGrid className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setViewMode("list")}
+              className={`h-8 w-8 p-0 ${viewMode === "list" ? "bg-background shadow-sm" : ""}`}
+            >
+              <List className="size-4" />
+            </Button>
           </div>
           
           {/* Date Filter - Ultra Compact */}
@@ -322,7 +401,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
       </div>
 
       {/* Project Cards */}
-      <div className="px-4 space-y-3">
+      <div className="px-4">
         {(() => {
           const filteredProjects = projects.filter(project => {
             // Search filter
@@ -357,53 +436,224 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
             );
           }
 
-          return filteredProjects.map((project) => (
-            <Card
-              key={project.id}
-              className="active:scale-[0.98] transition-transform cursor-pointer overflow-hidden"
-              onClick={() => onNavigate("projects", project.id)}
+          return (
+            <motion.div 
+              className={viewMode === "grid" ? "space-y-3" : "space-y-2"}
+              layout
             >
-              <div 
-                className="aspect-[16/9] bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden"
-                style={projectCoverImages[project.id] ? { 
-                  backgroundImage: `url(${projectCoverImages[project.id]})`, 
-                  backgroundSize: 'cover', 
-                  backgroundPosition: 'center' 
-                } : {}}
-              >
-                {projectCoverImages[project.id] && (
-                  <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />
-                )}
-              </div>
-              <CardHeader className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <CardTitle className="text-base mb-2">{project.title}</CardTitle>
-                    <CardDescription className="text-sm line-clamp-2 mb-3">
-                      {project.logline}
-                    </CardDescription>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="secondary" className="text-xs">{project.type}</Badge>
-                      <Badge variant="outline" className="text-xs">{project.genre}</Badge>
-                      {project.lastEdited && (
-                        <Badge className="text-xs bg-primary/10 text-primary hover:bg-primary/15 border-0">
-                          {new Date(project.lastEdited).toLocaleDateString("de-DE", { 
-                            day: "2-digit", 
-                            month: "2-digit", 
-                            year: "numeric" 
-                          })}, {new Date(project.lastEdited).toLocaleTimeString("de-DE", { 
-                            hour: "2-digit", 
-                            minute: "2-digit" 
-                          })} Uhr
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  <ChevronRight className="size-5 text-muted-foreground shrink-0 mt-1" />
-                </div>
-              </CardHeader>
-            </Card>
-          ));
+              <AnimatePresence mode="popLayout">
+                {filteredProjects.map((project) => (
+                  <motion.div
+                    key={project.id}
+                    layout
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {viewMode === "grid" ? (
+                      // GRID VIEW (Original)
+                      <Card
+                        className="active:scale-[0.98] transition-transform cursor-pointer overflow-hidden"
+                        onClick={() => onNavigate("projects", project.id)}
+                      >
+                        <div 
+                          className="aspect-[16/9] bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden"
+                          style={projectCoverImages[project.id] ? { 
+                            backgroundImage: `url(${projectCoverImages[project.id]})`, 
+                            backgroundSize: 'cover', 
+                            backgroundPosition: 'center',
+                            backgroundBlendMode: 'overlay'
+                          } : {}}
+                        >
+                          {!projectCoverImages[project.id] && (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <Film className="size-12 text-primary/40" />
+                            </div>
+                          )}
+                        </div>
+                        <CardHeader className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <CardTitle className="text-base mb-2">{project.title}</CardTitle>
+                              <CardDescription className="text-sm line-clamp-2 mb-3">
+                                {project.logline}
+                              </CardDescription>
+                              <div className="flex flex-wrap gap-2">
+                                <Badge variant="secondary" className="text-xs">{project.type}</Badge>
+                                <Badge variant="outline" className="text-xs">{project.genre}</Badge>
+                                {project.lastEdited && (
+                                  <Badge className="text-xs bg-primary/10 text-primary hover:bg-primary/15 border-0">
+                                    {new Date(project.lastEdited).toLocaleDateString("de-DE", { 
+                                      day: "2-digit", 
+                                      month: "2-digit", 
+                                      year: "numeric" 
+                                    })}, {new Date(project.lastEdited).toLocaleTimeString("de-DE", { 
+                                      hour: "2-digit", 
+                                      minute: "2-digit" 
+                                    })} Uhr
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 w-8 p-0 shrink-0"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <MoreVertical className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                                <DropdownMenuItem onClick={(e) => {
+                                  e.stopPropagation();
+                                  onNavigate("projects", project.id);
+                                }}>
+                                  <Edit2 className="size-3.5 mr-2" />
+                                  Edit Project
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDuplicateProject(project.id);
+                                }}>
+                                  <Copy className="size-3.5 mr-2" />
+                                  Duplicate Project
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={(e) => handleOpenStatsDialog(project, e)}>
+                                  <BarChart3 className="size-3.5 mr-2" />
+                                  Project Stats & Logs
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedProject(project.id);
+                                    setShowDeleteDialog(true);
+                                  }}
+                                  className="text-red-600 focus:text-red-600"
+                                >
+                                  <Trash2 className="size-3.5 mr-2" />
+                                  Delete Project
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        </CardHeader>
+                      </Card>
+                    ) : (
+                      // LIST VIEW (NEW!)
+                      <Card
+                        className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
+                        onClick={() => onNavigate("projects", project.id)}
+                      >
+                        <div className="flex items-center gap-3 p-3">
+                          {/* Thumbnail Left */}
+                          <div 
+                            className="w-[140px] h-[79px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0"
+                            style={projectCoverImages[project.id] ? { 
+                              backgroundImage: `url(${projectCoverImages[project.id]})`, 
+                              backgroundSize: 'cover', 
+                              backgroundPosition: 'center',
+                              backgroundBlendMode: 'overlay'
+                            } : {}}
+                          >
+                            {!projectCoverImages[project.id] && (
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <Film className="size-6 text-primary/40" />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Content Right */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2 mb-1.5">
+                              <h3 className="font-semibold text-sm leading-snug line-clamp-1">
+                                {project.title}
+                              </h3>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 w-6 p-0 shrink-0"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <MoreVertical className="size-3.5" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                                  <DropdownMenuItem onClick={(e) => {
+                                    e.stopPropagation();
+                                    onNavigate("projects", project.id);
+                                  }}>
+                                    <Edit2 className="size-3.5 mr-2" />
+                                    Edit Project
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDuplicateProject(project.id);
+                                  }}>
+                                    <Copy className="size-3.5 mr-2" />
+                                    Duplicate Project
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={(e) => handleOpenStatsDialog(project, e)}>
+                                    <BarChart3 className="size-3.5 mr-2" />
+                                    Project Stats & Logs
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedProject(project.id);
+                                      setShowDeleteDialog(true);
+                                    }}
+                                    className="text-red-600 focus:text-red-600"
+                                  >
+                                    <Trash2 className="size-3.5 mr-2" />
+                                    Delete Project
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                            
+                            {project.logline && (
+                              <p className="text-xs text-muted-foreground line-clamp-1 mb-2">
+                                {project.logline}
+                              </p>
+                            )}
+
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
+                                {project.type}
+                              </Badge>
+                              <Badge variant="outline" className="text-[10px] h-5 px-1.5">
+                                {project.genre}
+                              </Badge>
+                              {project.last_edited && (
+                                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                  <CalendarIcon className="size-3" />
+                                  <span>
+                                    Zuletzt: {new Date(project.last_edited).toLocaleDateString("de-DE", { 
+                                      day: "2-digit", 
+                                      month: "2-digit" 
+                                    })}, {new Date(project.last_edited).toLocaleTimeString("de-DE", { 
+                                      hour: "2-digit", 
+                                      minute: "2-digit" 
+                                    })}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    )}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </motion.div>
+          );
         })()}
       </div>
 
@@ -640,6 +890,15 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Project Stats & Logs Dialog */}
+      {selectedStatsProject && (
+        <ProjectStatsLogsDialog
+          open={showStatsDialog}
+          onOpenChange={setShowStatsDialog}
+          project={selectedStatsProject}
+        />
+      )}
     </div>
   );
 }
@@ -1706,9 +1965,13 @@ interface ProjectDetailProps {
   deletePassword: string;
   setDeletePassword: (password: string) => void;
   deleteLoading: boolean;
+  onDuplicate?: () => void;
+  onShowStats?: () => void;
+  showStatsDialog: boolean;
+  setShowStatsDialog: (show: boolean) => void;
 }
 
-function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading }: ProjectDetailProps) {
+function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading, onDuplicate, onShowStats, showStatsDialog, setShowStatsDialog }: ProjectDetailProps) {
   const [structureView, setStructureView] = useState<"dropdown" | "timeline">("dropdown");
   const [showNewScene, setShowNewScene] = useState(false);
   const [showNewCharacter, setShowNewCharacter] = useState(false);
@@ -2213,31 +2476,58 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         <Card className="mb-4">
           <CardHeader className="p-4 flex flex-row items-center justify-between">
             <CardTitle className="text-base">Projekt-Informationen</CardTitle>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                if (isEditingInfo) {
-                  // Save changes
-                  setIsEditingInfo(false);
-                } else {
-                  setIsEditingInfo(true);
-                }
-              }}
-              className="h-8 px-3 rounded-[10px] bg-[#e4e6ea] dark:bg-muted hover:bg-gray-300 dark:hover:bg-muted/80 text-[#646567] dark:text-foreground hover:text-primary"
-            >
-              {isEditingInfo ? (
-                <>
-                  <Save className="size-3.5 mr-1.5" />
-                  Speichern
-                </>
-              ) : (
-                <>
-                  <Edit2 className="size-3.5 mr-1.5" />
-                  Bearbeiten
-                </>
-              )}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 w-8 p-0"
+                >
+                  <MoreVertical className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => {
+                  if (isEditingInfo) {
+                    // Save changes
+                    setIsEditingInfo(false);
+                  } else {
+                    setIsEditingInfo(true);
+                  }
+                }}>
+                  {isEditingInfo ? (
+                    <>
+                      <Save className="size-3.5 mr-2" />
+                      Speichern
+                    </>
+                  ) : (
+                    <>
+                      <Edit2 className="size-3.5 mr-2" />
+                      Bearbeiten
+                    </>
+                  )}
+                </DropdownMenuItem>
+                {onDuplicate && (
+                  <DropdownMenuItem onClick={onDuplicate}>
+                    <Copy className="size-3.5 mr-2" />
+                    Projekt duplizieren
+                  </DropdownMenuItem>
+                )}
+                {onShowStats && (
+                  <DropdownMenuItem onClick={onShowStats}>
+                    <BarChart3 className="size-3.5 mr-2" />
+                    Statistiken & Logs
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem 
+                  onClick={() => setShowDeleteDialog(true)}
+                  className="text-red-600 focus:text-red-600"
+                >
+                  <Trash2 className="size-3.5 mr-2" />
+                  Projekt löschen
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </CardHeader>
           <CardContent className="p-4 pt-0 space-y-4">
             {isEditingInfo ? (
@@ -2839,6 +3129,14 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Project Stats & Logs Dialog */}
+      <ProjectStatsLogsDialog
+        open={showStatsDialog}
+        onOpenChange={setShowStatsDialog}
+        project={project}
+      />
+
     </div>
   );
 }

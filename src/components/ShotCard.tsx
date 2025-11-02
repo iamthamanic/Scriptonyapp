@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
-import { Upload, Trash2, X, Music, Volume2, MoreVertical, Copy, ChevronDown, ChevronRight, Plus, GripVertical, Edit } from 'lucide-react';
+import { Upload, Trash2, X, Music, Volume2, MoreVertical, Copy, ChevronDown, ChevronRight, Plus, GripVertical, Edit, Camera } from 'lucide-react';
 import { useDrag, useDrop } from 'react-dnd';
 import { toast } from 'sonner@2.0.3';
 import shotPlaceholder from 'figma:asset/5bbfb6c934162456ce6c992c152322cee414939e.png';
@@ -671,18 +671,22 @@ export const ShotCard = memo(function ShotCard({
               {/* Thumbnail - ONLY in collapsed state - AFTER text */}
               {!isExpanded && (
                 <div 
-                  className="relative w-[64px] h-[40px] flex-shrink-0 rounded overflow-hidden border border-yellow-400/50 bg-gray-100 dark:bg-gray-800 cursor-pointer"
+                  className="relative w-[64px] h-[40px] flex-shrink-0 rounded overflow-hidden border border-yellow-400/50 cursor-pointer bg-gradient-to-br from-primary/20 to-accent/20"
                   onClick={onToggleExpand}
+                  style={shot.imageUrl ? { 
+                    backgroundImage: `url(${shot.imageUrl})`, 
+                    backgroundSize: 'cover', 
+                    backgroundPosition: 'center',
+                    backgroundBlendMode: 'overlay'
+                  } : {}}
                 >
-                  <img
-                    src={shot.imageUrl || shotPlaceholder}
-                    alt="Shot thumbnail"
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                    decoding="async"
-                  />
+                  {!shot.imageUrl && !isUploadingImage && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Camera className="size-4 text-primary/40" />
+                    </div>
+                  )}
                   {isUploadingImage && (
-                    <div className="absolute inset-0 bg-purple-600/20 flex items-center justify-center">
+                    <div className="absolute inset-0 bg-purple-600/20 flex items-center justify-center z-10">
                       <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                     </div>
                   )}
@@ -764,44 +768,29 @@ export const ShotCard = memo(function ShotCard({
               {/* Hero Image - SMALLER */}
               <label className="block">
                 <div 
-                  className="relative border-2 border-dashed rounded-[5px] w-full flex items-center justify-center cursor-pointer transition-colors aspect-[16/9] md:aspect-[21/9]"
-                  style={{
-                    backgroundColor: 'var(--color-upload-bg)',
-                    borderColor: 'var(--color-upload-border)',
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--color-upload-border-hover)'}
-                  onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--color-upload-border)'}
+                  className="relative rounded-[5px] w-full flex items-center justify-center cursor-pointer aspect-[16/9] md:aspect-[21/9] bg-gradient-to-br from-primary/20 to-accent/20 overflow-hidden"
+                  style={shot.imageUrl ? { 
+                    backgroundImage: `url(${shot.imageUrl})`, 
+                    backgroundSize: 'cover', 
+                    backgroundPosition: 'center',
+                    backgroundBlendMode: 'overlay'
+                  } : {}}
                 >
-                  {shot.imageUrl ? (
-                    <>
-                      <img
-                        src={shot.imageUrl}
-                        alt="Shot preview"
-                        className="w-full h-full object-cover rounded-[5px]"
-                        loading="lazy"
-                        decoding="async"
-                      />
-                      {isUploadingImage && (
-                        <div className="absolute top-2 right-2 bg-purple-600/90 backdrop-blur-sm text-white text-[9px] px-2 py-1 rounded-md flex items-center gap-1.5 shadow-lg">
-                          <div className="w-2.5 h-2.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          <span>Saving...</span>
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="flex flex-col items-center gap-0.5 text-gray-400">
-                      {isUploadingImage ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-                          <span className="text-[9px]">Lädt...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-4 h-4" />
-                          <span className="text-[9px]">Bild hochladen</span>
-                          <span className="text-[8px] text-gray-400/70 mt-0.5">Empfohlen: 1920×1080 (16:9)</span>
-                        </>
-                      )}
+                  {!shot.imageUrl && !isUploadingImage && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                      <Camera className="size-12 text-primary/40" />
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-xs text-primary/60">Bild hochladen</span>
+                        <span className="text-[10px] text-primary/40">Empfohlen: 1920×1080 (16:9)</span>
+                      </div>
+                    </div>
+                  )}
+                  {isUploadingImage && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-primary/5 z-10">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="w-8 h-8 border-3 border-primary/30 border-t-primary rounded-full animate-spin" />
+                        <span className="text-xs text-primary/60">Lädt...</span>
+                      </div>
                     </div>
                   )}
                   <input
