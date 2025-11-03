@@ -21,12 +21,15 @@ import { WorldReferenceAutocomplete } from "../WorldReferenceAutocomplete";
 import { useColoredTags } from "../hooks/useColoredTags";
 import { ImageCropDialog } from "../ImageCropDialog";
 import { LoadingSpinner } from "../LoadingSpinner";
-import { FilmDropdown } from "../FilmTimeline"; // TODO: Rename FilmTimeline.tsx to FilmDropdown.tsx
+import { FilmDropdown } from "../FilmDropdown";
 import { ProjectStatsLogsDialog } from "../ProjectStatsLogsDialog";
 import { projectsApi, worldsApi, itemsApi } from "../../utils/api";
 import { toast } from "sonner@2.0.3";
 import { deleteCharacter as deleteCharacterApi, getCharacters, createCharacter as createCharacterApi, updateCharacter as updateCharacterApi } from "../../lib/api/characters-api";
 import { getAuthToken } from "../../lib/auth/getAuthToken";
+import * as TimelineAPI from "../../lib/api/timeline-api";
+import * as ShotsAPI from "../../lib/api/shots-api";
+import type { TimelineData } from "../FilmDropdown";
 
 interface ProjectsPageProps {
   selectedProjectId?: string;
@@ -66,6 +69,10 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
   const [showStatsDialog, setShowStatsDialog] = useState(false);
   const [selectedStatsProject, setSelectedStatsProject] = useState<any | null>(null);
 
+  // 🚀 PERFORMANCE: Timeline Cache for instant loading
+  const [timelineCache, setTimelineCache] = useState<Record<string, any>>({});
+  const [timelineCacheLoading, setTimelineCacheLoading] = useState<Record<string, boolean>>({});
+
   // Simple cache to avoid reloading on every mount
   const dataLoadedRef = useRef(false);
 
@@ -84,10 +91,16 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
 
   useEffect(() => {
     if (selectedProjectId && projects.length > 0) {
+      console.time(`⏱️ [PERF] Total Project Load: ${selectedProjectId}`);
+      console.time(`⏱️ [PERF] Worldbuilding Load: ${selectedProjectId}`);
+      console.time(`⏱️ [PERF] Timeline Cache Load: ${selectedProjectId}`);
+      
       const project = projects.find(p => p.id === selectedProjectId);
       if (project && project.linkedWorldId) {
         loadWorldbuildingItems(project.linkedWorldId);
       }
+      // 🚀 PERFORMANCE: Preload timeline data for instant dropdown
+      loadTimelineDataForProject(selectedProjectId);
     }
   }, [selectedProjectId, projects]);
 
@@ -112,9 +125,92 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
     try {
       const items = await itemsApi.getAllForWorld(worldId);
       setWorldbuildingItems(items);
+      console.timeEnd(`⏱️ [PERF] Worldbuilding Load: ${selectedProject}`);
     } catch (error) {
       console.error("Error loading worldbuilding items:", error);
+      console.timeEnd(`⏱️ [PERF] Worldbuilding Load: ${selectedProject}`);
     }
+  };
+
+  // 🚀 PERFORMANCE: Load timeline data for cache
+  const loadTimelineDataForProject = async (projectId: string) => {
+    // Skip if already loading or cached
+    if (timelineCacheLoading[projectId] || timelineCache[projectId]) {
+      console.log('[ProjectsPage] Timeline data already loading or cached for project:', projectId);
+      console.timeEnd(`⏱️ [PERF] Timeline Cache Load: ${projectId}`);
+      return;
+    }
+
+    try {
+      console.log('[ProjectsPage] 🚀 Loading timeline data for cache:', projectId);
+      console.time(`⏱️ [PERF] Timeline API - Acts: ${projectId}`);
+      console.time(`⏱️ [PERF] Timeline API - All Nodes: ${projectId}`);
+      setTimelineCacheLoading(prev => ({ ...prev, [projectId]: true }));
+
+      const token = await getAuthToken();
+      if (!token) {
+        console.log('[ProjectsPage] No auth token available');
+        return;
+      }
+
+      // Load Acts (Level 1)
+      let loadedActs = await TimelineAPI.getActs(projectId, token);
+      console.timeEnd(`⏱️ [PERF] Timeline API - Acts: ${projectId}`);
+      
+      // If no acts exist, initialize 3-Act structure
+      if (!loadedActs || loadedActs.length === 0) {
+        console.log('[ProjectsPage] No acts found, initializing 3-act structure...');
+        await ShotsAPI.initializeThreeActStructure(projectId, token);
+        loadedActs = await TimelineAPI.getActs(projectId, token);
+      }
+
+      // 🚀 Load ALL nodes in parallel
+      const [allSequences, allScenes, allShots] = await Promise.all([
+        TimelineAPI.getAllSequencesByProject(projectId, token).catch(err => {
+          console.error('[ProjectsPage] Error loading sequences:', err);
+          return [];
+        }),
+        
+        TimelineAPI.getAllScenesByProject(projectId, token).catch(err => {
+          console.error('[ProjectsPage] Error loading scenes:', err);
+          return [];
+        }),
+        
+        ShotsAPI.getAllShotsByProject(projectId, token).catch(err => {
+          console.error('[ProjectsPage] Error loading shots:', err);
+          return [];
+        })
+      ]);
+      console.timeEnd(`⏱️ [PERF] Timeline API - All Nodes: ${projectId}`);
+
+      const timelineData: TimelineData = {
+        acts: loadedActs || [],
+        sequences: allSequences || [],
+        scenes: allScenes || [],
+        shots: allShots || [],
+      };
+
+      setTimelineCache(prev => ({ ...prev, [projectId]: timelineData }));
+      console.timeEnd(`⏱️ [PERF] Timeline Cache Load: ${projectId}`);
+      console.log('[ProjectsPage] ✅ Timeline data cached for project:', projectId, {
+        acts: timelineData.acts.length,
+        sequences: timelineData.sequences.length,
+        scenes: timelineData.scenes.length,
+        shots: timelineData.shots.length,
+      });
+
+    } catch (error) {
+      console.error('[ProjectsPage] Error loading timeline data:', error);
+      console.timeEnd(`⏱️ [PERF] Timeline Cache Load: ${projectId}`);
+    } finally {
+      setTimelineCacheLoading(prev => ({ ...prev, [projectId]: false }));
+    }
+  };
+
+  // 🚀 PERFORMANCE: Update timeline cache when FilmDropdown changes data
+  const handleTimelineDataChange = (projectId: string, data: TimelineData) => {
+    console.log('[ProjectsPage] 🔄 Updating timeline cache for project:', projectId);
+    setTimelineCache(prev => ({ ...prev, [projectId]: data }));
   };
 
   const handleCreateProject = async () => {
@@ -281,6 +377,8 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         }}
         showStatsDialog={showStatsDialog}
         setShowStatsDialog={setShowStatsDialog}
+        timelineCache={timelineCache}
+        onTimelineDataChange={handleTimelineDataChange}
       />
     );
   }
@@ -1969,9 +2067,12 @@ interface ProjectDetailProps {
   onShowStats?: () => void;
   showStatsDialog: boolean;
   setShowStatsDialog: (show: boolean) => void;
+  // Timeline Cache
+  timelineCache: Record<string, TimelineData>;
+  onTimelineDataChange: (projectId: string, data: TimelineData) => void;
 }
 
-function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading, onDuplicate, onShowStats, showStatsDialog, setShowStatsDialog }: ProjectDetailProps) {
+function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading, onDuplicate, onShowStats, showStatsDialog, setShowStatsDialog, timelineCache, onTimelineDataChange }: ProjectDetailProps) {
   const [structureView, setStructureView] = useState<"dropdown" | "timeline">("dropdown");
   const [showNewScene, setShowNewScene] = useState(false);
   const [showNewCharacter, setShowNewCharacter] = useState(false);
@@ -1982,6 +2083,28 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
   const [editedGenre, setEditedGenre] = useState(project.genre);
   const [editedDuration, setEditedDuration] = useState(project.duration);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 🎯 Performance Monitoring: Track when ProjectDetail is rendered
+  useEffect(() => {
+    console.log(`⏱️ [PERF] ProjectDetail Rendered: ${project.id}`);
+    // End the total timer after all data is loaded
+    const checkComplete = () => {
+      // Small delay to ensure all child components are rendered
+      setTimeout(() => {
+        console.timeEnd(`⏱️ [PERF] Total Project Load: ${project.id}`);
+      }, 100);
+    };
+    checkComplete();
+  }, [project.id]);
+
+  // Sync edited values when project changes (e.g., after reload)
+  useEffect(() => {
+    setEditedTitle(project.title);
+    setEditedLogline(project.logline);
+    setEditedType(project.type);
+    setEditedGenre(project.genre);
+    setEditedDuration(project.duration);
+  }, [project.id, project.title, project.logline, project.type, project.genre, project.duration]);
   // Scenes State with localStorage persistence
   const getInitialScenes = () => {
     const storageKey = `project-${project.id}-scenes`;
@@ -2147,11 +2270,13 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
   useEffect(() => {
     const loadCharacters = async () => {
       try {
+        console.time(`⏱️ [PERF] Characters Load: ${project.id}`);
         setCharactersLoading(true);
         const token = await getAuthToken();
         if (!token) {
           console.log("[ProjectDetail] No auth token, using localStorage characters");
           setCharactersLoading(false);
+          console.timeEnd(`⏱️ [PERF] Characters Load: ${project.id}`);
           return;
         }
 
@@ -2185,8 +2310,10 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         }));
         
         setCharactersState(transformedCharacters);
+        console.timeEnd(`⏱️ [PERF] Characters Load: ${project.id}`);
       } catch (error: any) {
         console.error("[ProjectDetail] Error loading characters:", error);
+        console.timeEnd(`⏱️ [PERF] Characters Load: ${project.id}`);
         // Keep localStorage/mock characters on error
       } finally {
         setCharactersLoading(false);
@@ -2438,6 +2565,30 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
     setTempImageForCrop(undefined);
   };
 
+  const handleSaveProjectInfo = async () => {
+    try {
+      // Update project in backend
+      await projectsApi.update(project.id, {
+        title: editedTitle,
+        logline: editedLogline,
+        type: editedType,
+        genre: editedGenre,
+        duration: editedDuration,
+      });
+
+      // Refresh data to sync with backend
+      await onUpdate();
+
+      // Exit edit mode
+      setIsEditingInfo(false);
+
+      toast.success("Projekt gespeichert");
+    } catch (error: any) {
+      console.error("[ProjectDetail] Error updating project info:", error);
+      toast.error(error.message || "Fehler beim Speichern");
+    }
+  };
+
   return (
     <div className="min-h-screen pb-24">
       {/* Header with Cover - Full Width */}
@@ -2490,7 +2641,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                 <DropdownMenuItem onClick={() => {
                   if (isEditingInfo) {
                     // Save changes
-                    setIsEditingInfo(false);
+                    handleSaveProjectInfo();
                   } else {
                     setIsEditingInfo(true);
                   }
@@ -2702,7 +2853,9 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
             {/* Film Dropdown (Hierarchical View with Collapse/Expand) */}
             <FilmDropdown 
               projectId={project.id} 
-              characters={charactersState} 
+              characters={charactersState}
+              initialData={timelineCache[project.id]}
+              onDataChange={(data) => onTimelineDataChange(project.id, data)}
             />
           </TabsContent>
           
@@ -3022,7 +3175,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
             <div className="space-y-2">
               <Label>Charakter Traits</Label>
               <Textarea 
-                placeholder="Persönlichkeitsmerkmale (z.B. Mutig, Sarkastisch, Mitfühlend, Neugierig, Introvertiert)" 
+                placeholder="Persönlichkeitsmerkmale (z.B. Mutig, Sarkastisch, Mitf��hlend, Neugierig, Introvertiert)" 
                 rows={2}
                 className="border-2"
                 value={newCharacterTraits}

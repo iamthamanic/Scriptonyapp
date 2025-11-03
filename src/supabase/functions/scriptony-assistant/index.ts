@@ -75,13 +75,28 @@ app.get("/", (c) => {
   });
 });
 
-app.get("/health", (c) => {
+app.get("/health", async (c) => {
+  // Check if ai_chat_settings table exists
+  let tableExists = false;
+  try {
+    const { data, error } = await supabase
+      .from("ai_chat_settings")
+      .select("id")
+      .limit(1);
+    tableExists = !error || error.code !== "42P01"; // 42P01 = undefined_table
+  } catch (e) {
+    console.error("[Health] Error checking table:", e);
+  }
+
   return c.json({ 
-    status: "ok", 
+    status: tableExists ? "ok" : "degraded", 
     function: "scriptony-assistant",
-    version: "1.0.0",
+    version: "1.0.1",
     features: ["ai-chat", "rag", "mcp-tools", "multi-provider"],
     timestamp: new Date().toISOString(),
+    database: {
+      ai_chat_settings_table: tableExists ? "exists" : "missing - run migration 002"
+    }
   });
 });
 
@@ -112,6 +127,16 @@ app.get("/ai/settings", async (c) => {
 
     if (error) {
       console.error("Error fetching AI settings:", error);
+      
+      // Special handling for missing table
+      if (error.code === "42P01") {
+        return c.json({ 
+          error: "AI chat settings table not found. Please run migration 002 in Supabase Dashboard.",
+          code: "TABLE_NOT_FOUND",
+          hint: "Check DEPLOY_schema_refresh_fix.md for instructions"
+        }, 500);
+      }
+      
       return c.json({ error: error.message }, 500);
     }
 

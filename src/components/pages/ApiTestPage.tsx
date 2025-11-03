@@ -5,6 +5,7 @@ import { CheckCircle2, XCircle, Loader2, AlertCircle } from "lucide-react";
 import { supabaseConfig } from "../../lib/env";
 import { API_CONFIG } from "../../lib/config";
 import { getAuthToken } from "../../lib/auth/getAuthToken";
+import { EdgeFunctionDebugPanel } from "../EdgeFunctionDebugPanel";
 
 interface TestResult {
   name: string;
@@ -224,6 +225,9 @@ export function ApiTestPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Edge Function Debug Panel */}
+        <EdgeFunctionDebugPanel />
 
         <Card>
           <CardHeader>

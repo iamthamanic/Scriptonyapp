@@ -1,0 +1,89 @@
+================================================================================
+🚀 DEPLOY-READY CODE - Copy & Paste ins Supabase Dashboard
+================================================================================
+
+📋 ANLEITUNG:
+1. Kopiere den Code-Block für jede Function
+2. Öffne Supabase Dashboard → Edge Functions
+3. Bearbeite oder erstelle die Function
+4. Füge den Code ein
+5. Klicke "Deploy"
+
+================================================================================
+📦 FUNCTION 1: scriptony-assistant
+================================================================================
+Pfad: /supabase/functions/scriptony-assistant/index.ts
+Status: ✅ Ready to deploy (Health Check + Error Handling verbessert)
+
+Öffne die Datei /supabase/functions/scriptony-assistant/index.ts und kopiere 
+den GESAMTEN Inhalt (2000+ Zeilen).
+
+Wichtige Änderungen:
+- Health Endpoint prüft jetzt ob ai_chat_settings Tabelle existiert
+- Bessere Fehlermeldungen bei "table not found" (Code 42P01)
+- Version: 1.0.1
+
+================================================================================
+📦 FUNCTION 2: scriptony-logs  
+================================================================================
+Pfad: /supabase/functions/scriptony-logs/index.ts
+Status: ✅ Ready to deploy (Health Check + Error Handling verbessert)
+
+Öffne die Datei /supabase/functions/scriptony-logs/index.ts und kopiere
+den GESAMTEN Inhalt (~325 Zeilen).
+
+Wichtige Änderungen:
+- Health Endpoint prüft jetzt ob activity_logs Tabelle existiert
+- Bessere Fehlermeldungen bei "table not found" (Code 42P01)
+- Version: 2.1.0
+
+================================================================================
+✅ DEPLOYMENT CHECKLIST
+================================================================================
+
+[ ] scriptony-assistant deployed
+[ ] scriptony-logs deployed
+[ ] Schema Cache refreshed (Settings → API → Reload schema cache)
+[ ] Health Endpoints getestet:
+    - https://YOUR_PROJECT_ID.supabase.co/functions/v1/scriptony-assistant/health
+    - https://YOUR_PROJECT_ID.supabase.co/functions/v1/scriptony-logs/health
+
+================================================================================
+🧪 VALIDIERUNG
+================================================================================
+
+Nach Deployment sollte Health Response so aussehen:
+
+scriptony-assistant/health:
+{
+  "status": "ok",
+  "function": "scriptony-assistant",
+  "version": "1.0.1",
+  "database": {
+    "ai_chat_settings_table": "exists"  // oder "missing - run migration 002"
+  }
+}
+
+scriptony-logs/health:
+{
+  "status": "ok",
+  "function": "scriptony-logs",
+  "version": "2.1.0",
+  "database": {
+    "activity_logs_table": "exists"  // oder "missing - run migration 021"
+  }
+}
+
+Falls "missing" angezeigt wird → Siehe DEPLOY_schema_refresh_fix.md
+
+================================================================================
+📝 NOTES
+================================================================================
+
+- Beide Functions sind UNABHÄNGIG deploybar
+- Änderungen betreffen nur Error Handling, keine Funktionalität
+- Backup wird automatisch im Dashboard erstellt
+- Bei Problemen: Rollback zur vorherigen Version möglich
+- Demo User Seeding Error ist bereits im Frontend behoben (automatisch deployed)
+
+================================================================================

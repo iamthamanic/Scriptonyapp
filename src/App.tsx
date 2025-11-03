@@ -17,6 +17,7 @@ import { ApiTestPage } from "./components/pages/ApiTestPage";
 import { Toaster } from "./components/ui/sonner";
 import { ScriptonyAssistant } from "./components/ScriptonyAssistant";
 import { ServerStatusBanner } from "./components/ServerStatusBanner";
+import { ConnectionStatusIndicator } from "./components/ConnectionStatusIndicator";
 import {
   seedInitialData,
   seedTestUser,
@@ -164,6 +165,7 @@ function AppContent() {
       <main className="pb-safe w-full md:max-w-5xl md:mx-auto">{renderPage()}</main>
       <Toaster position="top-center" />
       <ScriptonyAssistant />
+      <ConnectionStatusIndicator />
     </div>
   );
 }

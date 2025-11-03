@@ -68,13 +68,28 @@ async function getUserIdFromAuth(authHeader: string | undefined): Promise<string
 // HEALTH CHECK
 // =============================================================================
 
-app.get("/health", (c) => {
+app.get("/health", async (c) => {
+  // Check if activity_logs table exists
+  let tableExists = false;
+  try {
+    const { data, error } = await supabase
+      .from("activity_logs")
+      .select("id")
+      .limit(1);
+    tableExists = !error || error.code !== "42P01"; // 42P01 = undefined_table
+  } catch (e) {
+    console.error("[Health] Error checking table:", e);
+  }
+
   return c.json({ 
-    status: "ok", 
+    status: tableExists ? "ok" : "degraded", 
     function: "scriptony-logs",
     version: "2.1.0",
     phase: "2 (Schema Fixed)",
     timestamp: new Date().toISOString(),
+    database: {
+      activity_logs_table: tableExists ? "exists" : "missing - run migration 021"
+    }
   });
 });
 
@@ -134,6 +149,16 @@ app.get("/logs/project/:id/recent", async (c) => {
 
     if (logsError) {
       console.error("[Logs] Error fetching logs:", logsError);
+      
+      // Special handling for missing table
+      if (logsError.code === "42P01") {
+        return c.json({ 
+          error: "Activity logs table not found. Please run migration 021 in Supabase Dashboard.",
+          code: "TABLE_NOT_FOUND",
+          hint: "Check DEPLOY_schema_refresh_fix.md for instructions"
+        }, 500);
+      }
+      
       return c.json({ error: logsError.message }, 500);
     }
 

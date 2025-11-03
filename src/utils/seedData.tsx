@@ -27,6 +27,13 @@ export async function seedTestUser() {
       return result;
     } else {
       const errorText = await response.text();
+      
+      // Check if user already exists - this is OK, not an error
+      if (errorText.includes("already been registered") || response.status === 409) {
+        console.log("ℹ️  Demo user already exists - skipping creation");
+        return { email: "demo@scriptony.app", message: "User already exists" };
+      }
+      
       console.error("❌ Failed to seed demo user:", errorText);
       throw new Error(`Seed failed: ${errorText}`);
     }
