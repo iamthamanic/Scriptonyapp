@@ -65,7 +65,7 @@ export const projectsApi = {
 
   update: async (id: string, project: any) => {
     const data = await apiFetch(`/projects/${id}`, {
-      method: "PATCH",
+      method: "PUT",
       body: project,
     });
     // Server returns object directly, not { project: {...} }
@@ -164,7 +164,7 @@ export const worldsApi = {
 
   update: async (id: string, world: any) => {
     const data = await apiFetch(`/worlds/${id}`, {
-      method: "PATCH",
+      method: "PUT",
       body: world,
     });
     // Server returns object directly, not { world: {...} }

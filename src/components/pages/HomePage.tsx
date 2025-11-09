@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Clock, Quote, ChevronRight, Film, Globe } from "lucide-react";
+import { Clock, Quote, ChevronRight, Film, Globe, Layers, Tv, Book, Headphones } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { LoadingSpinner } from "../LoadingSpinner";
@@ -164,12 +164,40 @@ export function HomePage({ onNavigate }: HomePageProps) {
                     )}
 
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <Badge variant={item.type === 'project' ? 'secondary' : 'outline'} className="text-[10px] h-5 px-1.5">
-                        {item.type === 'project' ? '🎬 Projekt' : '🌍 Welt'}
+                      <Badge variant={item.type === 'project' ? 'secondary' : 'outline'} className="text-[10px] h-5 px-1.5 flex items-center gap-1">
+                        {item.type === 'project' ? (
+                          <>
+                            <Layers className="size-2.5" />
+                            Projekt
+                          </>
+                        ) : (
+                          <>
+                            <Globe className="size-2.5" />
+                            Welt
+                          </>
+                        )}
                       </Badge>
                       {item.projectType && (
-                        <Badge variant="outline" className="text-[10px] h-5 px-1.5">
-                          {item.projectType}
+                        <Badge variant="outline" className="text-[10px] h-5 px-1.5 flex items-center gap-1">
+                          {(() => {
+                            const typeMap: Record<string, { label: string; Icon: any }> = {
+                              film: { label: "Film", Icon: Film },
+                              series: { label: "Serie", Icon: Tv },
+                              book: { label: "Buch", Icon: Book },
+                              audio: { label: "Hörspiel", Icon: Headphones },
+                            };
+                            const typeInfo = typeMap[item.projectType] || { 
+                              label: item.projectType?.charAt(0).toUpperCase() + item.projectType?.slice(1) || '', 
+                              Icon: Film 
+                            };
+                            const Icon = typeInfo.Icon;
+                            return (
+                              <>
+                                <Icon className="size-2.5" />
+                                {typeInfo.label}
+                              </>
+                            );
+                          })()}
                         </Badge>
                       )}
                       {item.genre && (

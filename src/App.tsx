@@ -26,10 +26,18 @@ import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { TranslationProvider } from "./hooks/useTranslation";
 import { getAuthClient } from "./lib/auth/getAuthClient";
 import { STORAGE_KEYS } from "./lib/config";
+import { setupUndoKeyboardShortcuts } from "./lib/undo-manager";
 import scriptonyLogo from "figma:asset/762fa3b0c4bc468cb3c0661e6181aee92a01370d.png";
 
 function AppContent() {
   const { user, loading: authLoading } = useAuth();
+  
+  // Setup global undo/redo keyboard shortcuts
+  useEffect(() => {
+    const cleanup = setupUndoKeyboardShortcuts();
+    console.log('⌨️ Undo/Redo shortcuts aktiviert (CMD+Z / CMD+SHIFT+Z)');
+    return cleanup;
+  }, []);
   const [currentPage, setCurrentPage] = useState(() => {
     // Check if we're on reset password page
     if (

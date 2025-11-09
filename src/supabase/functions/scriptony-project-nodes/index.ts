@@ -187,6 +187,180 @@ app.get("/health", (c) => {
 // NODES ROUTES (GENERISCH!)
 // =============================================================================
 
+// =============================================================================
+// BATCH LOAD ENDPOINT - ULTRA PERFORMANCE 🚀
+// =============================================================================
+// IMPORTANT: Must be defined BEFORE /nodes/:id to avoid routing conflicts!
+
+/**
+ * GET /nodes/batch-load?project_id=X
+ * Load ALL timeline data in ONE request
+ * Returns: acts, sequences, scenes in one response
+ * Performance: 3 requests → 1 request = 3x faster!
+ */
+app.get("/nodes/batch-load", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const projectId = c.req.query("project_id");
+
+    if (!projectId) {
+      return c.json({ error: "project_id is required" }, 400);
+    }
+
+    console.log(`[BATCH LOAD] Loading all timeline data for project: ${projectId}`);
+    console.time(`[BATCH LOAD] Project ${projectId}`);
+
+    // 🚀 Load ALL nodes in ONE query with level filter
+    const { data: allNodes, error: nodesError } = await supabase
+      .from("timeline_nodes")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("level", { ascending: true })
+      .order("order_index", { ascending: true });
+
+    if (nodesError) {
+      console.error("[BATCH LOAD] Error fetching nodes:", nodesError);
+      return c.json({ error: nodesError.message }, 500);
+    }
+
+    // Split nodes by level
+    const acts = (allNodes || []).filter(n => n.level === 1).map(toCamelCase);
+    const sequences = (allNodes || []).filter(n => n.level === 2).map(toCamelCase);
+    const scenes = (allNodes || []).filter(n => n.level === 3).map(toCamelCase);
+
+    console.timeEnd(`[BATCH LOAD] Project ${projectId}`);
+    console.log(`[BATCH LOAD] Loaded: ${acts.length} acts, ${sequences.length} sequences, ${scenes.length} scenes`);
+
+    return c.json({
+      acts,
+      sequences,
+      scenes,
+      stats: {
+        totalNodes: allNodes.length,
+        acts: acts.length,
+        sequences: sequences.length,
+        scenes: scenes.length,
+      }
+    });
+  } catch (error: any) {
+    console.error("[BATCH LOAD] Error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// ULTRA BATCH LOAD - MAXIMUM PERFORMANCE 🚀🚀🚀
+// =============================================================================
+// Loads Timeline + Characters + Shots in ONE request!
+// Performance: 2-3 requests → 1 request = 3x faster!
+
+/**
+ * GET /nodes/ultra-batch-load?project_id=X
+ * Load EVERYTHING in ONE request
+ * Returns: { timeline: {...}, characters: [...], shots: [...] }
+ * Performance: 3 requests → 1 request = 3x faster!
+ */
+app.get("/nodes/ultra-batch-load", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const projectId = c.req.query("project_id");
+
+    if (!projectId) {
+      return c.json({ error: "project_id is required" }, 400);
+    }
+
+    console.log(`[ULTRA BATCH] Loading EVERYTHING for project: ${projectId}`);
+    console.time(`[ULTRA BATCH] Project ${projectId}`);
+
+    // 🚀 Load EVERYTHING in parallel
+    const [nodesResult, charactersResult, shotsResult] = await Promise.all([
+      // Timeline nodes
+      supabase
+        .from("timeline_nodes")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("level", { ascending: true })
+        .order("order_index", { ascending: true }),
+      
+      // Characters with image
+      supabase
+        .from("characters")
+        .select("id, name, image_url, color, description, created_at, updated_at")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: true }),
+      
+      // Shots
+      supabase
+        .from("shots")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: true })
+    ]);
+
+    // Check for errors
+    if (nodesResult.error) {
+      console.error("[ULTRA BATCH] Error fetching nodes:", nodesResult.error);
+      return c.json({ error: nodesResult.error.message }, 500);
+    }
+    if (charactersResult.error) {
+      console.error("[ULTRA BATCH] Error fetching characters:", charactersResult.error);
+      return c.json({ error: charactersResult.error.message }, 500);
+    }
+    if (shotsResult.error) {
+      console.error("[ULTRA BATCH] Error fetching shots:", shotsResult.error);
+      return c.json({ error: shotsResult.error.message }, 500);
+    }
+
+    // Split nodes by level
+    const allNodes = nodesResult.data || [];
+    const acts = allNodes.filter(n => n.level === 1).map(toCamelCase);
+    const sequences = allNodes.filter(n => n.level === 2).map(toCamelCase);
+    const scenes = allNodes.filter(n => n.level === 3).map(toCamelCase);
+
+    // Transform characters
+    const characters = (charactersResult.data || []).map(toCamelCase);
+    
+    // Transform shots
+    const shots = (shotsResult.data || []).map(toCamelCase);
+
+    console.timeEnd(`[ULTRA BATCH] Project ${projectId}`);
+    console.log(`[ULTRA BATCH] Loaded: ${acts.length} acts, ${sequences.length} sequences, ${scenes.length} scenes, ${characters.length} characters, ${shots.length} shots`);
+
+    return c.json({
+      timeline: {
+        acts,
+        sequences,
+        scenes,
+      },
+      characters,
+      shots,
+      stats: {
+        totalNodes: allNodes.length,
+        acts: acts.length,
+        sequences: sequences.length,
+        scenes: scenes.length,
+        characters: characters.length,
+        shots: shots.length,
+      }
+    });
+  } catch (error: any) {
+    console.error("[ULTRA BATCH] Error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 /**
  * GET /nodes
  * Query nodes with filters
@@ -424,7 +598,7 @@ app.post("/nodes", async (c) => {
 
     const nextOrderIndex = (existingNodes?.[0]?.order_index ?? -1) + 1;
 
-    // Insert node
+    // Insert node (with user_id for Activity Logs)
     const { data, error } = await supabase
       .from("timeline_nodes")
       .insert({
@@ -438,6 +612,7 @@ app.post("/nodes", async (c) => {
         color: body.color,
         order_index: nextOrderIndex,
         metadata: body.metadata || {},
+        user_id: userId,  // ✅ For Activity Logs user attribution
       })
       .select()
       .single();
@@ -512,6 +687,9 @@ app.put("/nodes/:id", async (c) => {
     if (updates.metadata !== undefined) {
       dbUpdates.metadata = updates.metadata;
     }
+    
+    // ✅ Always update user_id on modifications (for Activity Logs)
+    dbUpdates.user_id = userId;
 
     // Validate that we have updates to apply
     if (Object.keys(dbUpdates).length === 0) {

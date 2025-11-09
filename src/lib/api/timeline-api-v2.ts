@@ -217,6 +217,96 @@ export async function initializeProject(
   return data?.nodes || [];
 }
 
+/**
+ * 🚀 ULTRA-FAST: Batch load all timeline data in ONE request
+ * Loads acts, sequences, and scenes in a single API call
+ * Performance: 3 requests → 1 request = 3x faster!
+ */
+export async function batchLoadTimeline(
+  projectId: string,
+  token: string
+): Promise<{
+  acts: TimelineNode[];
+  sequences: TimelineNode[];
+  scenes: TimelineNode[];
+  stats: {
+    totalNodes: number;
+    acts: number;
+    sequences: number;
+    scenes: number;
+  };
+}> {
+  console.log('[Timeline API V2] 🚀 Batch loading timeline:', projectId);
+  const timerLabel = `[Timeline API V2] Batch Load ${projectId}`;
+  console.time(timerLabel);
+  
+  const result = await apiGet(`/nodes/batch-load?project_id=${projectId}`, token);
+  const data = unwrapApiResult(result);
+  
+  console.timeEnd(timerLabel);
+  console.log('[Timeline API V2] Batch load stats:', data.stats);
+  
+  return {
+    acts: data?.acts || [],
+    sequences: data?.sequences || [],
+    scenes: data?.scenes || [],
+    stats: data?.stats || { totalNodes: 0, acts: 0, sequences: 0, scenes: 0 },
+  };
+}
+
+// =============================================================================
+// ULTRA BATCH LOAD - MAXIMUM PERFORMANCE 🚀🚀🚀
+// =============================================================================
+
+export async function ultraBatchLoadProject(
+  projectId: string,
+  token: string
+): Promise<{
+  timeline: {
+    acts: TimelineNode[];
+    sequences: TimelineNode[];
+    scenes: TimelineNode[];
+  };
+  characters: any[];
+  shots: any[];
+  stats: {
+    totalNodes: number;
+    acts: number;
+    sequences: number;
+    scenes: number;
+    characters: number;
+    shots: number;
+  };
+}> {
+  console.log('[Timeline API V2] 🚀🚀🚀 ULTRA BATCH loading project:', projectId);
+  const timerLabel = `[Timeline API V2] ULTRA Batch Load ${projectId}`;
+  console.time(timerLabel);
+  
+  const result = await apiGet(`/nodes/ultra-batch-load?project_id=${projectId}`, token);
+  const data = unwrapApiResult(result);
+  
+  console.timeEnd(timerLabel);
+  console.log('[Timeline API V2] ULTRA Batch load stats:', data.stats);
+  
+  return {
+    timeline: {
+      acts: data?.timeline?.acts || [],
+      sequences: data?.timeline?.sequences || [],
+      scenes: data?.timeline?.scenes || [],
+    },
+    characters: data?.characters || [],
+    shots: data?.shots || [],
+    stats: data?.stats || { 
+      totalNodes: 0, 
+      acts: 0, 
+      sequences: 0, 
+      scenes: 0,
+      characters: 0,
+      shots: 0,
+    },
+  };
+}
+
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================

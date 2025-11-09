@@ -288,6 +288,7 @@ app.post("/characters", async (c) => {
       color: body.color,
       backstory: body.backstory,
       personality: body.personality,
+      user_id: userId,  // ✅ For Activity Logs user attribution
     };
 
     if (projectId) insertData.project_id = projectId;
@@ -374,6 +375,9 @@ app.put("/characters/:id", async (c) => {
     if (updates.organizationId !== undefined || updates.organization_id !== undefined) {
       dbUpdates.organization_id = updates.organizationId ?? updates.organization_id;
     }
+    
+    // ✅ Always update user_id on modifications (for Activity Logs)
+    dbUpdates.user_id = userId;
 
     const { data, error } = await supabase
       .from("characters")
@@ -482,6 +486,7 @@ app.post("/timeline-characters", async (c) => {
       color: body.color,
       backstory: body.backstory,
       personality: body.personality,
+      user_id: userId,  // ✅ For Activity Logs user attribution
     };
 
     if (projectId) insertData.project_id = projectId;
@@ -680,6 +685,9 @@ app.put("/timeline-characters/:id", async (c) => {
     if (updates.organizationId !== undefined || updates.organization_id !== undefined) {
       dbUpdates.organization_id = updates.organizationId ?? updates.organization_id;
     }
+    
+    // ✅ Always update user_id on modifications (for Activity Logs)
+    dbUpdates.user_id = userId;
 
     const { data, error } = await supabase
       .from("characters")

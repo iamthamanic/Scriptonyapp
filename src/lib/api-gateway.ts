@@ -20,6 +20,7 @@ export const EDGE_FUNCTIONS = {
   TIMELINE_V2: 'scriptony-timeline-v2', // DEPRECATED: Use PROJECT_NODES instead
   SHOTS: 'scriptony-shots', // Shots Microservice (Film-specific) ✅ NEW!
   CHARACTERS: 'scriptony-characters', // Characters Microservice (Universal) ✅ NEW!
+  INSPIRATION: 'scriptony-inspiration', // Visual References & Inspiration ✅ NEW!
   AUDIO: 'scriptony-audio', // Audio Processing (Upload, Waveform, Trim, Fade)
   WORLDBUILDING: 'scriptony-worldbuilding',
   ASSISTANT: 'scriptony-assistant',
@@ -64,6 +65,9 @@ const ROUTE_MAP: Record<string, string> = {
   // Characters Microservice ✅ NEW!
   '/characters': EDGE_FUNCTIONS.CHARACTERS,
   '/timeline-characters': EDGE_FUNCTIONS.CHARACTERS, // Legacy compatibility
+  
+  // Inspiration (Visual References) ✅ NEW!
+  '/inspirations': EDGE_FUNCTIONS.INSPIRATION,
   
   // Stats & Logs ✅ PHASE 2!
   '/stats': EDGE_FUNCTIONS.STATS,

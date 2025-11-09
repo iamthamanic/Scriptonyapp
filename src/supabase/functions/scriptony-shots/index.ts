@@ -322,6 +322,7 @@ app.post("/shots", async (c) => {
         dialog: body.dialog,
         notes: body.notes,
         order_index: nextOrderIndex,
+        user_id: userId,  // ✅ For Activity Logs user attribution
       })
       .select()
       .single();
@@ -479,6 +480,9 @@ app.put("/shots/:id", async (c) => {
     if (updates.updated_at !== undefined || updates.updatedAt !== undefined) {
       dbUpdates.updated_at = updates.updated_at || updates.updatedAt;
     }
+    
+    // ✅ Always update user_id on modifications (for Activity Logs)
+    dbUpdates.user_id = userId;
 
     console.log("📊 DB Updates object:", { dbUpdates, hasUpdates: Object.keys(dbUpdates).length > 0 });
 

@@ -1,13 +1,15 @@
 /**
  * 🎯 SCRIPTONY PROJECTS - Edge Function
  * 
- * 🕐 LAST UPDATED: 2025-10-20 16:40 UTC
- * 📝 STABLE VERSION - No recent changes
+ * 🕐 LAST UPDATED: 2025-11-08 (Added episode_layout & season_engine for Series)
+ * 📝 UPDATED VERSION - Added episode/season structure for TV series
  * 
  * Handles all Project-related operations:
  * - Project CRUD (all types: Film, Series, Book, Theater, Game, ...)
  * - Project initialization with templates
  * - Project statistics
+ * - Narrative Structure & Beat Template support
+ * - Episode Layout & Season Engine (Series only)
  * 
  * UNABHÄNGIG DEPLOYBAR - Änderungen hier beeinflussen Timeline/Assistant/etc. nicht!
  */
@@ -80,7 +82,7 @@ app.get("/health", (c) => {
   return c.json({ 
     status: "ok", 
     function: "scriptony-projects",
-    version: "1.0.0",
+    version: "1.1.0",
     timestamp: new Date().toISOString(),
   });
 });
@@ -177,7 +179,20 @@ app.post("/projects", async (c) => {
     }
 
     const body = await c.req.json();
-    const { title, description, type, logline, genre } = body;
+    const { 
+      title, 
+      description, 
+      type, 
+      logline, 
+      genre, 
+      duration, 
+      world_id, 
+      cover_image_url, 
+      narrative_structure, 
+      beat_template,
+      episode_layout,
+      season_engine,
+    } = body;
 
     if (!title) {
       return c.json({ error: "title is required" }, 400);
@@ -190,6 +205,13 @@ app.post("/projects", async (c) => {
         logline: logline || description,
         genre,
         type: type || 'film',
+        duration: duration || null,
+        world_id: world_id || null,
+        cover_image_url: cover_image_url || null,
+        narrative_structure: narrative_structure || null,
+        beat_template: beat_template || null,
+        episode_layout: episode_layout || null,
+        season_engine: season_engine || null,
         organization_id: orgId,
       })
       .select()

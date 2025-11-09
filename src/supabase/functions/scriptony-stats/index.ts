@@ -1,23 +1,18 @@
 /**
  * 📊 SCRIPTONY STATS - Edge Function
  * 
- * ✅ PHASE 2: COMPLETE IMPLEMENTATION (FIXED FOR TIMELINE_NODES SCHEMA)
- * 📅 Created: 2025-11-02
- * 🔄 Updated: 2025-11-02 (Schema Fix)
+ * ✅ ARCHITECTURE FIX: 2025-11-05
+ * 🎯 CRITICAL: Shots are in 'shots' table, NOT timeline_nodes!
  * 
- * Advanced Analytics & Statistics System
+ * SCHEMA:
+ * - timeline_nodes: Acts (level 1), Sequences (level 2), Scenes (level 3)
+ * - shots: Separate table with scene_id → timeline_nodes(id)
+ * - shots has columns: duration, camera_angle, framing, lens, etc.
  * 
- * FEATURES:
- * - Shot Analytics (durations, camera angles, framings, lenses, movements)
- * - Character Analytics (appearances, frequency, most/least featured)
- * - Timeline Analytics (hierarchy, structure, duration by level)
- * - Media Analytics (audio files, images, storage)
- * - Overview Stats (combined metrics)
- * 
- * SCHEMA FIX:
- * - timeline_nodes has NO user_id column (uses RLS with auth.uid())
- * - timeline_nodes has NO duration column (stored in metadata JSONB)
- * - timeline_nodes has NO mentioned_characters (not implemented yet)
+ * PERFORMANCE:
+ * - ⚡ Aggressive caching planned (90% faster target)
+ * - 🚀 Batch queries for better performance
+ * - 📊 Optimized COUNT queries with proper indexes
  */
 
 import { Hono } from "npm:hono";
@@ -73,8 +68,8 @@ app.get("/health", (c) => {
   return c.json({ 
     status: "ok", 
     function: "scriptony-stats",
-    version: "2.1.0",
-    phase: "2 (Schema Fixed)",
+    version: "3.0.0",
+    fix: "Shots from shots table, not timeline_nodes!",
     timestamp: new Date().toISOString(),
   });
 });
@@ -86,6 +81,7 @@ app.get("/health", (c) => {
 /**
  * GET /stats/project/:id/overview
  * Basic project statistics overview
+ * ⚡ FIXED: Shots from 'shots' table!
  */
 app.get("/stats/project/:id/overview", async (c) => {
   try {
@@ -99,65 +95,81 @@ app.get("/stats/project/:id/overview", async (c) => {
     const projectId = c.req.param("id");
     console.log(`[Stats] Fetching overview for project ${projectId}`);
 
-    // Get timeline structure
-    // NOTE: No user_id column - RLS handles access control via auth.uid()
-    const { data: nodes, error } = await supabase
-      .from("timeline_nodes")
-      .select("level, metadata")
-      .eq("project_id", projectId);
+    // ⚡ PARALLEL QUERIES for speed!
+    const [nodesResult, shotsResult, charactersResult, worldsResult, projectResult] = await Promise.all([
+      // Timeline nodes (Acts, Sequences, Scenes)
+      supabase
+        .from("timeline_nodes")
+        .select("level")
+        .eq("project_id", projectId),
+      
+      // Shots (from shots table!)
+      supabase
+        .from("shots")
+        .select("duration, shotlength_minutes, shotlength_seconds")
+        .eq("project_id", projectId),
+      
+      // Characters
+      supabase
+        .from("characters")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", projectId),
+      
+      // Worlds
+      supabase
+        .from("worlds")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", projectId),
+      
+      // Project metadata
+      supabase
+        .from("projects")
+        .select("type, genre, created_at, updated_at")
+        .eq("id", projectId)
+        .single(),
+    ]);
 
-    if (error) {
-      console.error("[Stats] Error fetching timeline nodes:", error);
-      return c.json({ error: error.message }, 500);
+    if (nodesResult.error) {
+      console.error("[Stats] Error fetching nodes:", nodesResult.error);
+      return c.json({ error: nodesResult.error.message }, 500);
     }
 
-    // Count per level
-    const level_counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    let totalDuration = 0;
-
-    (nodes || []).forEach(node => {
-      if (node.level >= 1 && node.level <= 4) {
-        level_counts[node.level as 1 | 2 | 3 | 4]++;
-      }
-      // Duration is stored in metadata.duration for shots (level 4)
-      if (node.level === 4 && node.metadata?.duration) {
-        totalDuration += node.metadata.duration;
+    // Count nodes per level
+    const level_counts = { 1: 0, 2: 0, 3: 0 };
+    (nodesResult.data || []).forEach(node => {
+      if (node.level >= 1 && node.level <= 3) {
+        level_counts[node.level as 1 | 2 | 3]++;
       }
     });
 
-    // Get content counts
-    const [
-      { count: charactersCount },
-      { count: worldsCount }
-    ] = await Promise.all([
-      supabase.from("characters").select("id", { count: "exact", head: true }).eq("project_id", projectId),
-      supabase.from("worlds").select("id", { count: "exact", head: true }).eq("project_id", projectId),
-    ]);
-
-    // Get project metadata
-    const { data: project } = await supabase
-      .from("projects")
-      .select("type, genre, created_at, updated_at")
-      .eq("id", projectId)
-      .single();
+    // Calculate total duration from shots
+    let totalDuration = 0;
+    (shotsResult.data || []).forEach(shot => {
+      // Prioritize duration, fallback to shotlength calculation
+      if (shot.duration) {
+        totalDuration += shot.duration;
+      } else if (shot.shotlength_minutes || shot.shotlength_seconds) {
+        totalDuration += (shot.shotlength_minutes || 0) * 60 + (shot.shotlength_seconds || 0);
+      }
+    });
 
     return c.json({
       timeline: {
         acts: level_counts[1] || 0,
         sequences: level_counts[2] || 0,
         scenes: level_counts[3] || 0,
-        shots: level_counts[4] || 0,
+        shots: shotsResult.data?.length || 0,  // ✅ FIXED: From shots table!
         total_duration: totalDuration,
       },
       content: {
-        characters: charactersCount || 0,
-        worlds: worldsCount || 0,
+        characters: charactersResult.count || 0,
+        worlds: worldsResult.count || 0,
       },
       metadata: {
-        type: project?.type || "film",
-        genre: project?.genre || null,
-        created_at: project?.created_at || null,
-        updated_at: project?.updated_at || null,
+        type: projectResult.data?.type || "film",
+        genre: projectResult.data?.genre || null,
+        created_at: projectResult.data?.created_at || null,
+        updated_at: projectResult.data?.updated_at || null,
       },
     });
   } catch (error: any) {
@@ -173,6 +185,7 @@ app.get("/stats/project/:id/overview", async (c) => {
 /**
  * GET /stats/project/:id/shots
  * Shot Analytics: Durations, Camera Angles, Framings, Lenses, Movements
+ * ⚡ FIXED: Shots from 'shots' table!
  */
 app.get("/stats/project/:id/shots", async (c) => {
   try {
@@ -186,20 +199,18 @@ app.get("/stats/project/:id/shots", async (c) => {
     const projectId = c.req.param("id");
     console.log(`[Stats] Fetching shot analytics for project ${projectId}`);
 
-    // Get all shots (level 4 = Shot)
-    // No user_id filter - RLS handles access
-    const { data: nodes, error: nodesError } = await supabase
-      .from("timeline_nodes")
-      .select("metadata")
-      .eq("project_id", projectId)
-      .eq("level", 4);
+    // ✅ Get shots from shots table!
+    const { data: shots, error: shotsError } = await supabase
+      .from("shots")
+      .select("duration, shotlength_minutes, shotlength_seconds, camera_angle, framing, lens, camera_movement")
+      .eq("project_id", projectId);
 
-    if (nodesError) {
-      console.error("[Stats] Error fetching shots:", nodesError);
-      return c.json({ error: nodesError.message }, 500);
+    if (shotsError) {
+      console.error("[Stats] Error fetching shots:", shotsError);
+      return c.json({ error: shotsError.message }, 500);
     }
 
-    if (!nodes || nodes.length === 0) {
+    if (!shots || shots.length === 0) {
       return c.json({
         total_shots: 0,
         duration_stats: { average: 0, min: 0, max: 0, total: 0 },
@@ -210,9 +221,15 @@ app.get("/stats/project/:id/shots", async (c) => {
       });
     }
 
-    // Calculate duration stats (from metadata.duration)
-    const durations = nodes
-      .map(n => n.metadata?.duration || 0)
+    // Calculate duration stats
+    const durations = shots
+      .map(s => {
+        if (s.duration) return s.duration;
+        if (s.shotlength_minutes || s.shotlength_seconds) {
+          return (s.shotlength_minutes || 0) * 60 + (s.shotlength_seconds || 0);
+        }
+        return 0;
+      })
       .filter(d => d > 0);
 
     const duration_stats = durations.length > 0 ? {
@@ -222,36 +239,36 @@ app.get("/stats/project/:id/shots", async (c) => {
       total: durations.reduce((a, b) => a + b, 0),
     } : { average: 0, min: 0, max: 0, total: 0 };
 
-    // Count camera angles (from metadata.cameraAngle)
+    // Count camera angles
     const camera_angles: Record<string, number> = {};
-    nodes.forEach(node => {
-      const angle = node.metadata?.cameraAngle || "Not Set";
+    shots.forEach(shot => {
+      const angle = shot.camera_angle || "Not Set";
       camera_angles[angle] = (camera_angles[angle] || 0) + 1;
     });
 
-    // Count framings (from metadata.framing)
+    // Count framings
     const framings: Record<string, number> = {};
-    nodes.forEach(node => {
-      const framing = node.metadata?.framing || "Not Set";
+    shots.forEach(shot => {
+      const framing = shot.framing || "Not Set";
       framings[framing] = (framings[framing] || 0) + 1;
     });
 
-    // Count lenses (from metadata.lens)
+    // Count lenses
     const lenses: Record<string, number> = {};
-    nodes.forEach(node => {
-      const lens = node.metadata?.lens || "Not Set";
+    shots.forEach(shot => {
+      const lens = shot.lens || "Not Set";
       lenses[lens] = (lenses[lens] || 0) + 1;
     });
 
-    // Count movements (from metadata.cameraMovement)
+    // Count movements
     const movements: Record<string, number> = {};
-    nodes.forEach(node => {
-      const movement = node.metadata?.cameraMovement || "Static";
+    shots.forEach(shot => {
+      const movement = shot.camera_movement || "Static";
       movements[movement] = (movements[movement] || 0) + 1;
     });
 
     return c.json({
-      total_shots: nodes.length,
+      total_shots: shots.length,
       duration_stats,
       camera_angles,
       framings,
@@ -270,10 +287,7 @@ app.get("/stats/project/:id/shots", async (c) => {
 
 /**
  * GET /stats/project/:id/characters
- * Character Analytics: Appearances, Frequency
- * 
- * NOTE: mentioned_characters not yet implemented in timeline_nodes
- * This will return basic character count for now
+ * Character Analytics: Appearances via shot_characters
  */
 app.get("/stats/project/:id/characters", async (c) => {
   try {
@@ -298,19 +312,32 @@ app.get("/stats/project/:id/characters", async (c) => {
       return c.json({ error: charsError.message }, 500);
     }
 
-    // TODO: Implement character appearance tracking in timeline_nodes.metadata
-    // For now, return basic stats with 0 appearances
-    const appearances = (characters || []).map(char => ({
-      character_id: char.id,
-      name: char.name,
-      shot_count: 0,
-    }));
+    // Get shot_characters counts
+    const appearances = await Promise.all(
+      (characters || []).map(async (char) => {
+        const { count } = await supabase
+          .from("shot_characters")
+          .select("id", { count: "exact", head: true })
+          .eq("character_id", char.id);
+
+        return {
+          character_id: char.id,
+          name: char.name,
+          shot_count: count || 0,
+        };
+      })
+    );
+
+    // Find most/least featured
+    const sorted = [...appearances].sort((a, b) => b.shot_count - a.shot_count);
+    const most_featured = sorted[0]?.shot_count > 0 ? sorted[0] : null;
+    const least_featured = sorted[sorted.length - 1]?.shot_count > 0 ? sorted[sorted.length - 1] : null;
 
     return c.json({
       total_characters: characters?.length || 0,
       appearances,
-      most_featured: null,
-      least_featured: null,
+      most_featured,
+      least_featured,
     });
   } catch (error: any) {
     console.error("[Stats] Characters error:", error);
@@ -338,32 +365,24 @@ app.get("/stats/project/:id/media", async (c) => {
     const projectId = c.req.param("id");
     console.log(`[Stats] Fetching media analytics for project ${projectId}`);
 
-    // Count audio files (from shot_audio table)
-    const { count: audioCount, error: audioError } = await supabase
-      .from("shot_audio")
-      .select("id", { count: "exact", head: true })
-      .eq("project_id", projectId);
-
-    if (audioError) {
-      console.error("[Stats] Error counting audio files:", audioError);
-    }
-
-    // Count images (shots with metadata.imageUrl not null)
-    const { data: shotsWithImages, error: imagesError } = await supabase
-      .from("timeline_nodes")
-      .select("metadata")
-      .eq("project_id", projectId)
-      .eq("level", 4)
-      .not("metadata->imageUrl", "is", null);
-
-    if (imagesError) {
-      console.error("[Stats] Error counting images:", imagesError);
-    }
+    const [audioResult, imagesResult] = await Promise.all([
+      // Audio files
+      supabase
+        .from("shot_audio")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", projectId),
+      
+      // Images (shots with image_url or storyboard_url)
+      supabase
+        .from("shots")
+        .select("id", { count: "exact", head: true })
+        .eq("project_id", projectId)
+        .or("image_url.not.is.null,storyboard_url.not.is.null"),
+    ]);
 
     return c.json({
-      audio_files: audioCount || 0,
-      images: shotsWithImages?.length || 0,
-      // Storage size would require bucket queries - placeholder for now
+      audio_files: audioResult.count || 0,
+      images: imagesResult.count || 0,
       total_storage: "N/A",
     });
   } catch (error: any) {
@@ -373,8 +392,408 @@ app.get("/stats/project/:id/media", async (c) => {
 });
 
 // =============================================================================
+// ACT STATS
+// =============================================================================
+
+/**
+ * GET /stats/act/:id
+ * Stats for a specific Act
+ * ⚡ FIXED: Shots from shots table!
+ */
+app.get("/stats/act/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const actId = c.req.param("id");
+    console.log(`[Stats] Fetching stats for act ${actId}`);
+
+    // Get act node
+    const { data: act, error: actError } = await supabase
+      .from("timeline_nodes")
+      .select("*")
+      .eq("id", actId)
+      .eq("level", 1)
+      .single();
+
+    if (actError || !act) {
+      return c.json({ error: "Act not found" }, 404);
+    }
+
+    // Get sequences
+    const { data: sequences } = await supabase
+      .from("timeline_nodes")
+      .select("id")
+      .eq("parent_id", actId)
+      .eq("level", 2);
+
+    const sequenceIds = (sequences || []).map(s => s.id);
+    let scenesCount = 0;
+    let sceneIds: string[] = [];
+
+    if (sequenceIds.length > 0) {
+      // Get scenes
+      const { data: scenes } = await supabase
+        .from("timeline_nodes")
+        .select("id")
+        .in("parent_id", sequenceIds)
+        .eq("level", 3);
+
+      scenesCount = scenes?.length || 0;
+      sceneIds = (scenes || []).map(s => s.id);
+    }
+
+    let shotsCount = 0;
+    let totalDuration = 0;
+
+    if (sceneIds.length > 0) {
+      // ✅ Get shots from shots table!
+      const { data: shots } = await supabase
+        .from("shots")
+        .select("duration, shotlength_minutes, shotlength_seconds")
+        .in("scene_id", sceneIds);
+
+      shotsCount = shots?.length || 0;
+      totalDuration = (shots || []).reduce((sum, shot) => {
+        if (shot.duration) return sum + shot.duration;
+        if (shot.shotlength_minutes || shot.shotlength_seconds) {
+          return sum + (shot.shotlength_minutes || 0) * 60 + (shot.shotlength_seconds || 0);
+        }
+        return sum;
+      }, 0);
+    }
+
+    return c.json({
+      sequences: sequenceIds.length,
+      scenes: scenesCount,
+      shots: shotsCount,
+      total_duration: totalDuration,
+      created_at: act.created_at,
+      updated_at: act.updated_at,
+    });
+  } catch (error: any) {
+    console.error("[Stats] Act error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// SEQUENCE STATS
+// =============================================================================
+
+/**
+ * GET /stats/sequence/:id
+ * Stats for a specific Sequence
+ * ⚡ FIXED: Shots from shots table!
+ */
+app.get("/stats/sequence/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const sequenceId = c.req.param("id");
+    console.log(`[Stats] Fetching stats for sequence ${sequenceId}`);
+
+    // Get sequence node
+    const { data: sequence, error: seqError } = await supabase
+      .from("timeline_nodes")
+      .select("*")
+      .eq("id", sequenceId)
+      .eq("level", 2)
+      .single();
+
+    if (seqError || !sequence) {
+      return c.json({ error: "Sequence not found" }, 404);
+    }
+
+    // Get scenes
+    const { data: scenes } = await supabase
+      .from("timeline_nodes")
+      .select("id")
+      .eq("parent_id", sequenceId)
+      .eq("level", 3);
+
+    const scenesCount = scenes?.length || 0;
+    const sceneIds = (scenes || []).map(s => s.id);
+
+    let shotsCount = 0;
+    let totalDuration = 0;
+
+    if (sceneIds.length > 0) {
+      // ✅ Get shots from shots table!
+      const { data: shots } = await supabase
+        .from("shots")
+        .select("duration, shotlength_minutes, shotlength_seconds")
+        .in("scene_id", sceneIds);
+
+      shotsCount = shots?.length || 0;
+      totalDuration = (shots || []).reduce((sum, shot) => {
+        if (shot.duration) return sum + shot.duration;
+        if (shot.shotlength_minutes || shot.shotlength_seconds) {
+          return sum + (shot.shotlength_minutes || 0) * 60 + (shot.shotlength_seconds || 0);
+        }
+        return sum;
+      }, 0);
+    }
+
+    return c.json({
+      scenes: scenesCount,
+      shots: shotsCount,
+      total_duration: totalDuration,
+      average_duration: shotsCount > 0 ? Math.round(totalDuration / shotsCount) : 0,
+      created_at: sequence.created_at,
+      updated_at: sequence.updated_at,
+    });
+  } catch (error: any) {
+    console.error("[Stats] Sequence error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// SCENE STATS
+// =============================================================================
+
+/**
+ * GET /stats/scene/:id
+ * Stats for a specific Scene
+ * ⚡ FIXED: Shots from shots table!
+ */
+app.get("/stats/scene/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const sceneId = c.req.param("id");
+    console.log(`[Stats] Fetching stats for scene ${sceneId}`);
+
+    // Get scene node
+    const { data: scene, error: sceneError } = await supabase
+      .from("timeline_nodes")
+      .select("*")
+      .eq("id", sceneId)
+      .eq("level", 3)
+      .single();
+
+    if (sceneError || !scene) {
+      return c.json({ error: "Scene not found" }, 404);
+    }
+
+    // ✅ Get shots from shots table!
+    const { data: shots } = await supabase
+      .from("shots")
+      .select("id, duration, shotlength_minutes, shotlength_seconds")
+      .eq("scene_id", sceneId);
+
+    const shotsCount = shots?.length || 0;
+    const totalDuration = (shots || []).reduce((sum, shot) => {
+      if (shot.duration) return sum + shot.duration;
+      if (shot.shotlength_minutes || shot.shotlength_seconds) {
+        return sum + (shot.shotlength_minutes || 0) * 60 + (shot.shotlength_seconds || 0);
+      }
+      return sum;
+    }, 0);
+
+    // Get shot IDs for character count
+    const shotIds = (shots || []).map(s => s.id);
+    let charactersCount = 0;
+
+    if (shotIds.length > 0) {
+      const { data: shotChars } = await supabase
+        .from("shot_characters")
+        .select("character_id")
+        .in("shot_id", shotIds);
+
+      // Count unique characters
+      const uniqueChars = new Set((shotChars || []).map(sc => sc.character_id));
+      charactersCount = uniqueChars.size;
+    }
+
+    return c.json({
+      shots: shotsCount,
+      total_duration: totalDuration,
+      average_duration: shotsCount > 0 ? Math.round(totalDuration / shotsCount) : 0,
+      characters: charactersCount,
+      created_at: scene.created_at,
+      updated_at: scene.updated_at,
+    });
+  } catch (error: any) {
+    console.error("[Stats] Scene error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// SHOT STATS (for individual shot)
+// =============================================================================
+
+/**
+ * GET /stats/shot/:id
+ * Stats for a specific Shot
+ */
+app.get("/stats/shot/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const shotId = c.req.param("id");
+    console.log(`[Stats] Fetching stats for shot ${shotId}`);
+
+    // ✅ Get shot from shots table!
+    const { data: shot, error: shotError } = await supabase
+      .from("shots")
+      .select("*")
+      .eq("id", shotId)
+      .single();
+
+    if (shotError || !shot) {
+      return c.json({ error: "Shot not found" }, 404);
+    }
+
+    // Get characters in this shot
+    const { data: shotChars } = await supabase
+      .from("shot_characters")
+      .select("character_id")
+      .eq("shot_id", shotId);
+
+    // Calculate duration
+    let duration = 0;
+    if (shot.duration) {
+      duration = shot.duration;
+    } else if (shot.shotlength_minutes || shot.shotlength_seconds) {
+      duration = (shot.shotlength_minutes || 0) * 60 + (shot.shotlength_seconds || 0);
+    }
+
+    // Check for media
+    const has_audio = shot.dialog !== null || shot.sound_notes !== null;
+    const has_image = shot.image_url !== null || shot.storyboard_url !== null;
+    const has_notes = shot.notes !== null && shot.notes !== "";
+
+    return c.json({
+      characters: shotChars?.length || 0,
+      duration,
+      has_dialog: shot.dialog !== null,
+      has_notes,
+      has_audio,
+      has_image,
+      camera_angle: shot.camera_angle,
+      framing: shot.framing,
+      lens: shot.lens,
+      camera_movement: shot.camera_movement,
+      created_at: shot.created_at,
+      updated_at: shot.updated_at,
+    });
+  } catch (error: any) {
+    console.error("[Stats] Shot error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// DETAILED STATS (for TimelineNodeStatsDialog)
+// =============================================================================
+
+/**
+ * GET /stats/act/:id/detailed
+ * Detailed stats for Act (currently returns placeholder)
+ */
+app.get("/stats/act/:id/detailed", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const actId = c.req.param("id");
+    
+    // TODO: Implement detailed analytics
+    // For now, return empty structure
+    return c.json({
+      timeline_analytics: [],
+      character_analytics: [],
+      media_analytics: { audio: 0, images: 0 },
+    });
+  } catch (error: any) {
+    console.error("[Stats] Act detailed error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * GET /stats/sequence/:id/detailed
+ * Detailed stats for Sequence (currently returns placeholder)
+ */
+app.get("/stats/sequence/:id/detailed", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const sequenceId = c.req.param("id");
+    
+    // TODO: Implement detailed analytics
+    return c.json({
+      timeline_analytics: [],
+      character_analytics: [],
+      media_analytics: { audio: 0, images: 0 },
+    });
+  } catch (error: any) {
+    console.error("[Stats] Sequence detailed error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * GET /stats/scene/:id/detailed
+ * Detailed stats for Scene (currently returns placeholder)
+ */
+app.get("/stats/scene/:id/detailed", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const sceneId = c.req.param("id");
+    
+    // TODO: Implement detailed analytics
+    return c.json({
+      timeline_analytics: [],
+      character_analytics: [],
+      media_analytics: { audio: 0, images: 0 },
+    });
+  } catch (error: any) {
+    console.error("[Stats] Scene detailed error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
 // START SERVER
 // =============================================================================
 
-console.log("📊 Scriptony Stats Function starting (PHASE 2 - Schema Fixed)...");
+console.log("📊 Scriptony Stats starting (ARCHITECTURE FIX - Shots from shots table!)...");
 Deno.serve(app.fetch);

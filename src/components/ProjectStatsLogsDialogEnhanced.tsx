@@ -1,14 +1,21 @@
 /**
- * 📊 PROJECT STATS & LOGS DIALOG
+ * 📊 PROJECT STATS & LOGS DIALOG - ENHANCED VERSION
  * 
- * ✅ PHASE 2: COMPLETE IMPLEMENTATION
+ * ✅ PHASE 3: ENHANCED IMPLEMENTATION WITH HIERARCHY CONTEXT
  * 
  * Modal mit 2 Tabs:
  * - Statistics: Timeline Stats, Shot Analytics, Character Analytics, Media Stats
- * - Logs: Activity Tracking mit Timeline, vollständiger Attribution, Details
+ * - Logs: Activity Tracking mit:
+ *   ✅ Hierarchie-Context (Act → Sequence → Scene → Shot)
+ *   ✅ Gruppierung nach Zeitraum (Heute, Gestern, Diese Woche, Älter)
+ *   ✅ Filter nach Entity Type (All, Acts, Sequences, Scenes, Shots, Characters)
+ *   ✅ Filter nach Action (All, Created, Updated, Deleted)
+ *   ✅ Expandable Details für jede Änderung
+ *   ✅ Color-Coded nach Action-Type
+ *   ✅ Alle Shot-Details (Dialog, Kamera, etc.)
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart3, 
   Calendar, 
@@ -25,6 +32,9 @@ import {
   Image as ImageIcon,
   Camera,
   TrendingUp,
+  ChevronDown,
+  ChevronRight,
+  Filter,
 } from 'lucide-react';
 import {
   Dialog,
@@ -39,6 +49,14 @@ import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Avatar, AvatarFallback } from './ui/avatar';
 import { Separator } from './ui/separator';
+import { Button } from './ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select';
 import { toast } from 'sonner@2.0.3';
 import { getAuthToken } from '../lib/auth/getAuthToken';
 import { supabaseConfig } from '../lib/env';
@@ -157,6 +175,49 @@ const CHART_COLORS = [
 ];
 
 // =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+// Group logs by time period
+function groupLogsByTime(logs: ActivityLog[]): Record<string, ActivityLog[]> {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const lastWeek = new Date(today);
+  lastWeek.setDate(lastWeek.getDate() - 7);
+
+  const groups: Record<string, ActivityLog[]> = {
+    'Heute': [],
+    'Gestern': [],
+    'Diese Woche': [],
+    'Älter': [],
+  };
+
+  logs.forEach(log => {
+    const logDate = new Date(log.timestamp);
+    if (logDate >= today) {
+      groups['Heute'].push(log);
+    } else if (logDate >= yesterday) {
+      groups['Gestern'].push(log);
+    } else if (logDate >= lastWeek) {
+      groups['Diese Woche'].push(log);
+    } else {
+      groups['Älter'].push(log);
+    }
+  });
+
+  // Remove empty groups
+  Object.keys(groups).forEach(key => {
+    if (groups[key].length === 0) {
+      delete groups[key];
+    }
+  });
+
+  return groups;
+}
+
+// =============================================================================
 // COMPONENT
 // =============================================================================
 
@@ -179,7 +240,7 @@ export function ProjectStatsLogsDialog({
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [logsError, setLogsError] = useState<string | null>(null);
   
-  // NEW: Filter states
+  // Filter states
   const [entityTypeFilter, setEntityTypeFilter] = useState<string>('all');
   const [actionFilter, setActionFilter] = useState<string>('all');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
@@ -270,7 +331,7 @@ export function ProjectStatsLogsDialog({
         throw new Error('Not authenticated');
       }
 
-      const url = `${supabaseConfig.url}/functions/v1/scriptony-logs/logs/project/${project.id}/recent`;
+      const url = `${supabaseConfig.url}/functions/v1/scriptony-logs/logs/project/${project.id}/recent?limit=100`;
       console.log('[ProjectStatsLogsDialog] 📡 Fetching logs from:', url);
 
       const response = await fetch(url, {
@@ -373,74 +434,129 @@ export function ProjectStatsLogsDialog({
     }
   };
 
+  // Get entity type badge color
+  const getEntityTypeBadgeColor = (entityType: string) => {
+    switch (entityType) {
+      case 'Act':
+        return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
+      case 'Sequence':
+        return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300';
+      case 'Scene':
+        return 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300';
+      case 'Shot':
+        return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300';
+      case 'character':
+        return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300';
+      default:
+        return 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300';
+    }
+  };
+
   // Format log message into readable German text
   const formatLogMessage = (log: ActivityLog): string => {
     const userName = log.user?.name || log.user?.email || 'Ein Benutzer';
     const entityType = log.entity_type || 'Item';
     const action = log.action?.toLowerCase() || 'unknown';
+    const title = log.details?.title || entityType;
     
     // CREATE action
     if (action === 'create' || action === 'created') {
-      const title = log.details?.title || entityType;
       return `${userName} hat ${entityType} "${title}" erstellt`;
     }
     
     // DELETE action
     if (action === 'delete' || action === 'deleted') {
-      const title = log.details?.title || entityType;
       return `${userName} hat ${entityType} "${title}" gelöscht`;
     }
     
     // UPDATE action - detect what changed
     if (action === 'update' || action === 'updated') {
-      const changes: string[] = [];
+      const changes = log.details?.changes || {};
+      const changeCount = Object.keys(changes).length;
       
-      if (log.details?.new && log.details?.old) {
-        const newData = log.details.new;
-        const oldData = log.details.old;
-        
-        // Title changed
-        if (newData.title && oldData.title && newData.title !== oldData.title) {
-          changes.push(`den Titel von "${oldData.title}" zu "${newData.title}"`);
-        }
-        
-        // Description changed
-        if (newData.description && oldData.description && newData.description !== oldData.description) {
-          changes.push(`die Beschreibung`);
-        }
-        
-        // Color changed
-        if (newData.color && oldData.color && newData.color !== oldData.color) {
-          changes.push(`die Farbe`);
-        }
-        
-        // Duration changed
-        if (newData.duration !== undefined && oldData.duration !== undefined && newData.duration !== oldData.duration) {
-          changes.push(`die Dauer von ${oldData.duration}s auf ${newData.duration}s`);
-        }
-        
-        // Location changed (for scenes)
-        if (newData.location && oldData.location && newData.location !== oldData.location) {
-          changes.push(`den Ort von "${oldData.location}" zu "${newData.location}"`);
-        }
-        
-        // Time of day changed (for scenes)
-        if (newData.timeOfDay && oldData.timeOfDay && newData.timeOfDay !== oldData.timeOfDay) {
-          changes.push(`die Tageszeit von "${oldData.timeOfDay}" zu "${newData.timeOfDay}"`);
-        }
+      if (changeCount === 0) {
+        return `${userName} hat ${entityType} "${title}" aktualisiert`;
       }
       
-      if (changes.length > 0) {
-        return `${userName} hat ${changes.join(', ')} bei ${entityType} geändert`;
+      // Get first change for summary
+      const firstChange = Object.keys(changes)[0];
+      const changeLabel: Record<string, string> = {
+        title: 'Titel',
+        description: 'Beschreibung',
+        color: 'Farbe',
+        duration: 'Dauer',
+        location: 'Ort',
+        time_of_day: 'Tageszeit',
+        dialog: 'Dialog',
+        camera_angle: 'Kamera-Winkel',
+        framing: 'Bildausschnitt',
+        movement: 'Bewegung',
+        lens: 'Objektiv',
+        audio_file_id: 'Audio',
+        image_url: 'Bild',
+        characters: 'Charaktere',
+      };
+      
+      const label = changeLabel[firstChange] || firstChange;
+      
+      if (changeCount === 1) {
+        return `${userName} hat ${label} bei ${entityType} "${title}" geändert`;
       }
       
-      // Fallback for unknown changes
-      return `${userName} hat ${entityType} aktualisiert`;
+      return `${userName} hat ${changeCount} Eigenschaften bei ${entityType} "${title}" geändert`;
     }
     
     // Fallback
     return `${userName} hat eine Aktion bei ${entityType} ausgeführt`;
   };
+
+  // Format change details for display
+  const formatChangeDetails = (changes: any): Array<{ label: string; old: any; new: any }> => {
+    const changeLabel: Record<string, string> = {
+      title: 'Titel',
+      description: 'Beschreibung',
+      color: 'Farbe',
+      duration: 'Dauer',
+      location: 'Ort',
+      time_of_day: 'Tageszeit',
+      dialog: 'Dialog',
+      camera_angle: 'Kamera-Winkel',
+      framing: 'Bildausschnitt',
+      movement: 'Bewegung',
+      lens: 'Objektiv',
+      audio_file_id: 'Audio-Datei',
+      image_url: 'Bild',
+      characters: 'Charaktere',
+    };
+
+    return Object.entries(changes).map(([key, value]: [string, any]) => ({
+      label: changeLabel[key] || key,
+      old: value.old,
+      new: value.new,
+    }));
+  };
+
+  // Filter logs
+  const filteredLogs = useMemo(() => {
+    return logs.filter(log => {
+      // Entity type filter
+      if (entityTypeFilter !== 'all' && log.entity_type !== entityTypeFilter) {
+        return false;
+      }
+      
+      // Action filter
+      if (actionFilter !== 'all' && log.action.toLowerCase() !== actionFilter) {
+        return false;
+      }
+      
+      return true;
+    });
+  }, [logs, entityTypeFilter, actionFilter]);
+
+  // Group filtered logs by time
+  const groupedLogs = useMemo(() => {
+    return groupLogsByTime(filteredLogs);
+  }, [filteredLogs]);
 
   // Convert object to chart data
   const objectToChartData = (obj: Record<string, number>) => {
@@ -517,9 +633,6 @@ export function ProjectStatsLogsDialog({
                         <li>scriptony-stats</li>
                         <li>scriptony-logs</li>
                       </ul>
-                      <div className="text-xs text-muted-foreground mt-2">
-                        Siehe: <code className="bg-muted px-1 py-0.5 rounded">DEPLOY_project_stats_logs_PHASE2_READY.md</code>
-                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -726,7 +839,7 @@ export function ProjectStatsLogsDialog({
           </TabsContent>
 
           {/* ============================================================= */}
-          {/* LOGS TAB */}
+          {/* LOGS TAB - ENHANCED */}
           {/* ============================================================= */}
           
           <TabsContent value="logs" className="mt-4">
@@ -744,9 +857,6 @@ export function ProjectStatsLogsDialog({
                       <div className="text-sm text-muted-foreground">
                         Die scriptony-logs Edge Function ist noch nicht deployed.
                       </div>
-                      <div className="text-xs text-muted-foreground mt-2">
-                        Siehe: <code className="bg-muted px-1 py-0.5 rounded">DEPLOY_project_stats_logs_PHASE2_READY.md</code>
-                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -760,30 +870,154 @@ export function ProjectStatsLogsDialog({
             ) : (
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Clock className="size-4 text-primary" />
-                    Recent Activity
+                  <CardTitle className="text-base flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Clock className="size-4 text-primary" />
+                      Recent Activity
+                      <Badge variant="outline" className="ml-2">
+                        {filteredLogs.length} {filteredLogs.length === 1 ? 'Eintrag' : 'Einträge'}
+                      </Badge>
+                    </div>
                   </CardTitle>
+                  
+                  {/* FILTER CONTROLS */}
+                  <div className="flex flex-wrap gap-2 mt-4">
+                    <Select value={entityTypeFilter} onValueChange={setEntityTypeFilter}>
+                      <SelectTrigger className="w-[180px]">
+                        <Filter className="size-4 mr-2" />
+                        <SelectValue placeholder="Entity Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Alle Typen</SelectItem>
+                        <SelectItem value="Act">Acts</SelectItem>
+                        <SelectItem value="Sequence">Sequences</SelectItem>
+                        <SelectItem value="Scene">Scenes</SelectItem>
+                        <SelectItem value="Shot">Shots</SelectItem>
+                        <SelectItem value="character">Characters</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Select value={actionFilter} onValueChange={setActionFilter}>
+                      <SelectTrigger className="w-[180px]">
+                        <Activity className="size-4 mr-2" />
+                        <SelectValue placeholder="Action" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Alle Aktionen</SelectItem>
+                        <SelectItem value="created">Erstellt</SelectItem>
+                        <SelectItem value="updated">Geändert</SelectItem>
+                        <SelectItem value="deleted">Gelöscht</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <ScrollArea className="h-[500px] pr-4">
-                    <div className="space-y-3">
-                      {logs.map((log) => (
-                        <div key={log.id} className="flex gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
-                          <div className="mt-0.5">
-                            {getActionIcon(log.action)}
+                    <div className="space-y-6">
+                      {/* GROUPED BY TIME */}
+                      {Object.entries(groupedLogs).map(([timeLabel, logsInGroup]) => (
+                        <div key={timeLabel}>
+                          <div className="flex items-center gap-2 mb-3">
+                            <Calendar className="size-4 text-muted-foreground" />
+                            <h3 className="font-semibold text-sm text-muted-foreground">{timeLabel}</h3>
+                            <div className="flex-1 h-px bg-border"></div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-2 mb-2">
-                              <div className="flex-1">
-                                <p className="text-sm leading-relaxed">
-                                  {formatLogMessage(log)}
-                                </p>
+
+                          <div className="space-y-2">
+                            {logsInGroup.map((log) => (
+                              <div 
+                                key={log.id} 
+                                className="border rounded-lg hover:bg-muted/30 transition-colors"
+                              >
+                                {/* LOG HEADER */}
+                                <div className="flex gap-3 p-3">
+                                  <div className="mt-0.5">
+                                    {getActionIcon(log.action)}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-start justify-between gap-2 mb-2">
+                                      <div className="flex-1">
+                                        <p className="text-sm leading-relaxed">
+                                          {formatLogMessage(log)}
+                                        </p>
+                                        
+                                        {/* HIERARCHIE-PFAD */}
+                                        {log.parent_path && (
+                                          <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                            <span className="opacity-50">📍</span>
+                                            <span>{log.parent_path}</span>
+                                          </div>
+                                        )}
+                                        
+                                        {/* ENTITY TYPE BADGE */}
+                                        <div className="flex items-center gap-2 mt-2">
+                                          <Badge 
+                                            variant="secondary"
+                                            className={`text-xs ${getEntityTypeBadgeColor(log.entity_type)}`}
+                                          >
+                                            {log.entity_type}
+                                          </Badge>
+                                        </div>
+                                      </div>
+                                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                        {formatRelativeTime(log.timestamp)}
+                                      </span>
+                                    </div>
+                                    
+                                    {/* EXPANDABLE DETAILS FOR UPDATE ACTIONS */}
+                                    {log.action.toLowerCase() === 'updated' && log.details?.changes && Object.keys(log.details.changes).length > 0 && (
+                                      <div className="mt-2">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-7 text-xs"
+                                          onClick={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)}
+                                        >
+                                          {expandedLogId === log.id ? (
+                                            <>
+                                              <ChevronDown className="size-3 mr-1" />
+                                              Details verbergen
+                                            </>
+                                          ) : (
+                                            <>
+                                              <ChevronRight className="size-3 mr-1" />
+                                              Details anzeigen ({Object.keys(log.details.changes).length})
+                                            </>
+                                          )}
+                                        </Button>
+                                        
+                                        {/* EXPANDED DETAILS */}
+                                        {expandedLogId === log.id && (
+                                          <div className="mt-2 p-3 bg-muted/50 rounded-lg border space-y-2">
+                                            {formatChangeDetails(log.details.changes).map((change, idx) => (
+                                              <div key={idx} className="text-xs">
+                                                <div className="font-semibold text-muted-foreground mb-1">
+                                                  {change.label}:
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                  <div className="p-2 bg-red-50 dark:bg-red-950/20 rounded border border-red-200 dark:border-red-900">
+                                                    <div className="text-xs text-red-600 dark:text-red-400 mb-1">Alt:</div>
+                                                    <div className="font-mono break-all">
+                                                      {typeof change.old === 'object' ? JSON.stringify(change.old) : String(change.old || '-')}
+                                                    </div>
+                                                  </div>
+                                                  <div className="p-2 bg-green-50 dark:bg-green-950/20 rounded border border-green-200 dark:border-green-900">
+                                                    <div className="text-xs text-green-600 dark:text-green-400 mb-1">Neu:</div>
+                                                    <div className="font-mono break-all">
+                                                      {typeof change.new === 'object' ? JSON.stringify(change.new) : String(change.new || '-')}
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                                {formatRelativeTime(log.timestamp)}
-                              </span>
-                            </div>
+                            ))}
                           </div>
                         </div>
                       ))}

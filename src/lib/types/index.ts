@@ -56,6 +56,13 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   organizationId: string;
+  // Narrative Structure (Film/Book/Audio)
+  narrative_structure?: string;
+  // Episode/Season Structure (Series only)
+  episode_layout?: string;
+  season_engine?: string;
+  // Story Beat Template (All types)
+  beat_template?: string;
   // Relations
   episodeCount?: number;
   characterCount?: number;

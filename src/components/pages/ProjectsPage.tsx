@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2, LayoutGrid, List, MoreVertical, Copy, BarChart3 } from "lucide-react";
+import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2, LayoutGrid, List, MoreVertical, Copy, BarChart3, ChevronUp, Tv, Book, Headphones } from "lucide-react";
 import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { motion, AnimatePresence } from "motion/react";
 import { Button } from "../ui/button";
@@ -22,13 +22,17 @@ import { useColoredTags } from "../hooks/useColoredTags";
 import { ImageCropDialog } from "../ImageCropDialog";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { FilmDropdown } from "../FilmDropdown";
-import { ProjectStatsLogsDialog } from "../ProjectStatsLogsDialog";
+import { ProjectStatsLogsDialog } from "../ProjectStatsLogsDialogEnhanced";
+import { InspirationCard, ProjectInspiration } from "../InspirationCard";
+import { AddInspirationDialog, InspirationData } from "../AddInspirationDialog";
 import { projectsApi, worldsApi, itemsApi } from "../../utils/api";
 import { toast } from "sonner@2.0.3";
 import { deleteCharacter as deleteCharacterApi, getCharacters, createCharacter as createCharacterApi, updateCharacter as updateCharacterApi } from "../../lib/api/characters-api";
 import { getAuthToken } from "../../lib/auth/getAuthToken";
 import * as TimelineAPI from "../../lib/api/timeline-api";
+import * as TimelineAPIV2 from "../../lib/api/timeline-api-v2";
 import * as ShotsAPI from "../../lib/api/shots-api";
+import * as InspirationsAPI from "../../lib/api/inspirations-api";
 import type { TimelineData } from "../FilmDropdown";
 
 interface ProjectsPageProps {
@@ -36,11 +40,22 @@ interface ProjectsPageProps {
   onNavigate: (page: string, id?: string) => void;
 }
 
+// Helper function to get project type display info
+const getProjectTypeInfo = (type: string) => {
+  const typeMap: Record<string, { label: string; Icon: any }> = {
+    film: { label: "Film", Icon: Film },
+    series: { label: "Serie", Icon: Tv },
+    book: { label: "Buch", Icon: Book },
+    audio: { label: "Hörspiel", Icon: Headphones },
+  };
+  return typeMap[type] || { label: type.charAt(0).toUpperCase() + type.slice(1), Icon: Film };
+};
+
 export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProps) {
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
   const [selectedProject, setSelectedProject] = useState(selectedProjectId);
   const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
-  const [inspirations, setInspirations] = useState<string[]>([""]);
+  const [projectInspirationNotes, setProjectInspirationNotes] = useState<string[]>([""]); // Renamed to avoid conflict
   const [searchQuery, setSearchQuery] = useState("");
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
@@ -60,6 +75,17 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
   const [newProjectCoverImage, setNewProjectCoverImage] = useState<string | undefined>();
   const newProjectCoverInputRef = useRef<HTMLInputElement>(null);
   
+  // 🎬 NEW: Narrative Structure & Beat Template States (Create Dialog)
+  const [newProjectNarrativeStructure, setNewProjectNarrativeStructure] = useState<string>("");
+  const [newProjectBeatTemplate, setNewProjectBeatTemplate] = useState<string>("");
+  const [customNarrativeStructure, setCustomNarrativeStructure] = useState<string>("");
+  // 📺 NEW: Episode Layout & Season Engine (Series only)
+  const [newProjectEpisodeLayout, setNewProjectEpisodeLayout] = useState<string>("");
+  const [newProjectSeasonEngine, setNewProjectSeasonEngine] = useState<string>("");
+  const [customEpisodeLayout, setCustomEpisodeLayout] = useState<string>("");
+  const [customSeasonEngine, setCustomSeasonEngine] = useState<string>("");
+  const [customBeatTemplate, setCustomBeatTemplate] = useState<string>("");
+  
   // Delete Project States
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
@@ -72,6 +98,17 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
   // 🚀 PERFORMANCE: Timeline Cache for instant loading
   const [timelineCache, setTimelineCache] = useState<Record<string, any>>({});
   const [timelineCacheLoading, setTimelineCacheLoading] = useState<Record<string, boolean>>({});
+
+  // 🎨 Collapsible Sections State
+  const [structureOpen, setStructureOpen] = useState(true); // Default: OPEN
+  const [charactersOpen, setCharactersOpen] = useState(true); // Default: OPEN
+  const [inspirationOpen, setInspirationOpen] = useState(false); // Default: CLOSED
+
+  // 🎨 Inspiration State
+  const [inspirations, setInspirations] = useState<any[]>([]);
+  const [inspirationsLoading, setInspirationsLoading] = useState(false);
+  const [showAddInspirationDialog, setShowAddInspirationDialog] = useState(false);
+  const [editingInspiration, setEditingInspiration] = useState<any | null>(null);
 
   // Simple cache to avoid reloading on every mount
   const dataLoadedRef = useRef(false);
@@ -101,6 +138,9 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
       }
       // 🚀 PERFORMANCE: Preload timeline data for instant dropdown
       loadTimelineDataForProject(selectedProjectId);
+      
+      // 🎨 INSPIRATION: Load inspirations
+      loadInspirations(selectedProjectId);
     }
   }, [selectedProjectId, projects]);
 
@@ -153,35 +193,95 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         return;
       }
 
-      // Load Acts (Level 1)
-      let loadedActs = await TimelineAPI.getActs(projectId, token);
-      console.timeEnd(`⏱️ [PERF] Timeline API - Acts: ${projectId}`);
+      // 🚀🚀🚀 ULTRA-FAST: Load EVERYTHING in ONE request!
+      let loadedActs: any[] = [];
+      let allSequences: any[] = [];
+      let allScenes: any[] = [];
+      let allShots: any[] = [];
+      let loadedCharacters: any[] = [];
+      
+      try {
+        // Try ULTRA BATCH LOAD first (Timeline + Characters + Shots in 1 request!)
+        const ultraData = await TimelineAPIV2.ultraBatchLoadProject(projectId, token);
+        
+        console.timeEnd(`⏱️ [PERF] Timeline API - Acts: ${projectId}`);
+        console.timeEnd(`⏱️ [PERF] Timeline API - All Nodes: ${projectId}`);
+        console.log(`[ProjectsPage] 🚀🚀🚀 ULTRA batch load completed: ${ultraData.stats.totalNodes} nodes, ${ultraData.stats.characters} characters, ${ultraData.stats.shots} shots in 1 request!`);
+        
+        loadedActs = ultraData.timeline.acts;
+        allSequences = ultraData.timeline.sequences;
+        allScenes = ultraData.timeline.scenes;
+        allShots = ultraData.shots;
+        loadedCharacters = ultraData.characters;
+        
+      } catch (error) {
+        console.error('[ProjectsPage] ULTRA batch load failed, falling back to regular batch:', error);
+        
+        // Fallback: Regular batch load (2 requests)
+        const [batchData, allShotsData] = await Promise.all([
+          TimelineAPIV2.batchLoadTimeline(projectId, token).catch(err => {
+            console.error('[ProjectsPage] Error batch loading timeline:', err);
+            return { acts: [], sequences: [], scenes: [], stats: { totalNodes: 0, acts: 0, sequences: 0, scenes: 0 } };
+          }),
+          
+          ShotsAPI.getAllShotsByProject(projectId, token).catch(err => {
+            console.error('[ProjectsPage] Error loading shots:', err);
+            return [];
+          })
+        ]);
+        
+        console.timeEnd(`⏱️ [PERF] Timeline API - Acts: ${projectId}`);
+        console.timeEnd(`⏱️ [PERF] Timeline API - All Nodes: ${projectId}`);
+        console.log(`[ProjectsPage] 🚀 Batch load completed: ${batchData.stats.totalNodes} nodes in 1 request!`);
+        
+        loadedActs = batchData.acts;
+        allSequences = batchData.sequences;
+        allScenes = batchData.scenes;
+        allShots = allShotsData;
+      }
       
       // If no acts exist, initialize 3-Act structure
       if (!loadedActs || loadedActs.length === 0) {
         console.log('[ProjectsPage] No acts found, initializing 3-act structure...');
         await ShotsAPI.initializeThreeActStructure(projectId, token);
-        loadedActs = await TimelineAPI.getActs(projectId, token);
-      }
+        
+        // Reload after initialization - try ULTRA first, fallback to regular
+        try {
+          const reloadedUltra = await TimelineAPIV2.ultraBatchLoadProject(projectId, token);
+          
+          const timelineData: TimelineData = {
+            acts: reloadedUltra.timeline.acts || [],
+            sequences: reloadedUltra.timeline.sequences || [],
+            scenes: reloadedUltra.timeline.scenes || [],
+            shots: reloadedUltra.shots || [],
+          };
 
-      // 🚀 Load ALL nodes in parallel
-      const [allSequences, allScenes, allShots] = await Promise.all([
-        TimelineAPI.getAllSequencesByProject(projectId, token).catch(err => {
-          console.error('[ProjectsPage] Error loading sequences:', err);
-          return [];
-        }),
-        
-        TimelineAPI.getAllScenesByProject(projectId, token).catch(err => {
-          console.error('[ProjectsPage] Error loading scenes:', err);
-          return [];
-        }),
-        
-        ShotsAPI.getAllShotsByProject(projectId, token).catch(err => {
-          console.error('[ProjectsPage] Error loading shots:', err);
-          return [];
-        })
-      ]);
-      console.timeEnd(`⏱️ [PERF] Timeline API - All Nodes: ${projectId}`);
+          setTimelineCache(prev => ({ ...prev, [projectId]: timelineData }));
+          // Note: Characters are now loaded directly in FilmDropdown, not cached here
+          console.timeEnd(`⏱️ [PERF] Timeline Cache Load: ${projectId}`);
+          console.log('[ProjectsPage] ✅ Timeline data cached for project (after init):', projectId, timelineData);
+          return;
+        } catch (error) {
+          console.error('[ProjectsPage] ULTRA reload failed, using regular batch:', error);
+          
+          const [reloadedBatch, reloadedShots] = await Promise.all([
+            TimelineAPIV2.batchLoadTimeline(projectId, token),
+            ShotsAPI.getAllShotsByProject(projectId, token)
+          ]);
+          
+          const timelineData: TimelineData = {
+            acts: reloadedBatch.acts || [],
+            sequences: reloadedBatch.sequences || [],
+            scenes: reloadedBatch.scenes || [],
+            shots: reloadedShots || [],
+          };
+
+          setTimelineCache(prev => ({ ...prev, [projectId]: timelineData }));
+          console.timeEnd(`⏱️ [PERF] Timeline Cache Load: ${projectId}`);
+          console.log('[ProjectsPage] ✅ Timeline data cached for project (after init):', projectId, timelineData);
+          return;
+        }
+      }
 
       const timelineData: TimelineData = {
         acts: loadedActs || [],
@@ -213,13 +313,161 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
     setTimelineCache(prev => ({ ...prev, [projectId]: data }));
   };
 
+  // 🎨 INSPIRATION: Load inspirations for project
+  const loadInspirations = async (projectId: string) => {
+    try {
+      setInspirationsLoading(true);
+      const token = await getAuthToken();
+      if (!token) {
+        console.error('[Inspirations] No auth token');
+        setInspirations([]); // Set empty array on error
+        return;
+      }
+
+      console.log('[Inspirations] Loading for project:', projectId);
+      const loadedInspirations = await InspirationsAPI.getInspirationsByProject(projectId, token);
+      setInspirations(loadedInspirations);
+      console.log(`[Inspirations] Loaded ${loadedInspirations.length} inspirations`);
+    } catch (error: any) {
+      console.error('[Inspirations] Error loading:', error);
+      
+      // Graceful fallback: Set empty array instead of crashing
+      setInspirations([]);
+      
+      // Check if it's a "Failed to fetch" error (Edge Function not deployed)
+      if (error?.message?.includes('Failed to fetch') || error?.message?.includes('fetch')) {
+        console.warn('[Inspirations] ⚠️ Edge Function "scriptony-inspiration" might not be deployed yet');
+        console.warn('[Inspirations] 📝 Please deploy /DEPLOY_READY_scriptony-inspiration.txt to Supabase Dashboard');
+        toast.error('Inspirations Feature noch nicht deployed. Siehe Console für Details.');
+      } else {
+        toast.error('Fehler beim Laden der Inspirationen');
+      }
+    } finally {
+      setInspirationsLoading(false);
+    }
+  };
+
+  // 🎨 INSPIRATION: Save (create or update)
+  const handleSaveInspiration = async (data: InspirationData) => {
+    if (!selectedProject) return;
+
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        console.error('[Inspirations] No auth token');
+        toast.error('Nicht authentifiziert');
+        return;
+      }
+
+      if (editingInspiration) {
+        // Update existing
+        console.log('[Inspirations] Updating:', editingInspiration.id);
+        await InspirationsAPI.updateInspiration(editingInspiration.id, data, token);
+        toast.success('Inspiration aktualisiert');
+      } else {
+        // Create new
+        console.log('[Inspirations] Creating new');
+        await InspirationsAPI.createInspiration(
+          {
+            projectId: selectedProject,
+            ...data,
+          },
+          token
+        );
+        toast.success('Inspiration hinzugefügt');
+      }
+
+      // Reload
+      await loadInspirations(selectedProject);
+      setEditingInspiration(null);
+      setShowAddInspirationDialog(false);
+    } catch (error: any) {
+      console.error('[Inspirations] Error saving:', error);
+      
+      // Check if it's a deployment error
+      if (error?.message?.includes('Failed to fetch') || error?.message?.includes('fetch')) {
+        console.warn('[Inspirations] ⚠️ Edge Function "scriptony-inspiration" might not be deployed yet');
+        toast.error('Inspirations Feature noch nicht deployed. Bitte Edge Function deployen.');
+      } else {
+        toast.error('Fehler beim Speichern');
+      }
+    }
+  };
+
+  // 🎨 INSPIRATION: Delete
+  const handleDeleteInspiration = async (id: string) => {
+    if (!selectedProject) return;
+    if (!confirm('Inspiration wirklich löschen?')) return;
+
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        toast.error('Nicht authentifiziert');
+        return;
+      }
+
+      console.log('[Inspirations] Deleting:', id);
+      await InspirationsAPI.deleteInspiration(id, token);
+      toast.success('Inspiration gelöscht');
+
+      // Reload
+      await loadInspirations(selectedProject);
+    } catch (error: any) {
+      console.error('[Inspirations] Error deleting:', error);
+      
+      // Check if it's a deployment error
+      if (error?.message?.includes('Failed to fetch') || error?.message?.includes('fetch')) {
+        console.warn('[Inspirations] ⚠️ Edge Function "scriptony-inspiration" might not be deployed yet');
+        toast.error('Inspirations Feature noch nicht deployed. Bitte Edge Function deployen.');
+      } else {
+        toast.error('Fehler beim Löschen');
+      }
+    }
+  };
+
+  // 🎨 INSPIRATION: Edit
+  const handleEditInspiration = (inspiration: ProjectInspiration) => {
+    setEditingInspiration(inspiration);
+    setShowAddInspirationDialog(true);
+  };
+
   const handleCreateProject = async () => {
     if (!newProjectTitle.trim()) {
       toast.error("Bitte gib einen Projekttitel ein");
       return;
     }
 
+    // Genre Validation: At least 1 genre required
+    if (!selectedGenres || selectedGenres.length === 0) {
+      toast.error("Bitte wähle mindestens ein Genre aus");
+      return;
+    }
+
     try {
+      // Prepare narrative structure value (handle custom input)
+      let narrativeStructureValue = newProjectNarrativeStructure;
+      if (newProjectNarrativeStructure === 'custom' && customNarrativeStructure) {
+        narrativeStructureValue = `custom:${customNarrativeStructure}`;
+      }
+
+      // Prepare episode layout value (handle custom input)
+      let episodeLayoutValue = newProjectEpisodeLayout;
+      if (newProjectEpisodeLayout === 'custom' && customEpisodeLayout) {
+        episodeLayoutValue = `custom:${customEpisodeLayout}`;
+      }
+
+      // Prepare season engine value (handle custom input)
+      let seasonEngineValue = newProjectSeasonEngine;
+      if (newProjectSeasonEngine === 'custom' && customSeasonEngine) {
+        seasonEngineValue = `custom:${customSeasonEngine}`;
+      }
+
+      // Prepare beat template value (handle custom input)
+      let beatTemplateValue = newProjectBeatTemplate;
+      if (newProjectBeatTemplate === 'custom' && customBeatTemplate) {
+        beatTemplateValue = `custom:${customBeatTemplate}`;
+      }
+
       const project = await projectsApi.create({
         title: newProjectTitle,
         logline: newProjectLogline,
@@ -227,8 +475,14 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         genre: selectedGenres.join(", "),
         duration: newProjectDuration,
         linkedWorldId: newProjectLinkedWorld,
-        inspirations,
+        inspirations: projectInspirationNotes,
         coverImage: newProjectCoverImage,
+        // Series: episode_layout + season_engine
+        episode_layout: newProjectType === 'series' ? (episodeLayoutValue || undefined) : undefined,
+        season_engine: newProjectType === 'series' ? (seasonEngineValue || undefined) : undefined,
+        // Film/Book/Audio: narrative_structure
+        narrative_structure: newProjectType !== 'series' ? (narrativeStructureValue || undefined) : undefined,
+        beat_template: beatTemplateValue || undefined,
       });
 
       setProjects([...projects, project]);
@@ -252,6 +506,16 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
       setNewProjectCoverImage(undefined);
       setSelectedGenres([]);
       setInspirations([""]);
+      setNewProjectNarrativeStructure("");
+      setNewProjectBeatTemplate("");
+      setCustomNarrativeStructure("");
+      setNewProjectEpisodeLayout("");
+      setNewProjectSeasonEngine("");
+      setCustomEpisodeLayout("");
+      setCustomSeasonEngine("");
+      setCustomBeatTemplate("");
+      setNewProjectEpisodeLayout("");
+      setNewProjectSeasonEngine("");
       
       toast.success("Projekt erfolgreich erstellt!");
     } catch (error) {
@@ -379,6 +643,21 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         setShowStatsDialog={setShowStatsDialog}
         timelineCache={timelineCache}
         onTimelineDataChange={handleTimelineDataChange}
+        structureOpen={structureOpen}
+        setStructureOpen={setStructureOpen}
+        charactersOpen={charactersOpen}
+        setCharactersOpen={setCharactersOpen}
+        inspirationOpen={inspirationOpen}
+        setInspirationOpen={setInspirationOpen}
+        inspirations={inspirations}
+        inspirationsLoading={inspirationsLoading}
+        showAddInspirationDialog={showAddInspirationDialog}
+        setShowAddInspirationDialog={setShowAddInspirationDialog}
+        editingInspiration={editingInspiration}
+        setEditingInspiration={setEditingInspiration}
+        onSaveInspiration={handleSaveInspiration}
+        onDeleteInspiration={handleDeleteInspiration}
+        onEditInspiration={handleEditInspiration}
       />
     );
   }
@@ -722,8 +1001,16 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                             )}
 
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
-                                {project.type}
+                              <Badge variant="secondary" className="text-[10px] h-5 px-1.5 flex items-center gap-1">
+                                {(() => {
+                                  const { label, Icon } = getProjectTypeInfo(project.type);
+                                  return (
+                                    <>
+                                      <Icon className="size-2.5" />
+                                      {label}
+                                    </>
+                                  );
+                                })()}
                               </Badge>
                               <Badge variant="outline" className="text-[10px] h-5 px-1.5">
                                 {project.genre}
@@ -786,30 +1073,171 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                   <SelectContent>
                     <SelectItem value="film">Film</SelectItem>
                     <SelectItem value="series">Serie</SelectItem>
+                    <SelectItem value="book">Buch</SelectItem>
                     <SelectItem value="audio">Hörspiel</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
-            {/* Narrative Structure */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="narrative">Narrative Structure</Label>
-                <Info className="size-3.5 text-muted-foreground" />
+            {/* Narrative Structure - Conditional Layout based on Type */}
+            {newProjectType === 'series' ? (
+              /* SERIES: Episode Layout + Season Engine (2 Felder) */
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Episode Layout */}
+                  <div className="space-y-2">
+                    <Label htmlFor="episode-layout">Episode Layout</Label>
+                    <Select value={newProjectEpisodeLayout} onValueChange={setNewProjectEpisodeLayout}>
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="Keine" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="sitcom-2-act">Sitcom 2-Akt (22–24 min)</SelectItem>
+                        <SelectItem value="sitcom-4-act">Sitcom 4-Akt (22 min)</SelectItem>
+                        <SelectItem value="network-5-act">Network 5-Akt (~45 min)</SelectItem>
+                        <SelectItem value="streaming-3-act">Streaming 3-Akt (45–60 min)</SelectItem>
+                        <SelectItem value="streaming-4-act">Streaming 4-Akt (45–60 min)</SelectItem>
+                        <SelectItem value="anime-ab">Anime A/B (24 min)</SelectItem>
+                        <SelectItem value="sketch-segmented">Sketch/Segmented (3–5 Stories)</SelectItem>
+                        <SelectItem value="kids-11min">Kids 11-Min (2 Segmente)</SelectItem>
+                        <SelectItem value="custom">Custom</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Season Engine */}
+                  <div className="space-y-2">
+                    <Label htmlFor="season-engine">Season Engine</Label>
+                    <Select value={newProjectSeasonEngine} onValueChange={setNewProjectSeasonEngine}>
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="Keine" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="serial">Serial (Season-Arc)</SelectItem>
+                        <SelectItem value="motw">MOTW/COTW (Fall d. Woche)</SelectItem>
+                        <SelectItem value="hybrid">Hybrid (Arc+MOTW)</SelectItem>
+                        <SelectItem value="anthology">Anthology (episodisch)</SelectItem>
+                        <SelectItem value="seasonal-anthology">Seasonal Anthology</SelectItem>
+                        <SelectItem value="limited-series">Limited Series (4–10)</SelectItem>
+                        <SelectItem value="custom">Custom</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                
+                {/* Custom Episode Layout Input */}
+                {newProjectEpisodeLayout === 'custom' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="custom-episode-layout">Custom Episode Layout Name</Label>
+                    <Input
+                      id="custom-episode-layout"
+                      placeholder="z.B. 'Mini-Series 6-Akt'"
+                      value={customEpisodeLayout}
+                      onChange={(e) => setCustomEpisodeLayout(e.target.value)}
+                      className="h-11"
+                    />
+                  </div>
+                )}
+                
+                {/* Custom Season Engine Input */}
+                {newProjectSeasonEngine === 'custom' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="custom-season-engine">Custom Season Engine Name</Label>
+                    <Input
+                      id="custom-season-engine"
+                      placeholder="z.B. 'Hybrid-Anthology Mix'"
+                      value={customSeasonEngine}
+                      onChange={(e) => setCustomSeasonEngine(e.target.value)}
+                      className="h-11"
+                    />
+                  </div>
+                )}
+              </>
+            ) : (
+              /* FILM/BOOK/AUDIO: Narrative Structure (1 Feld) */
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="narrative">Narrative Structure</Label>
+                  <Info className="size-3.5 text-muted-foreground" />
+                </div>
+                <Select value={newProjectNarrativeStructure} onValueChange={setNewProjectNarrativeStructure}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue placeholder="None" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Film Structures */}
+                    {newProjectType === 'film' && (
+                      <>
+                        <SelectItem value="3-act">3-Akt (klassisch)</SelectItem>
+                        <SelectItem value="4-act">4-Akt (gesplittetes Act II)</SelectItem>
+                        <SelectItem value="5-act">5-Akt (Freytag)</SelectItem>
+                        <SelectItem value="8-sequences">8-Sequenzen ("Mini-Movies")</SelectItem>
+                        <SelectItem value="kishotenketsu">Kishōtenketsu (4-Teiler)</SelectItem>
+                        <SelectItem value="non-linear">Nicht-linear / Rashomon</SelectItem>
+                        <SelectItem value="custom">Custom</SelectItem>
+                      </>
+                    )}
+                    {/* Buch Structures */}
+                    {newProjectType === 'book' && (
+                      <>
+                        <SelectItem value="3-part">3-Teiler (klassisch)</SelectItem>
+                        <SelectItem value="hero-journey">Heldenreise</SelectItem>
+                        <SelectItem value="save-the-cat">Save the Cat (adapted)</SelectItem>
+                      </>
+                    )}
+                    {/* Hörspiel Structures */}
+                    {newProjectType === 'audio' && (
+                      <>
+                        <SelectItem value="30min-3-act">30 min / 3-Akt</SelectItem>
+                        <SelectItem value="60min-4-act">60 min / 4-Akt</SelectItem>
+                        <SelectItem value="podcast-25-35min">Podcast 25–35 min</SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+                {newProjectNarrativeStructure === 'custom' && (
+                  <Input
+                    placeholder="Custom Structure Name eingeben..."
+                    value={customNarrativeStructure}
+                    onChange={(e) => setCustomNarrativeStructure(e.target.value)}
+                    className="h-11 mt-2"
+                  />
+                )}
               </div>
-              <Select>
+            )}
+
+            {/* Story Beat Template - Always shown */}
+            <div className="space-y-2">
+              <Label htmlFor="beat-template">Story Beat Template</Label>
+              <Select value={newProjectBeatTemplate} onValueChange={setNewProjectBeatTemplate}>
                 <SelectTrigger className="h-11">
                   <SelectValue placeholder="None" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="three-act">Drei-Akt-Struktur</SelectItem>
-                  <SelectItem value="hero-journey">Heldenreise</SelectItem>
-                  <SelectItem value="non-linear">Nicht-linear</SelectItem>
+                  {/* Universal Templates */}
+                  <SelectItem value="lite-7">Lite-7 (minimal)</SelectItem>
+                  <SelectItem value="save-the-cat">Save the Cat! (15)</SelectItem>
+                  <SelectItem value="syd-field">Syd Field / Paradigm</SelectItem>
+                  <SelectItem value="heroes-journey">Heldenreise (Vogler, 12)</SelectItem>
+                  <SelectItem value="seven-point">Seven-Point Structure</SelectItem>
+                  <SelectItem value="8-sequences">8-Sequenzen</SelectItem>
+                  <SelectItem value="story-circle">Story Circle 8</SelectItem>
+                  {/* Series-specific macro template */}
+                  {newProjectType === 'series' && (
+                    <SelectItem value="season-lite-5">Season-Lite-5 (Macro)</SelectItem>
+                  )}
+                  <SelectItem value="custom">Custom</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">No specific narrative structure</p>
+              {newProjectBeatTemplate === 'custom' && (
+                <Input
+                  placeholder="Custom Beat Template Name eingeben..."
+                  value={customBeatTemplate}
+                  onChange={(e) => setCustomBeatTemplate(e.target.value)}
+                  className="h-11 mt-2"
+                />
+              )}
             </div>
 
             {/* Welt verknüpfen */}
@@ -997,6 +1425,81 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
           project={selectedStatsProject}
         />
       )}
+
+      {/* Delete Project Dialog - Must be here for list delete! */}
+      <AlertDialog open={showDeleteDialog && !selectedProjectId} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <div className="flex items-center gap-2 mb-2">
+              <div className="size-10 rounded-full bg-red-500/10 flex items-center justify-center">
+                <AlertTriangle className="size-5 text-red-500" />
+              </div>
+              <AlertDialogTitle>Projekt wirklich löschen?</AlertDialogTitle>
+            </div>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Diese Aktion kann <strong>nicht rückgängig</strong> gemacht werden. 
+                  Das Projekt wird permanent gelöscht, inklusive aller:
+                </p>
+                <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                  <li>Szenen, Acts, Sequenzen</li>
+                  <li>Charaktere</li>
+                  <li>Shots & Timeline Nodes</li>
+                  <li>Projekt-Einstellungen</li>
+                </ul>
+                <div className="pt-2 space-y-2">
+                  <Label htmlFor="delete-password-list" className="text-foreground">
+                    Gib dein Passwort ein, um zu bestätigen:
+                  </Label>
+                  <Input
+                    id="delete-password-list"
+                    type="password"
+                    placeholder="Dein Passwort"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    disabled={deleteLoading}
+                    className="h-11"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && deletePassword.trim()) {
+                        handleDeleteProject();
+                      }
+                    }}
+                    autoFocus
+                  />
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel 
+              onClick={() => {
+                setDeletePassword("");
+              }}
+              disabled={deleteLoading}
+            >
+              Abbrechen
+            </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteProject}
+              disabled={deleteLoading || !deletePassword.trim()}
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="size-4 mr-2 animate-spin" />
+                  Wird gelöscht...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="size-4 mr-2" />
+                  Projekt löschen
+                </>
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -2070,18 +2573,40 @@ interface ProjectDetailProps {
   // Timeline Cache
   timelineCache: Record<string, TimelineData>;
   onTimelineDataChange: (projectId: string, data: TimelineData) => void;
+  // Collapsible Sections
+  structureOpen: boolean;
+  setStructureOpen: (open: boolean) => void;
+  charactersOpen: boolean;
+  setCharactersOpen: (open: boolean) => void;
+  inspirationOpen: boolean;
+  setInspirationOpen: (open: boolean) => void;
+  // Inspirations
+  inspirations: ProjectInspiration[];
+  inspirationsLoading: boolean;
+  showAddInspirationDialog: boolean;
+  setShowAddInspirationDialog: (show: boolean) => void;
+  editingInspiration: ProjectInspiration | null;
+  setEditingInspiration: (inspiration: ProjectInspiration | null) => void;
+  onSaveInspiration: (data: InspirationData) => Promise<void>;
+  onDeleteInspiration: (id: string) => Promise<void>;
+  onEditInspiration: (inspiration: ProjectInspiration) => void;
 }
 
-function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading, onDuplicate, onShowStats, showStatsDialog, setShowStatsDialog, timelineCache, onTimelineDataChange }: ProjectDetailProps) {
+function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading, onDuplicate, onShowStats, showStatsDialog, setShowStatsDialog, timelineCache, onTimelineDataChange, structureOpen, setStructureOpen, charactersOpen, setCharactersOpen, inspirationOpen, setInspirationOpen, inspirations, inspirationsLoading, showAddInspirationDialog, setShowAddInspirationDialog, editingInspiration, setEditingInspiration, onSaveInspiration, onDeleteInspiration, onEditInspiration }: ProjectDetailProps) {
   const [structureView, setStructureView] = useState<"dropdown" | "timeline">("dropdown");
   const [showNewScene, setShowNewScene] = useState(false);
   const [showNewCharacter, setShowNewCharacter] = useState(false);
   const [isEditingInfo, setIsEditingInfo] = useState(false);
-  const [editedTitle, setEditedTitle] = useState(project.title);
-  const [editedLogline, setEditedLogline] = useState(project.logline);
-  const [editedType, setEditedType] = useState(project.type);
-  const [editedGenre, setEditedGenre] = useState(project.genre);
-  const [editedDuration, setEditedDuration] = useState(project.duration);
+  const [editedTitle, setEditedTitle] = useState(project.title || "");
+  const [editedLogline, setEditedLogline] = useState(project.logline || "");
+  const [editedType, setEditedType] = useState(project.type || "");
+  const [editedGenre, setEditedGenre] = useState(project.genre || "");
+  const [editedDuration, setEditedDuration] = useState(project.duration || "");
+  const [editedNarrativeStructure, setEditedNarrativeStructure] = useState(project.narrative_structure || "");
+  const [editedBeatTemplate, setEditedBeatTemplate] = useState(project.beat_template || "");
+  const [editedGenresMulti, setEditedGenresMulti] = useState<string[]>(project.genre ? project.genre.split(", ") : []);
+  const [editedEpisodeLayout, setEditedEpisodeLayout] = useState(project.episode_layout || "");
+  const [editedSeasonEngine, setEditedSeasonEngine] = useState(project.season_engine || "");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 🎯 Performance Monitoring: Track when ProjectDetail is rendered
@@ -2099,12 +2624,17 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
 
   // Sync edited values when project changes (e.g., after reload)
   useEffect(() => {
-    setEditedTitle(project.title);
-    setEditedLogline(project.logline);
-    setEditedType(project.type);
-    setEditedGenre(project.genre);
-    setEditedDuration(project.duration);
-  }, [project.id, project.title, project.logline, project.type, project.genre, project.duration]);
+    setEditedTitle(project.title || "");
+    setEditedLogline(project.logline || "");
+    setEditedType(project.type || "");
+    setEditedGenre(project.genre || "");
+    setEditedDuration(project.duration || "");
+    setEditedNarrativeStructure(project.narrative_structure || "");
+    setEditedBeatTemplate(project.beat_template || "");
+    setEditedGenresMulti(project.genre ? project.genre.split(", ") : []);
+    setEditedEpisodeLayout(project.episode_layout || "");
+    setEditedSeasonEngine(project.season_engine || "");
+  }, [project.id, project.title, project.logline, project.type, project.genre, project.duration, project.narrative_structure, project.beat_template, project.episode_layout, project.season_engine]);
   // Scenes State with localStorage persistence
   const getInitialScenes = () => {
     const storageKey = `project-${project.id}-scenes`;
@@ -2566,14 +3096,26 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
   };
 
   const handleSaveProjectInfo = async () => {
+    // Validation: At least 1 genre required
+    if (!editedGenresMulti || editedGenresMulti.length === 0) {
+      toast.error("Bitte wähle mindestens ein Genre aus");
+      return;
+    }
+
     try {
       // Update project in backend
       await projectsApi.update(project.id, {
         title: editedTitle,
         logline: editedLogline,
         type: editedType,
-        genre: editedGenre,
+        genre: editedGenresMulti.join(", "), // Convert array to comma-separated string
         duration: editedDuration,
+        // Series: episode_layout + season_engine
+        episode_layout: editedType === 'series' ? (editedEpisodeLayout || undefined) : undefined,
+        season_engine: editedType === 'series' ? (editedSeasonEngine || undefined) : undefined,
+        // Film/Book/Audio: narrative_structure
+        narrative_structure: editedType !== 'series' ? (editedNarrativeStructure || undefined) : undefined,
+        beat_template: editedBeatTemplate || undefined,
       });
 
       // Refresh data to sync with backend
@@ -2627,58 +3169,88 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         <Card className="mb-4">
           <CardHeader className="p-4 flex flex-row items-center justify-between">
             <CardTitle className="text-base">Projekt-Informationen</CardTitle>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+            
+            {/* SAVE BUTTON + 3-PUNKTE-MENÜ */}
+            <div className="flex items-center gap-2">
+              {/* SAVE BUTTON - nur im Edit-Modus sichtbar */}
+              {isEditingInfo && (
                 <Button
+                  variant="default"
                   size="sm"
-                  variant="ghost"
-                  className="h-8 w-8 p-0"
+                  onClick={handleSaveProjectInfo}
+                  className="h-8 gap-1.5"
                 >
-                  <MoreVertical className="size-4" />
+                  <Save className="size-3.5" />
+                  Speichern
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => {
-                  if (isEditingInfo) {
-                    // Save changes
-                    handleSaveProjectInfo();
-                  } else {
-                    setIsEditingInfo(true);
-                  }
-                }}>
+              )}
+              
+              {/* 3-PUNKTE-MENÜ */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0"
+                  >
+                    <MoreVertical className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
                   {isEditingInfo ? (
                     <>
-                      <Save className="size-3.5 mr-2" />
-                      Speichern
+                      <DropdownMenuItem onClick={handleSaveProjectInfo}>
+                        <Save className="size-3.5 mr-2" />
+                        Speichern
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => {
+                        // Reset to original values
+                        setIsEditingInfo(false);
+                        setEditedTitle(project.title || "");
+                        setEditedLogline(project.logline || "");
+                        setEditedType(project.type || "");
+                        setEditedGenre(project.genre || "");
+                        setEditedDuration(project.duration || "");
+                        setEditedNarrativeStructure(project.narrative_structure || "");
+                        setEditedBeatTemplate(project.beat_template || "");
+                        setEditedGenresMulti(project.genre ? project.genre.split(", ") : []);
+                        setEditedEpisodeLayout(project.episode_layout || "");
+                        setEditedSeasonEngine(project.season_engine || "");
+                      }}>
+                        <X className="size-3.5 mr-2" />
+                        Abbrechen
+                      </DropdownMenuItem>
                     </>
                   ) : (
                     <>
-                      <Edit2 className="size-3.5 mr-2" />
-                      Bearbeiten
+                      <DropdownMenuItem onClick={() => setIsEditingInfo(true)}>
+                        <Edit2 className="size-3.5 mr-2" />
+                        Bearbeiten
+                      </DropdownMenuItem>
+                      {onDuplicate && (
+                        <DropdownMenuItem onClick={onDuplicate}>
+                          <Copy className="size-3.5 mr-2" />
+                          Projekt duplizieren
+                        </DropdownMenuItem>
+                      )}
+                      {onShowStats && (
+                        <DropdownMenuItem onClick={onShowStats}>
+                          <BarChart3 className="size-3.5 mr-2" />
+                          Statistiken & Logs
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem 
+                        onClick={() => setShowDeleteDialog(true)}
+                        className="text-red-600 focus:text-red-600"
+                      >
+                        <Trash2 className="size-3.5 mr-2" />
+                        Projekt löschen
+                      </DropdownMenuItem>
                     </>
                   )}
-                </DropdownMenuItem>
-                {onDuplicate && (
-                  <DropdownMenuItem onClick={onDuplicate}>
-                    <Copy className="size-3.5 mr-2" />
-                    Projekt duplizieren
-                  </DropdownMenuItem>
-                )}
-                {onShowStats && (
-                  <DropdownMenuItem onClick={onShowStats}>
-                    <BarChart3 className="size-3.5 mr-2" />
-                    Statistiken & Logs
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem 
-                  onClick={() => setShowDeleteDialog(true)}
-                  className="text-red-600 focus:text-red-600"
-                >
-                  <Trash2 className="size-3.5 mr-2" />
-                  Projekt löschen
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </CardHeader>
           <CardContent className="p-4 pt-0 space-y-4">
             {isEditingInfo ? (
@@ -2703,31 +3275,16 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                 </div>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <Label htmlFor="project-type" className="text-sm mb-2 block font-bold">Art</Label>
+                    <Label htmlFor="project-type" className="text-sm mb-2 block font-bold">Project Type</Label>
                     <Select value={editedType} onValueChange={setEditedType}>
                       <SelectTrigger id="project-type" className="h-9">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Movie">Film</SelectItem>
-                        <SelectItem value="Series">Serie</SelectItem>
-                        <SelectItem value="Audio">Hörspiel</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="project-genre" className="text-sm mb-2 block font-bold">Genre</Label>
-                    <Select value={editedGenre} onValueChange={setEditedGenre}>
-                      <SelectTrigger id="project-genre" className="h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Action">Action</SelectItem>
-                        <SelectItem value="Comedy">Comedy</SelectItem>
-                        <SelectItem value="Drama">Drama</SelectItem>
-                        <SelectItem value="Sci-fi">Sci-fi</SelectItem>
-                        <SelectItem value="Horror">Horror</SelectItem>
-                        <SelectItem value="Romance">Romance</SelectItem>
+                        <SelectItem value="film">Film</SelectItem>
+                        <SelectItem value="series">Serie</SelectItem>
+                        <SelectItem value="book">Buch</SelectItem>
+                        <SelectItem value="audio">Hörspiel</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -2741,6 +3298,147 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                       className="h-9"
                     />
                   </div>
+                </div>
+
+                {/* Genres - Multi-Select Pills */}
+                <div className="col-span-3">
+                  <Label className="text-sm mb-2 block font-bold">Genres</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      "Action", "Abenteuer", "Komödie", "Drama", "Fantasy", 
+                      "Horror", "Mystery", "Romantik", "Science Fiction", 
+                      "Slice of Life", "Übernatürlich", "Thriller"
+                    ].map((genre) => (
+                      <button
+                        key={genre}
+                        onClick={() => {
+                          setEditedGenresMulti((prev) =>
+                            prev.includes(genre)
+                              ? prev.filter((g) => g !== genre)
+                              : [...prev, genre]
+                          );
+                        }}
+                        className={`px-3 py-1.5 rounded-lg border transition-all text-sm ${
+                          editedGenresMulti.includes(genre)
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-background border-border hover:border-primary/50"
+                        }`}
+                      >
+                        {genre}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Wähle ein oder mehrere Genres
+                  </p>
+                </div>
+
+                {/* Narrative Structure - Conditional Layout */}
+                {editedType === 'series' ? (
+                  /* SERIES: Episode Layout + Season Engine */
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Episode Layout */}
+                    <div>
+                      <Label htmlFor="episode-layout" className="text-sm mb-2 block font-bold">Episode Layout</Label>
+                      <Select value={editedEpisodeLayout} onValueChange={setEditedEpisodeLayout}>
+                        <SelectTrigger id="episode-layout" className="h-9">
+                          <SelectValue placeholder="Keine" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sitcom-2-act">Sitcom 2-Akt</SelectItem>
+                          <SelectItem value="sitcom-4-act">Sitcom 4-Akt</SelectItem>
+                          <SelectItem value="network-5-act">Network 5-Akt</SelectItem>
+                          <SelectItem value="streaming-3-act">Streaming 3-Akt</SelectItem>
+                          <SelectItem value="streaming-4-act">Streaming 4-Akt</SelectItem>
+                          <SelectItem value="anime-ab">Anime A/B</SelectItem>
+                          <SelectItem value="sketch-segmented">Sketch/Segmented</SelectItem>
+                          <SelectItem value="kids-11min">Kids 11-Min</SelectItem>
+                          <SelectItem value="custom">Custom</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Season Engine */}
+                    <div>
+                      <Label htmlFor="season-engine" className="text-sm mb-2 block font-bold">Season Engine</Label>
+                      <Select value={editedSeasonEngine} onValueChange={setEditedSeasonEngine}>
+                        <SelectTrigger id="season-engine" className="h-9">
+                          <SelectValue placeholder="Keine" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="serial">Serial (Season-Arc)</SelectItem>
+                          <SelectItem value="motw">MOTW/COTW</SelectItem>
+                          <SelectItem value="hybrid">Hybrid (Arc+MOTW)</SelectItem>
+                          <SelectItem value="anthology">Anthology (episodisch)</SelectItem>
+                          <SelectItem value="seasonal-anthology">Seasonal Anthology</SelectItem>
+                          <SelectItem value="limited-series">Limited Series</SelectItem>
+                          <SelectItem value="custom">Custom</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ) : (
+                  /* FILM/BOOK/AUDIO: Narrative Structure */
+                  <div>
+                    <Label htmlFor="narrative-structure" className="text-sm mb-2 block font-bold">Narrative Structure</Label>
+                    <Select value={editedNarrativeStructure} onValueChange={setEditedNarrativeStructure}>
+                      <SelectTrigger id="narrative-structure" className="h-9">
+                        <SelectValue placeholder="Keine" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* Film Structures */}
+                        {editedType === 'film' && (
+                          <>
+                            <SelectItem value="3-act">3-Akt (klassisch)</SelectItem>
+                            <SelectItem value="4-act">4-Akt (gesplittetes Act II)</SelectItem>
+                            <SelectItem value="5-act">5-Akt (Freytag)</SelectItem>
+                            <SelectItem value="8-sequences">8-Sequenzen ("Mini-Movies")</SelectItem>
+                            <SelectItem value="kishotenketsu">Kishōtenketsu (4-Teiler)</SelectItem>
+                            <SelectItem value="non-linear">Nicht-linear / Rashomon</SelectItem>
+                          </>
+                        )}
+                        {/* Buch Structures */}
+                        {editedType === 'book' && (
+                          <>
+                            <SelectItem value="3-part">3-Teiler (klassisch)</SelectItem>
+                            <SelectItem value="hero-journey">Heldenreise</SelectItem>
+                            <SelectItem value="save-the-cat">Save the Cat (adapted)</SelectItem>
+                          </>
+                        )}
+                        {/* Hörspiel Structures */}
+                        {editedType === 'audio' && (
+                          <>
+                            <SelectItem value="30min-3-act">30 min / 3-Akt</SelectItem>
+                            <SelectItem value="60min-4-act">60 min / 4-Akt</SelectItem>
+                            <SelectItem value="podcast-25-35min">Podcast 25–35 min</SelectItem>
+                          </>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {/* Beat Template - Always shown */}
+                <div>
+                  <Label htmlFor="beat-template" className="text-sm mb-2 block font-bold">Beat Template</Label>
+                  <Select value={editedBeatTemplate} onValueChange={setEditedBeatTemplate}>
+                    <SelectTrigger id="beat-template" className="h-9">
+                      <SelectValue placeholder="Kein Template" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="lite-7">Lite-7 (minimal)</SelectItem>
+                      <SelectItem value="save-the-cat">Save the Cat! (15)</SelectItem>
+                      <SelectItem value="syd-field">Syd Field / Paradigm</SelectItem>
+                      <SelectItem value="heroes-journey">Heldenreise (Vogler, 12)</SelectItem>
+                      <SelectItem value="seven-point">Seven-Point Structure</SelectItem>
+                      <SelectItem value="8-sequences">8-Sequenzen</SelectItem>
+                      <SelectItem value="story-circle">Story Circle 8</SelectItem>
+                      {editedType === 'series' && (
+                        <SelectItem value="season-lite-5">Season-Lite-5 (Macro)</SelectItem>
+                      )}
+                      <SelectItem value="custom">Custom</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label htmlFor="project-world" className="text-sm mb-2 block font-bold">Verknüpfte Welt</Label>
@@ -2772,20 +3470,68 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                   <p className="text-sm font-bold mb-1">Logline</p>
                   <p className="text-sm text-muted-foreground">{editedLogline}</p>
                 </div>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <p className="text-sm font-bold mb-1">Art</p>
+                    <p className="text-sm font-bold mb-1">Project Type</p>
                     <p className="text-sm">{editedType}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold mb-1">Genre</p>
-                    <p className="text-sm">{editedGenre}</p>
                   </div>
                   <div>
                     <p className="text-sm font-bold mb-1">Dauer</p>
                     <p className="text-sm">{editedDuration}</p>
                   </div>
                 </div>
+
+                {/* Genres - Multi Badge Display */}
+                <div>
+                  <p className="text-sm font-bold mb-1">Genres</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {editedGenresMulti.length > 0 ? (
+                      editedGenresMulti.map((genre) => (
+                        <Badge key={genre} variant="secondary" className="text-xs">
+                          {genre}
+                        </Badge>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground">Keine Genres ausgewählt</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Narrative Structure - Conditional Display */}
+                {editedType === 'series' ? (
+                  /* SERIES: Episode Layout + Season Engine */
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-sm font-bold mb-1">Episode Layout</p>
+                      <p className="text-sm text-muted-foreground">
+                        {editedEpisodeLayout || "Kein Layout"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold mb-1">Season Engine</p>
+                      <p className="text-sm text-muted-foreground">
+                        {editedSeasonEngine || "Keine Engine"}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  /* FILM/BOOK/AUDIO: Narrative Structure */
+                  <div>
+                    <p className="text-sm font-bold mb-1">Narrative Structure</p>
+                    <p className="text-sm text-muted-foreground">
+                      {editedNarrativeStructure || "Keine Struktur festgelegt"}
+                    </p>
+                  </div>
+                )}
+
+                {/* Beat Template - Always shown */}
+                <div>
+                  <p className="text-sm font-bold mb-1">Beat Template</p>
+                  <p className="text-sm text-muted-foreground">
+                    {editedBeatTemplate || "Kein Template"}
+                  </p>
+                </div>
+
                 <div>
                   <p className="text-sm font-bold mb-1">Verknüpfte Welt</p>
                   <p className="text-sm text-muted-foreground">Keine Welt verknüpft</p>
@@ -2839,11 +3585,26 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
 
       {/* Film Timeline Section */}
       <section className="px-4 mb-8">
-        <div className="mb-4">
-          <Badge className="bg-[#6E59A5] text-white h-8 flex items-center">Structure</Badge>
-        </div>
+        <Collapsible open={structureOpen} onOpenChange={setStructureOpen}>
+          <div className="flex items-center justify-between mb-4">
+            <Badge className="bg-[#6E59A5] text-white h-8 flex items-center">Structure & Beats</Badge>
+            <CollapsibleTrigger asChild>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                className="h-8 w-8 p-0"
+              >
+                {structureOpen ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </Button>
+            </CollapsibleTrigger>
+          </div>
 
-        <Tabs value={structureView} onValueChange={(value) => setStructureView(value as "dropdown" | "timeline")} className="w-full">
+          <CollapsibleContent>
+            <Tabs value={structureView} onValueChange={(value) => setStructureView(value as "dropdown" | "timeline")} className="w-full">
           <TabsList className="grid w-full grid-cols-2 mb-4">
             <TabsTrigger value="dropdown">Dropdown</TabsTrigger>
             <TabsTrigger value="timeline">Timeline</TabsTrigger>
@@ -2865,34 +3626,132 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
               <p className="text-muted-foreground">Timeline-Ansicht wird bald verfügbar sein</p>
             </div>
           </TabsContent>
-        </Tabs>
+            </Tabs>
+          </CollapsibleContent>
+        </Collapsible>
       </section>
 
       {/* Characters Section */}
-      <section className="px-4">
-        <div className="flex items-center justify-between mb-4">
-          <Badge className="bg-[#6E59A5] text-white h-8 flex items-center">Charaktere ({charactersState.length})</Badge>
-          <Button 
-            size="sm" 
-            variant="secondary" 
-            onClick={() => setShowNewCharacter(true)}
-            className="h-8 bg-[rgba(110,89,165,1)] text-[rgba(255,255,255,1)]"
-          >
-            <Plus className="size-3.5 mr-1.5" />
-            Neu
-          </Button>
-        </div>
-        <div className="space-y-3">
-          {charactersState.map((character) => (
-            <CharacterCard
-              key={character.id}
-              character={character}
-              onImageUpload={updateCharacterImage}
-              onUpdateDetails={updateCharacterDetails}
-              onDelete={deleteCharacter}
-            />
-          ))}
-        </div>
+      <section className="px-4 mb-8">
+        <Collapsible open={charactersOpen} onOpenChange={setCharactersOpen}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Badge className="bg-[#6E59A5] text-white h-8 flex items-center">Charaktere ({charactersState.length})</Badge>
+              <CollapsibleTrigger asChild>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                >
+                  {charactersOpen ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                </Button>
+              </CollapsibleTrigger>
+            </div>
+            <Button 
+              size="sm" 
+              variant="secondary" 
+              onClick={() => setShowNewCharacter(true)}
+              className="h-8 bg-[rgba(110,89,165,1)] text-[rgba(255,255,255,1)]"
+            >
+              <Plus className="size-3.5 mr-1.5" />
+              Neu
+            </Button>
+          </div>
+
+          <CollapsibleContent>
+            <div className="space-y-3">
+              {charactersState.map((character) => (
+                <CharacterCard
+                  key={character.id}
+                  character={character}
+                  onImageUpload={updateCharacterImage}
+                  onUpdateDetails={updateCharacterDetails}
+                  onDelete={deleteCharacter}
+                />
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      </section>
+
+      {/* Inspiration Section */}
+      <section className="px-4 mb-8">
+        <Collapsible open={inspirationOpen} onOpenChange={setInspirationOpen}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Badge className="bg-[#6E59A5] text-white h-8 flex items-center gap-2">
+                <ImageIcon className="w-4 h-4" />
+                Inspiration ({inspirations.length})
+              </Badge>
+              <CollapsibleTrigger asChild>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                >
+                  {inspirationOpen ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                </Button>
+              </CollapsibleTrigger>
+            </div>
+            <Button 
+              size="sm" 
+              variant="secondary" 
+              onClick={() => {
+                setEditingInspiration(null);
+                setShowAddInspirationDialog(true);
+              }}
+              className="h-8 bg-[rgba(110,89,165,1)] text-[rgba(255,255,255,1)]"
+            >
+              <Plus className="size-3.5 mr-1.5" />
+              Neu
+            </Button>
+          </div>
+
+          <CollapsibleContent>
+            {inspirationsLoading ? (
+              <div className="flex items-center justify-center p-12">
+                <Loader2 className="w-8 h-8 animate-spin text-[#6E59A5]" />
+              </div>
+            ) : inspirations.length === 0 ? (
+              <div className="border-2 border-dashed border-slate-200 rounded-lg p-12 text-center">
+                <ImageIcon className="w-12 h-12 mx-auto mb-4 text-slate-400" />
+                <p className="text-slate-600 mb-2">Noch keine Inspirationen</p>
+                <p className="text-sm text-slate-500 mb-4">
+                  Füge visuelle Referenzen hinzu für Inspiration
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setEditingInspiration(null);
+                    setShowAddInspirationDialog(true);
+                  }}
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Erste Inspiration hinzufügen
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-4 gap-4">
+                {inspirations.map((inspiration) => (
+                  <InspirationCard
+                    key={inspiration.id}
+                    inspiration={inspiration}
+                    onEdit={handleEditInspiration}
+                    onDelete={handleDeleteInspiration}
+                  />
+                ))}
+              </div>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
       </section>
 
       {/* New Scene Dialog */}
@@ -3288,6 +4147,20 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         open={showStatsDialog}
         onOpenChange={setShowStatsDialog}
         project={project}
+      />
+
+      {/* Add/Edit Inspiration Dialog */}
+      <AddInspirationDialog
+        projectId={project.id}
+        open={showAddInspirationDialog}
+        onOpenChange={(open) => {
+          setShowAddInspirationDialog(open);
+          if (!open) {
+            setEditingInspiration(null);
+          }
+        }}
+        onSave={onSaveInspiration}
+        editInspiration={editingInspiration}
       />
 
     </div>

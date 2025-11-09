@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
-import { Upload, Trash2, X, Music, Volume2, MoreVertical, Copy, ChevronDown, ChevronRight, Plus, GripVertical, Edit, Camera } from 'lucide-react';
+import { Upload, Trash2, X, Music, Volume2, MoreVertical, Copy, ChevronDown, ChevronRight, Plus, GripVertical, Edit, Camera, Info } from 'lucide-react';
 import { useDrag, useDrop } from 'react-dnd';
 import { toast } from 'sonner@2.0.3';
 import shotPlaceholder from 'figma:asset/5bbfb6c934162456ce6c992c152322cee414939e.png';
@@ -109,10 +109,12 @@ interface ShotCardProps {
   projectId: string;
   projectCharacters?: Character[]; // All characters in project for @-mention
   isExpanded?: boolean;
+  isPending?: boolean; // 🚀 Optimistic UI: Show pending state
   onToggleExpand?: () => void;
   onUpdate: (shotId: string, updates: Partial<Shot>) => void;
   onDelete: (shotId: string) => void;
   onDuplicate?: (shotId: string) => void;
+  onShowInfo?: (shotId: string) => void; // 📊 Show info dialog
   onReorder: (draggedId: string, targetId: string) => void;
   onImageUpload: (shotId: string, file: File) => Promise<void>;
   onAudioUpload: (shotId: string, file: File, type: 'music' | 'sfx', label?: string, startTime?: number, endTime?: number, fadeIn?: number, fadeOut?: number) => Promise<void>;
@@ -128,10 +130,12 @@ export const ShotCard = memo(function ShotCard({
   projectId,
   projectCharacters = [],
   isExpanded = false,
+  isPending = false,
   onToggleExpand,
   onUpdate,
   onDelete,
   onDuplicate,
+  onShowInfo,
   onReorder,
   onImageUpload,
   onAudioUpload,
@@ -598,7 +602,8 @@ export const ShotCard = memo(function ShotCard({
         className={cn(
           'rounded-lg transition-all duration-200 bg-yellow-50 border-2 border-yellow-400 dark:bg-yellow-900/20 dark:border-yellow-600 relative overflow-hidden',
           isDragging && 'opacity-50',
-          isOver && 'ring-2 ring-yellow-500 ring-offset-2'
+          isOver && 'ring-2 ring-yellow-500 ring-offset-2',
+          isPending && 'opacity-90 animate-pulse'
         )}
       >
         {/* Animated noise/grain background pattern - OPTIMIZED FOR YELLOW */}
@@ -705,6 +710,12 @@ export const ShotCard = memo(function ShotCard({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  {onShowInfo && (
+                    <DropdownMenuItem onClick={() => onShowInfo(shot.id)}>
+                      <Info className="size-3 mr-2" />
+                      Informationen
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem 
                     onClick={() => {
                       setIsEditing(true);

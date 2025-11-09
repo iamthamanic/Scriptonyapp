@@ -13,13 +13,14 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, MoreVertical, Copy, Edit } from 'lucide-react';
+import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, MoreVertical, Copy, Edit, Info } from 'lucide-react';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { cn } from './ui/utils';
+import { undoManager } from '../lib/undo-manager';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,6 +33,7 @@ import {
   CollapsibleTrigger,
 } from './ui/collapsible';
 import { ShotCard } from './ShotCard';
+import { TimelineNodeStatsDialog } from './TimelineNodeStatsDialog';
 import { useAuth } from '../hooks/useAuth';
 import * as ShotsAPI from '../lib/api/shots-api';
 import * as TimelineAPI from '../lib/api/timeline-api';
@@ -362,6 +364,13 @@ export function FilmDropdown({
   const [creating, setCreating] = useState<string | null>(null);
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
 
+  // Info Dialog State
+  const [infoDialogOpen, setInfoDialogOpen] = useState(false);
+  const [infoDialogData, setInfoDialogData] = useState<{
+    type: 'act' | 'sequence' | 'scene' | 'shot';
+    node: Act | Sequence | Scene | Shot;
+  } | null>(null);
+
   // =====================================================
   // LOAD DATA - Only if no initialData provided
   // =====================================================
@@ -535,13 +544,14 @@ export function FilmDropdown({
         title: `Act ${newActNumber}`,
       }, token);
 
+      // 🚀 PERFORMANCE: Batch state updates
       setActs(acts => acts.map(a => a.id === tempId ? newAct : a));
       setPendingIds(prev => {
         const next = new Set(prev);
         next.delete(tempId);
         return next;
       });
-      toast.success('Act erstellt');
+      // Success toast removed for instant feel - user sees the node appear!
     } catch (error) {
       console.error('Error creating act:', error);
       setActs(acts.filter(a => a.id !== tempId));
@@ -607,13 +617,14 @@ export function FilmDropdown({
         color: '#ECFDF5',
       }, token);
 
+      // 🚀 PERFORMANCE: Batch state updates
       setSequences(seqs => seqs.map(s => s.id === tempId ? newSequence : s));
       setPendingIds(prev => {
         const next = new Set(prev);
         next.delete(tempId);
         return next;
       });
-      toast.success('Sequenz erstellt');
+      // Success toast removed for instant feel - user sees the node appear!
     } catch (error) {
       console.error('Error creating sequence:', error);
       setSequences(seqs => seqs.filter(s => s.id !== tempId));
@@ -680,13 +691,14 @@ export function FilmDropdown({
         title: `Scene ${newSceneNumber}`,
       }, token);
 
+      // 🚀 PERFORMANCE: Batch state updates
       setScenes(scenes => scenes.map(s => s.id === tempId ? newScene : s));
       setPendingIds(prev => {
         const next = new Set(prev);
         next.delete(tempId);
         return next;
       });
-      toast.success('Scene erstellt');
+      // Success toast removed for instant feel - user sees the node appear!
     } catch (error) {
       console.error('Error creating scene:', error);
       setScenes(scenes => scenes.filter(s => s.id !== tempId));
@@ -760,13 +772,14 @@ export function FilmDropdown({
         description: '',
       }, token);
 
+      // 🚀 PERFORMANCE: Batch state updates
       setShots(shots => shots.map(s => s.id === tempId ? newShot : s));
       setPendingIds(prev => {
         const next = new Set(prev);
         next.delete(tempId);
         return next;
       });
-      toast.success('Shot erstellt');
+      // Success toast removed for instant feel - user sees the node appear!
     } catch (error) {
       console.error('Error creating shot:', error);
       setShots(shots.filter(s => s.id !== tempId));
@@ -874,15 +887,39 @@ export function FilmDropdown({
   // =====================================================
 
   const handleDeleteAct = async (actId: string) => {
-    if (!confirm('Act und alle untergeordneten Elemente löschen?')) return;
+    // Find the act to get its title for confirmation
+    const actToDelete = acts.find(a => a.id === actId);
+    if (!actToDelete) {
+      console.error('[FilmDropdown] Act not found for deletion:', actId);
+      toast.error('Act nicht gefunden');
+      return;
+    }
+
+    console.log('[FilmDropdown] 🗑️ Deleting act:', {
+      id: actId,
+      title: actToDelete.title,
+      number: actToDelete.actNumber
+    });
+
+    if (!confirm(`Act "${actToDelete.title}" und alle untergeordneten Elemente löschen?`)) {
+      console.log('[FilmDropdown] Deletion cancelled by user');
+      return;
+    }
 
     const actSequences = sequences.filter(s => s.actId === actId);
     const sequenceIds = actSequences.map(s => s.id);
     const actScenes = scenes.filter(s => sequenceIds.includes(s.sequenceId));
     const sceneIds = actScenes.map(s => s.id);
 
+    console.log('[FilmDropdown] Deleting act with:', {
+      sequences: actSequences.length,
+      scenes: actScenes.length,
+      sequenceIds,
+      sceneIds
+    });
+
     // Optimistic delete
-    setActs(acts.filter(a => a.id !== actId));
+    setActs(prevActs => prevActs.filter(a => a.id !== actId));
     setSequences(seqs => seqs.filter(s => s.actId !== actId));
     setScenes(sc => sc.filter(s => !sequenceIds.includes(s.sequenceId)));
     setShots(sh => sh.filter(s => !sceneIds.includes(s.sceneId)));
@@ -891,8 +928,47 @@ export function FilmDropdown({
       const token = await getAccessToken();
       if (!token) return;
 
+      console.log('[FilmDropdown] Calling API to delete act:', actId);
       await TimelineAPI.deleteAct(actId, token);
-      toast.success('Act gelöscht');
+      console.log('[FilmDropdown] ✅ Act deleted successfully');
+      
+      // Register undo action
+      undoManager.push({
+        type: 'delete',
+        entity: 'act',
+        id: actId,
+        previousData: {
+          act: actToDelete,
+          sequences: actSequences,
+          scenes: actScenes,
+        },
+        timestamp: new Date(),
+        description: `Act "${actToDelete.title}" gelöscht`,
+      });
+
+      // Register undo callback
+      undoManager.registerCallback(`undo:delete:act:${actId}`, {
+        execute: async () => {
+          // Restore act
+          const token = await getAccessToken();
+          if (!token) throw new Error('Not authenticated');
+          
+          // Recreate act
+          const newAct = await TimelineAPI.createAct(projectId, {
+            actNumber: actToDelete.actNumber,
+            title: actToDelete.title,
+            description: actToDelete.description,
+          }, token);
+          
+          // Restore to state
+          setActs(prevActs => [...prevActs, newAct].sort((a, b) => a.actNumber - b.actNumber));
+          
+          toast.success(`Act "${actToDelete.title}" wiederhergestellt`);
+        },
+        description: `Act "${actToDelete.title}" wiederherstellen`,
+      });
+      
+      toast.success('Act gelöscht (CMD+Z zum Rückgängigmachen)');
     } catch (error) {
       console.error('Error deleting act:', error);
       toast.error('Fehler beim Löschen');
@@ -922,25 +998,61 @@ export function FilmDropdown({
 
       // Get all sequences in this act
       const actSequences = sequences.filter(s => s.actId === actId);
-      const newSequences: typeof sequences = [];
-      const newScenes: typeof scenes = [];
-      const newShots: typeof shots = [];
-
-      // Duplicate each sequence
-      for (const seq of actSequences) {
+      
+      // 🚀 OPTIMISTIC UI: Create ALL temp data INSTANTLY
+      const tempSequences = actSequences.map((seq, seqIdx) => ({
+        ...seq,
+        id: `temp-seq-${Date.now()}-${seqIdx}`,
+        actId: newAct.id,
+      }));
+      
+      const tempScenesMap: Record<string, typeof scenes> = {};
+      const tempShotsMap: Record<string, typeof shots> = {};
+      
+      actSequences.forEach((seq, seqIdx) => {
+        const seqScenes = scenes.filter(sc => sc.sequenceId === seq.id);
+        tempScenesMap[seq.id] = seqScenes.map((sc, scIdx) => ({
+          ...sc,
+          id: `temp-scene-${Date.now()}-${seqIdx}-${scIdx}`,
+          sequenceId: tempSequences[seqIdx].id,
+        }));
+        
+        seqScenes.forEach((sc, scIdx) => {
+          const sceneShots = shots.filter(sh => sh.sceneId === sc.id);
+          const tempSceneId = tempScenesMap[seq.id][scIdx].id;
+          tempShotsMap[sc.id] = sceneShots.map((shot, shotIdx) => ({
+            ...shot,
+            id: `temp-shot-${Date.now()}-${seqIdx}-${scIdx}-${shotIdx}`,
+            sceneId: tempSceneId,
+          }));
+        });
+      });
+      
+      const allTempScenes = Object.values(tempScenesMap).flat();
+      const allTempShots = Object.values(tempShotsMap).flat();
+      
+      // Show EVERYTHING immediately! User sees instant result 🚀
+      setActs(prevActs => [...prevActs, newAct]);
+      setSequences(prevSequences => [...prevSequences, ...tempSequences]);
+      setScenes(prevScenes => [...prevScenes, ...allTempScenes]);
+      setShots(prevShots => [...prevShots, ...allTempShots]);
+      toast.dismiss();
+      toast.success(`Act mit ${tempSequences.length} Sequenzen, ${allTempScenes.length} Szenen und ${allTempShots.length} Shots dupliziert`);
+      
+      // 🚀 PARALLEL: Create everything in background with maximum parallelization
+      const sequencePromises = actSequences.map(async (seq, seqIdx) => {
         const newSeq = await TimelineAPI.createSequence(newAct.id, {
           sequenceNumber: seq.sequenceNumber,
           title: seq.title,
           description: seq.description,
           color: seq.color,
         }, token);
-        newSequences.push(newSeq);
-
-        // Get all scenes in this sequence
-        const seqScenes = scenes.filter(sc => sc.sequenceId === seq.id);
         
-        // Duplicate each scene
-        for (const scene of seqScenes) {
+        const seqScenes = tempScenesMap[seq.id];
+        const originalScenes = scenes.filter(sc => sc.sequenceId === seq.id);
+        
+        // Create ALL scenes in this sequence in PARALLEL
+        const scenePromises = originalScenes.map(async (scene, scIdx) => {
           const newScene = await TimelineAPI.createScene(newSeq.id, {
             sceneNumber: scene.sceneNumber,
             title: scene.title,
@@ -949,14 +1061,13 @@ export function FilmDropdown({
             timeOfDay: scene.timeOfDay,
             characters: scene.characters,
           }, token);
-          newScenes.push(newScene);
-
-          // Get all shots in this scene
-          const sceneShots = shots.filter(sh => sh.sceneId === scene.id);
           
-          // Duplicate each shot
-          for (const shot of sceneShots) {
-            const newShot = await ShotsAPI.createShot(newScene.id, {
+          const originalShots = shots.filter(sh => sh.sceneId === scene.id);
+          const tempSceneShots = tempShotsMap[scene.id];
+          
+          // Create ALL shots for this scene in PARALLEL
+          const shotPromises = originalShots.map((shot, shotIdx) =>
+            ShotsAPI.createShot(newScene.id, {
               shotNumber: shot.shotNumber,
               description: shot.description,
               cameraAngle: shot.cameraAngle,
@@ -968,20 +1079,65 @@ export function FilmDropdown({
               shotlengthSeconds: shot.shotlengthSeconds,
               notes: shot.notes,
               dialog: shot.dialog,
-            }, token);
-            newShots.push(newShot);
-          }
-        }
-      }
-
-      // Update state with all new items
-      setActs([...acts, newAct]);
-      setSequences([...sequences, ...newSequences]);
-      setScenes([...scenes, ...newScenes]);
-      setShots([...shots, ...newShots]);
+            }, token).then(realShot => ({
+              tempId: tempSceneShots[shotIdx].id,
+              realShot
+            }))
+          );
+          
+          const shotResults = await Promise.all(shotPromises);
+          
+          return {
+            tempSceneId: seqScenes[scIdx].id,
+            realScene: newScene,
+            shotResults
+          };
+        });
+        
+        const sceneResults = await Promise.all(scenePromises);
+        
+        return {
+          tempSeqId: tempSequences[seqIdx].id,
+          realSeq: newSeq,
+          sceneResults
+        };
+      });
       
-      toast.dismiss();
-      toast.success(`Act mit ${actSequences.length} Sequenzen, ${newScenes.length} Szenen und ${newShots.length} Shots dupliziert`);
+      const sequenceResults = await Promise.all(sequencePromises);
+      
+      // Replace ALL temp data with real data
+      setSequences(prevSequences => {
+        const updated = [...prevSequences];
+        sequenceResults.forEach(({ tempSeqId, realSeq }) => {
+          const idx = updated.findIndex(s => s.id === tempSeqId);
+          if (idx >= 0) updated[idx] = realSeq;
+        });
+        return updated;
+      });
+      
+      setScenes(prevScenes => {
+        const updated = [...prevScenes];
+        sequenceResults.forEach(({ sceneResults }) => {
+          sceneResults.forEach(({ tempSceneId, realScene }) => {
+            const idx = updated.findIndex(s => s.id === tempSceneId);
+            if (idx >= 0) updated[idx] = realScene;
+          });
+        });
+        return updated;
+      });
+      
+      setShots(prevShots => {
+        const updated = [...prevShots];
+        sequenceResults.forEach(({ sceneResults }) => {
+          sceneResults.forEach(({ shotResults }) => {
+            shotResults.forEach(({ tempId, realShot }) => {
+              const idx = updated.findIndex(s => s.id === tempId);
+              if (idx >= 0) updated[idx] = realShot;
+            });
+          });
+        });
+        return updated;
+      });
     } catch (error) {
       console.error('Error duplicating act:', error);
       toast.dismiss();
@@ -1012,11 +1168,35 @@ export function FilmDropdown({
 
       // Get all scenes in this sequence
       const seqScenes = scenes.filter(sc => sc.sequenceId === sequenceId);
-      const newScenes: typeof scenes = [];
-      const newShots: typeof shots = [];
       
-      // Duplicate each scene
-      for (const scene of seqScenes) {
+      // 🚀 OPTIMISTIC UI: Create temp data instantly
+      const tempScenes = seqScenes.map((sc, idx) => ({
+        ...sc,
+        id: `temp-scene-${Date.now()}-${idx}`,
+        sequenceId: newSequence.id,
+      }));
+      
+      const tempShotsMap: Record<string, typeof shots> = {};
+      seqScenes.forEach((sc, idx) => {
+        const sceneShots = shots.filter(sh => sh.sceneId === sc.id);
+        tempShotsMap[sc.id] = sceneShots.map((shot, shotIdx) => ({
+          ...shot,
+          id: `temp-shot-${Date.now()}-${idx}-${shotIdx}`,
+          sceneId: tempScenes[idx].id,
+        }));
+      });
+      
+      const allTempShots = Object.values(tempShotsMap).flat();
+      
+      // Show everything immediately!
+      setSequences(prevSequences => [...prevSequences, newSequence]);
+      setScenes(prevScenes => [...prevScenes, ...tempScenes]);
+      setShots(prevShots => [...prevShots, ...allTempShots]);
+      toast.dismiss();
+      toast.success(`Sequenz mit ${tempScenes.length} Szenen und ${allTempShots.length} Shots dupliziert`);
+      
+      // 🚀 PARALLEL: Create scenes and shots in background
+      const scenePromises = seqScenes.map(async (scene, sceneIdx) => {
         const newScene = await TimelineAPI.createScene(newSequence.id, {
           sceneNumber: scene.sceneNumber,
           title: scene.title,
@@ -1025,14 +1205,13 @@ export function FilmDropdown({
           timeOfDay: scene.timeOfDay,
           characters: scene.characters,
         }, token);
-        newScenes.push(newScene);
-
-        // Get all shots in this scene
-        const sceneShots = shots.filter(sh => sh.sceneId === scene.id);
         
-        // Duplicate each shot
-        for (const shot of sceneShots) {
-          const newShot = await ShotsAPI.createShot(newScene.id, {
+        const sceneShots = tempShotsMap[scene.id];
+        const originalShots = shots.filter(sh => sh.sceneId === scene.id);
+        
+        // Create ALL shots for this scene in PARALLEL
+        const shotPromises = originalShots.map((shot, shotIdx) => 
+          ShotsAPI.createShot(newScene.id, {
             shotNumber: shot.shotNumber,
             description: shot.description,
             cameraAngle: shot.cameraAngle,
@@ -1044,18 +1223,43 @@ export function FilmDropdown({
             shotlengthSeconds: shot.shotlengthSeconds,
             notes: shot.notes,
             dialog: shot.dialog,
-          }, token);
-          newShots.push(newShot);
-        }
-      }
-
-      // Update state
-      setSequences([...sequences, newSequence]);
-      setScenes([...scenes, ...newScenes]);
-      setShots([...shots, ...newShots]);
+          }, token).then(realShot => ({
+            tempId: sceneShots[shotIdx].id,
+            realShot
+          }))
+        );
+        
+        const shotResults = await Promise.all(shotPromises);
+        
+        return {
+          tempSceneId: tempScenes[sceneIdx].id,
+          realScene: newScene,
+          shotResults
+        };
+      });
       
-      toast.dismiss();
-      toast.success(`Sequenz mit ${newScenes.length} Szenen und ${newShots.length} Shots dupliziert`);
+      const sceneResults = await Promise.all(scenePromises);
+      
+      // Replace temp data with real data
+      setScenes(prevScenes => {
+        const updated = [...prevScenes];
+        sceneResults.forEach(({ tempSceneId, realScene }) => {
+          const idx = updated.findIndex(s => s.id === tempSceneId);
+          if (idx >= 0) updated[idx] = realScene;
+        });
+        return updated;
+      });
+      
+      setShots(prevShots => {
+        const updated = [...prevShots];
+        sceneResults.forEach(({ shotResults }) => {
+          shotResults.forEach(({ tempId, realShot }) => {
+            const idx = updated.findIndex(s => s.id === tempId);
+            if (idx >= 0) updated[idx] = realShot;
+          });
+        });
+        return updated;
+      });
     } catch (error) {
       console.error('Error duplicating sequence:', error);
       toast.dismiss();
@@ -1088,11 +1292,23 @@ export function FilmDropdown({
 
       // Get all shots in this scene
       const sceneShots = shots.filter(sh => sh.sceneId === sceneId);
-      const newShots: typeof shots = [];
       
-      // Duplicate each shot
-      for (const shot of sceneShots) {
-        const newShot = await ShotsAPI.createShot(newScene.id, {
+      // 🚀 PERFORMANCE: Create temp shots for instant UI update
+      const tempShots = sceneShots.map((shot, idx) => ({
+        ...shot,
+        id: `temp-shot-${Date.now()}-${idx}`,
+        sceneId: newScene.id,
+      }));
+      
+      // Show shots immediately (optimistic UI)
+      setScenes(prevScenes => [...prevScenes, newScene]);
+      setShots(prevShots => [...prevShots, ...tempShots]);
+      toast.dismiss();
+      toast.success(`Scene mit ${tempShots.length} Shots dupliziert`);
+      
+      // 🚀 PERFORMANCE: Create ALL shots in PARALLEL (not serial!)
+      const shotPromises = sceneShots.map((shot, idx) => 
+        ShotsAPI.createShot(newScene.id, {
           shotNumber: shot.shotNumber,
           description: shot.description,
           cameraAngle: shot.cameraAngle,
@@ -1104,16 +1320,25 @@ export function FilmDropdown({
           shotlengthSeconds: shot.shotlengthSeconds,
           notes: shot.notes,
           dialog: shot.dialog,
-        }, token);
-        newShots.push(newShot);
-      }
-
-      // Update state
-      setScenes([...scenes, newScene]);
-      setShots([...shots, ...newShots]);
+        }, token).then(realShot => ({ tempId: tempShots[idx].id, realShot }))
+      );
       
-      toast.dismiss();
-      toast.success(`Scene mit ${newShots.length} Shots dupliziert`);
+      // Wait for all shots to be created
+      const shotResults = await Promise.all(shotPromises);
+      
+      // Replace temp shots with real shots
+      setShots(prevShots => {
+        const updated = [...prevShots];
+        shotResults.forEach(({ tempId, realShot }) => {
+          const tempIdx = updated.findIndex(s => s.id === tempId);
+          if (tempIdx >= 0) {
+            updated[tempIdx] = realShot;
+          }
+        });
+        return updated;
+      });
+
+
     } catch (error) {
       console.error('Error duplicating scene:', error);
       toast.dismiss();
@@ -1148,9 +1373,9 @@ export function FilmDropdown({
   const handleDeleteScene = async (sceneId: string) => {
     if (!confirm('Scene und alle Shots löschen?')) return;
 
-    // Optimistic delete
-    setScenes(scenes.filter(s => s.id !== sceneId));
-    setShots(shots.filter(s => s.sceneId !== sceneId));
+    // Optimistic delete - 🔥 FIX: Use functional updates to prevent stale state
+    setScenes(prevScenes => prevScenes.filter(s => s.id !== sceneId));
+    setShots(prevShots => prevShots.filter(s => s.sceneId !== sceneId));
 
     try {
       const token = await getAccessToken();
@@ -1166,8 +1391,8 @@ export function FilmDropdown({
   };
 
   const handleDeleteShot = async (shotId: string) => {
-    // Optimistic delete
-    setShots(shots.filter(s => s.id !== shotId));
+    // Optimistic delete - 🔥 FIX: Use functional updates to prevent stale state
+    setShots(prevShots => prevShots.filter(s => s.id !== shotId));
 
     try {
       const token = await getAccessToken();
@@ -1888,7 +2113,7 @@ export function FilmDropdown({
                 >
                   <div className={cn(
                     "border-2 rounded-lg bg-blue-50 border-blue-200 dark:bg-blue-950/40 dark:border-blue-700 overflow-hidden",
-                    isPending && "opacity-60"
+                    isPending && "opacity-90 animate-pulse"
                   )}>
                     {/* Act Header */}
                   <div className="flex items-center gap-2 py-4 px-3">
@@ -1927,7 +2152,16 @@ export function FilmDropdown({
                   ) : (
                     <>
                       <span 
-                        className="flex-1 font-semibold text-[18px] text-[rgb(21,93,252)]"
+                        className="flex-1 font-semibold text-[18px] text-[rgb(21,93,252)] cursor-pointer hover:opacity-80 transition-opacity"
+                        onClick={() => {
+                          const next = new Set(expandedActs);
+                          if (isExpanded) {
+                            next.delete(act.id);
+                          } else {
+                            next.add(act.id);
+                          }
+                          setExpandedActs(next);
+                        }}
                       >
                         {act.title}
                       </span>
@@ -1943,6 +2177,15 @@ export function FilmDropdown({
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem 
+                            onClick={() => {
+                              setInfoDialogData({ type: 'act', node: act });
+                              setInfoDialogOpen(true);
+                            }}
+                          >
+                            <Info className="size-3.5 mr-2" />
+                            Informationen
+                          </DropdownMenuItem>
                           <DropdownMenuItem 
                             onClick={() => {
                               setEditingAct(act.id);
@@ -2052,7 +2295,7 @@ export function FilmDropdown({
                             >
                               <div className={cn(
                                 "border-2 rounded-lg bg-green-50 border-green-200 dark:bg-green-950/40 dark:border-green-700 overflow-hidden",
-                                isSeqPending && "opacity-60"
+                                isSeqPending && "opacity-90 animate-pulse"
                               )}>
                                 {/* Sequence Header */}
                               <div className="flex items-center gap-2 p-2">
@@ -2091,7 +2334,16 @@ export function FilmDropdown({
                               ) : (
                                 <>
                                   <span 
-                                    className="flex-1 text-sm font-semibold text-[14px] text-[rgb(0,166,62)]"
+                                    className="flex-1 text-sm font-semibold text-[14px] text-[rgb(0,166,62)] cursor-pointer hover:opacity-80 transition-opacity"
+                                    onClick={() => {
+                                      const next = new Set(expandedSequences);
+                                      if (isSeqExpanded) {
+                                        next.delete(sequence.id);
+                                      } else {
+                                        next.add(sequence.id);
+                                      }
+                                      setExpandedSequences(next);
+                                    }}
                                   >
                                     {sequence.title}
                                   </span>
@@ -2107,6 +2359,15 @@ export function FilmDropdown({
                                       </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
+                                      <DropdownMenuItem 
+                                        onClick={() => {
+                                          setInfoDialogData({ type: 'sequence', node: sequence });
+                                          setInfoDialogOpen(true);
+                                        }}
+                                      >
+                                        <Info className="size-3 mr-2" />
+                                        Informationen
+                                      </DropdownMenuItem>
                                       <DropdownMenuItem 
                                         onClick={() => {
                                           setEditingSequence(sequence.id);
@@ -2216,7 +2477,7 @@ export function FilmDropdown({
                                         >
                                           <div className={cn(
                                             "border-2 rounded-lg bg-pink-50 border-pink-200 dark:bg-pink-950/40 dark:border-pink-700 overflow-hidden",
-                                            isScenePending && "opacity-60"
+                                            isScenePending && "opacity-90 animate-pulse"
                                           )}>
                                             {/* Scene Header */}
                                             <div className="flex items-center gap-2 p-2">
@@ -2255,7 +2516,16 @@ export function FilmDropdown({
                                           ) : (
                                             <>
                                               <span 
-                                                className="flex-1 text-xs font-semibold text-[14px] text-[rgb(230,0,118)]"
+                                                className="flex-1 text-xs font-semibold text-[14px] text-[rgb(230,0,118)] cursor-pointer hover:opacity-80 transition-opacity"
+                                                onClick={() => {
+                                                  const next = new Set(expandedScenes);
+                                                  if (isSceneExpanded) {
+                                                    next.delete(scene.id);
+                                                  } else {
+                                                    next.add(scene.id);
+                                                  }
+                                                  setExpandedScenes(next);
+                                                }}
                                               >
                                                 {scene.title}
                                               </span>
@@ -2271,6 +2541,15 @@ export function FilmDropdown({
                                                   </Button>
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end">
+                                                  <DropdownMenuItem 
+                                                    onClick={() => {
+                                                      setInfoDialogData({ type: 'scene', node: scene });
+                                                      setInfoDialogOpen(true);
+                                                    }}
+                                                  >
+                                                    <Info className="size-3 mr-2" />
+                                                    Informationen
+                                                  </DropdownMenuItem>
                                                   <DropdownMenuItem 
                                                     onClick={() => {
                                                       setEditingScene(scene.id);
@@ -2343,27 +2622,31 @@ export function FilmDropdown({
                                               Shot hinzufügen
                                             </Button>
 
-                                            {sceneShots.map((shot, shotIndex) => (
-                                              <div key={shot.id}>
-                                                {/* Drop Zone VOR diesem Shot */}
-                                                <DropZone
-                                                  type={ItemTypes.SHOT}
-                                                  index={shotIndex}
-                                                  onDrop={(draggedId, targetIndex) => handleShotDropAtIndex(draggedId, targetIndex, scene.id)}
-                                                  label="Shot"
-                                                  height="shot"
-                                                />
-                                                
-                                                {/* Shot selbst (droppable für Swap) */}
-                                                <DraggableShot
-                                                  shot={shot}
-                                                  index={shotIndex}
-                                                  onSwap={handleShotSwap}
-                                                >
-                                                  <ShotCard
-                                                  shot={shot}
-                                                  sceneId={scene.id}
-                                                  projectId={projectId}
+                                            {sceneShots.map((shot, shotIndex) => {
+                                              const isShotPending = pendingIds.has(shot.id);
+                                              
+                                              return (
+                                                <div key={shot.id}>
+                                                  {/* Drop Zone VOR diesem Shot */}
+                                                  <DropZone
+                                                    type={ItemTypes.SHOT}
+                                                    index={shotIndex}
+                                                    onDrop={(draggedId, targetIndex) => handleShotDropAtIndex(draggedId, targetIndex, scene.id)}
+                                                    label="Shot"
+                                                    height="shot"
+                                                  />
+                                                  
+                                                  {/* Shot selbst (droppable für Swap) */}
+                                                  <DraggableShot
+                                                    shot={shot}
+                                                    index={shotIndex}
+                                                    onSwap={handleShotSwap}
+                                                  >
+                                                    <ShotCard
+                                                    shot={shot}
+                                                    sceneId={scene.id}
+                                                    projectId={projectId}
+                                                    isPending={isShotPending}
                                                   projectCharacters={characters}
                                                   isExpanded={expandedShots.has(shot.id)}
                                                   onToggleExpand={() => {
@@ -2378,6 +2661,13 @@ export function FilmDropdown({
                                                   onUpdate={handleUpdateShot}
                                                   onDelete={handleDeleteShot}
                                                   onDuplicate={handleDuplicateShot}
+                                                  onShowInfo={(shotId) => {
+                                                    const shotData = shots.find(s => s.id === shotId);
+                                                    if (shotData) {
+                                                      setInfoDialogData({ type: 'shot', node: shotData });
+                                                      setInfoDialogOpen(true);
+                                                    }
+                                                  }}
                                                   onImageUpload={handleShotImageUpload}
                                                   onAudioUpload={handleShotAudioUpload}
                                                   onAudioDelete={handleShotAudioDelete}
@@ -2397,8 +2687,9 @@ export function FilmDropdown({
                                                   height="shot"
                                                 />
                                               )}
-                                            </div>
-                                            ))}
+                                              </div>
+                                            );
+                                            })}
                                           </div>
                                         </CollapsibleContent>
                                       </div>
@@ -2457,6 +2748,17 @@ export function FilmDropdown({
           );
         })}
       </div>
+
+      {/* Statistics & Logs Dialog */}
+      {infoDialogData && (
+        <TimelineNodeStatsDialog
+          open={infoDialogOpen}
+          onOpenChange={setInfoDialogOpen}
+          nodeType={infoDialogData.type}
+          node={infoDialogData.node}
+          projectId={projectId}
+        />
+      )}
     </DndProvider>
   );
 }
