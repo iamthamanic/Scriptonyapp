@@ -4,6 +4,7 @@ import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { motion, AnimatePresence } from "motion/react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Separator } from "../ui/separator";
 import { Badge } from "../ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../ui/alert-dialog";
@@ -29,6 +30,7 @@ import { projectsApi, worldsApi, itemsApi } from "../../utils/api";
 import { toast } from "sonner@2.0.3";
 import { deleteCharacter as deleteCharacterApi, getCharacters, createCharacter as createCharacterApi, updateCharacter as updateCharacterApi } from "../../lib/api/characters-api";
 import { getAuthToken } from "../../lib/auth/getAuthToken";
+import { uploadProjectImage, validateImageFile } from "../../lib/api/image-upload-api";
 import * as TimelineAPI from "../../lib/api/timeline-api";
 import * as TimelineAPIV2 from "../../lib/api/timeline-api-v2";
 import * as ShotsAPI from "../../lib/api/shots-api";
@@ -73,6 +75,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
   const [newProjectDuration, setNewProjectDuration] = useState("");
   const [newProjectLinkedWorld, setNewProjectLinkedWorld] = useState<string | undefined>();
   const [newProjectCoverImage, setNewProjectCoverImage] = useState<string | undefined>();
+  const [newProjectCoverFile, setNewProjectCoverFile] = useState<File | undefined>();
   const newProjectCoverInputRef = useRef<HTMLInputElement>(null);
   
   // 🎬 NEW: Narrative Structure & Beat Template States (Create Dialog)
@@ -153,6 +156,15 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
       ]);
       setProjects(projectsData);
       setWorlds(worldsData);
+      
+      // 📸 Load cover images from DB into state
+      const coverImages: Record<string, string> = {};
+      projectsData.forEach((project: any) => {
+        if (project.cover_image_url) {
+          coverImages[project.id] = project.cover_image_url;
+        }
+      });
+      setProjectCoverImages(coverImages);
     } catch (error) {
       console.error("Error loading data:", error);
       toast.error("Fehler beim Laden der Daten");
@@ -468,6 +480,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         beatTemplateValue = `custom:${customBeatTemplate}`;
       }
 
+      // Create project WITHOUT cover image first
       const project = await projectsApi.create({
         title: newProjectTitle,
         logline: newProjectLogline,
@@ -476,7 +489,6 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         duration: newProjectDuration,
         linkedWorldId: newProjectLinkedWorld,
         inspirations: projectInspirationNotes,
-        coverImage: newProjectCoverImage,
         // Series: episode_layout + season_engine
         episode_layout: newProjectType === 'series' ? (episodeLayoutValue || undefined) : undefined,
         season_engine: newProjectType === 'series' ? (seasonEngineValue || undefined) : undefined,
@@ -485,13 +497,30 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         beat_template: beatTemplateValue || undefined,
       });
 
+      // Upload cover image AFTER project creation
+      let finalImageUrl: string | undefined = undefined;
+      if (newProjectCoverFile) {
+        try {
+          toast.loading('Bild wird hochgeladen...');
+          finalImageUrl = await uploadProjectImage(project.id, newProjectCoverFile);
+          toast.dismiss();
+          
+          // Update project with image URL in state
+          project.coverImageUrl = finalImageUrl;
+        } catch (uploadError) {
+          console.error('Error uploading project image:', uploadError);
+          toast.dismiss();
+          toast.error('Bild konnte nicht hochgeladen werden');
+        }
+      }
+
       setProjects([...projects, project]);
       
-      // Store cover image in state if provided
-      if (newProjectCoverImage) {
+      // Store cover image URL in state if provided
+      if (finalImageUrl) {
         setProjectCoverImages(prev => ({
           ...prev,
-          [project.id]: newProjectCoverImage
+          [project.id]: finalImageUrl
         }));
       }
       
@@ -504,6 +533,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
       setNewProjectDuration("");
       setNewProjectLinkedWorld(undefined);
       setNewProjectCoverImage(undefined);
+      setNewProjectCoverFile(undefined);
       setSelectedGenres([]);
       setInspirations([""]);
       setNewProjectNarrativeStructure("");
@@ -526,12 +556,24 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
 
   const handleNewProjectCoverChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (!file) return;
+
+    try {
+      // Validate file
+      validateImageFile(file, 5);
+
+      // Store file for later upload
+      setNewProjectCoverFile(file);
+
+      // Create preview URL for UI
       const reader = new FileReader();
       reader.onloadend = () => {
         setNewProjectCoverImage(reader.result as string);
       };
       reader.readAsDataURL(file);
+    } catch (error) {
+      console.error('Error validating image:', error);
+      toast.error(error instanceof Error ? error.message : 'Ungültiges Bild');
     }
   };
 
@@ -620,11 +662,22 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         project={currentProject} 
         onBack={() => onNavigate("projects")}
         coverImage={projectCoverImages[currentProject.id]}
-        onCoverImageChange={(imageUrl) => {
+        onCoverImageChange={async (imageUrl) => {
+          // Update local state immediately (optimistic UI)
           setProjectCoverImages(prev => ({
             ...prev,
             [currentProject.id]: imageUrl
           }));
+          
+          // Update in database
+          try {
+            await projectsApi.update(currentProject.id, { 
+              cover_image_url: imageUrl 
+            });
+          } catch (error) {
+            console.error('Error saving image URL to database:', error);
+            // Note: Toast already shown in handleFileChange
+          }
         }}
         worldbuildingItems={worldbuildingItems}
         onUpdate={loadData}
@@ -926,9 +979,9 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                         onClick={() => onNavigate("projects", project.id)}
                       >
                         <div className="flex items-center gap-3 p-3">
-                          {/* Thumbnail Left */}
+                          {/* Thumbnail Left - Portrait 2:3 Ratio */}
                           <div 
-                            className="w-[140px] h-[79px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0"
+                            className="w-[56px] h-[84px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0"
                             style={projectCoverImages[project.id] ? { 
                               backgroundImage: `url(${projectCoverImages[project.id]})`, 
                               backgroundSize: 'cover', 
@@ -2678,15 +2731,29 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const imageUrl = reader.result as string;
-        onCoverImageChange(imageUrl);
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    try {
+      // Validate file
+      validateImageFile(file, 5);
+
+      // Show loading toast
+      toast.loading('Bild wird hochgeladen...');
+
+      // Upload to Supabase Storage
+      const imageUrl = await uploadProjectImage(project.id, file);
+
+      // Update local state immediately (optimistic UI)
+      onCoverImageChange(imageUrl);
+
+      toast.dismiss();
+      toast.success('Bild erfolgreich hochgeladen!');
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      toast.dismiss();
+      toast.error(error instanceof Error ? error.message : 'Fehler beim Hochladen');
     }
   };
 
@@ -3133,40 +3200,62 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
 
   return (
     <div className="min-h-screen pb-24">
-      {/* Header with Cover - Full Width */}
-      <div className="relative group w-full">
-        <div 
-          onClick={handleCoverClick}
-          className="w-full aspect-[16/9] max-h-[200px] bg-gradient-to-br from-primary/20 to-accent/20 cursor-pointer relative overflow-hidden"
-          style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-        >
-          {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
-              <Camera className="size-6 text-primary" />
+      {/* Back Button */}
+      <Button 
+        variant="ghost" 
+        onClick={onBack} 
+        className="absolute top-4 left-4 backdrop-blur-sm bg-background/80 rounded-full h-9 px-3 z-10"
+      >
+        <ArrowLeft className="size-4 mr-1" />
+        Zurück
+      </Button>
+
+      {/* Hidden File Input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
+      {/* MOBILE LAYOUT (<768px): Cover oben + Collapsible Info */}
+      <div className="md:hidden">
+        {/* Cover Top Centered */}
+        <div className="pt-16 pb-4 flex justify-center bg-gradient-to-b from-primary/5 to-transparent">
+          <div className="relative group">
+            <div 
+              onClick={handleCoverClick}
+              className="w-[240px] aspect-[2/3] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 cursor-pointer relative overflow-hidden shadow-lg"
+              style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+            >
+              {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
+                  <Camera className="size-6 text-primary" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileChange}
-          className="hidden"
-        />
-        <Button 
-          variant="ghost" 
-          onClick={onBack} 
-          className="absolute top-4 left-4 backdrop-blur-sm bg-background/80 rounded-full h-9 px-3 z-10"
-        >
-          <ArrowLeft className="size-4 mr-1" />
-          Zurück
-        </Button>
-      </div>
 
-      {/* Project Info */}
-      <div className="px-4 py-6">
-        <Card className="mb-4">
+        {/* Collapsible Info - Default: CLOSED */}
+        <div className="px-4">
+          <Collapsible defaultOpen={false}>
+            <CollapsibleTrigger asChild>
+              <Card className="mb-4 cursor-pointer hover:bg-muted/30 transition-colors">
+                <CardHeader className="p-4 flex flex-row items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Film className="size-4 text-primary" />
+                    <CardTitle className="text-base">Projekt-Informationen</CardTitle>
+                  </div>
+                  <ChevronDown className="size-4 text-muted-foreground transition-transform" />
+                </CardHeader>
+              </Card>
+            </CollapsibleTrigger>
+            
+            <CollapsibleContent>
+              <Card className="mb-4">
           <CardHeader className="p-4 flex flex-row items-center justify-between">
             <CardTitle className="text-base">Projekt-Informationen</CardTitle>
             
@@ -3540,51 +3629,230 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
             )}
           </CardContent>
         </Card>
-
-        {/* Danger Zone - Collapsible */}
-        <Collapsible defaultOpen={false}>
-          <Card className="border-destructive/50 bg-destructive/5">
-            <CollapsibleTrigger className="w-full">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="size-5 text-destructive" />
-                    <CardTitle className="text-destructive">Danger Zone</CardTitle>
-                  </div>
-                  <ChevronDown className="size-5 text-destructive transition-transform [[data-state=open]_&]:rotate-180" />
-                </div>
-                <CardDescription className="text-left">
-                  Unwiderrufliche Aktionen für dieses Projekt
-                </CardDescription>
-              </CardHeader>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="space-y-3 pt-0">
-                <div className="flex items-center justify-between p-4 border border-destructive/30 rounded-lg bg-background">
-                  <div>
-                    <p className="font-medium text-destructive">Projekt löschen</p>
-                    <p className="text-sm text-muted-foreground">
-                      Löscht das Projekt permanent mit allen Szenen, Charakteren und Episoden
-                    </p>
-                  </div>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => setShowDeleteDialog(true)}
-                    className="shrink-0"
-                  >
-                    <Trash2 className="size-4 mr-2" />
-                    Löschen
-                  </Button>
-                </div>
-              </CardContent>
             </CollapsibleContent>
-          </Card>
-        </Collapsible>
+          </Collapsible>
+        </div>
       </div>
 
+      {/* DESKTOP LAYOUT (≥768px): Info links + Cover rechts */}
+      <div className="hidden md:block pt-16 px-6">
+        <div className="flex gap-6 items-start">
+          {/* Info Left - Same height as cover (360px) */}
+          <div className="flex-1">
+            <Card className="h-[360px] flex flex-col">
+              <CardHeader className="p-4 flex flex-row items-center justify-between shrink-0">
+                <CardTitle className="text-base">📽️ Projekt-Informationen</CardTitle>
+                
+                {/* SAVE BUTTON + 3-PUNKTE-MENÜ */}
+                <div className="flex items-center gap-2">
+                  {/* SAVE BUTTON - nur im Edit-Modus sichtbar */}
+                  {isEditingInfo && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={handleSaveProjectInfo}
+                      className="h-8 gap-1.5"
+                    >
+                      <Save className="size-3.5" />
+                      Speichern
+                    </Button>
+                  )}
+                  
+                  {/* 3-PUNKTE-MENÜ */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0"
+                      >
+                        <MoreVertical className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {isEditingInfo ? (
+                        <>
+                          <DropdownMenuItem onClick={handleSaveProjectInfo}>
+                            <Save className="size-3.5 mr-2" />
+                            Speichern
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                            // Reset to original values
+                            setIsEditingInfo(false);
+                            setEditedTitle(project.title || "");
+                            setEditedLogline(project.logline || "");
+                            setEditedType(project.type || "");
+                            setEditedGenre(project.genre || "");
+                            setEditedDuration(project.duration || "");
+                            setEditedNarrativeStructure(project.narrative_structure || "");
+                            setEditedBeatTemplate(project.beat_template || "");
+                            setEditedGenresMulti(project.genre ? project.genre.split(", ") : []);
+                            setEditedEpisodeLayout(project.episode_layout || "");
+                            setEditedSeasonEngine(project.season_engine || "");
+                          }}>
+                            <X className="size-3.5 mr-2" />
+                            Abbrechen
+                          </DropdownMenuItem>
+                        </>
+                      ) : (
+                        <>
+                          <DropdownMenuItem onClick={() => setIsEditingInfo(true)}>
+                            <Edit2 className="size-3.5 mr-2" />
+                            Bearbeiten
+                          </DropdownMenuItem>
+                          {onDuplicate && (
+                            <DropdownMenuItem onClick={onDuplicate}>
+                              <Copy className="size-3.5 mr-2" />
+                              Projekt duplizieren
+                            </DropdownMenuItem>
+                          )}
+                          {onShowStats && (
+                            <DropdownMenuItem onClick={onShowStats}>
+                              <BarChart3 className="size-3.5 mr-2" />
+                              Statistiken & Logs
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem 
+                            onClick={() => setShowDeleteDialog(true)}
+                            className="text-red-600 focus:text-red-600"
+                          >
+                            <Trash2 className="size-3.5 mr-2" />
+                            Projekt löschen
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-4 pt-0 flex-1 overflow-y-auto space-y-3">
+                {isEditingInfo ? (
+                  <>
+                    {/* Same edit form as mobile - will be duplicated for simplicity */}
+                    <div>
+                      <Label htmlFor="project-title-desktop" className="text-xs mb-1 block">Titel</Label>
+                      <Input
+                        id="project-title-desktop"
+                        value={editedTitle}
+                        onChange={(e) => setEditedTitle(e.target.value)}
+                        className="h-9 font-bold"
+                      />
+                    </div>
+                    <Separator />
+                    <div>
+                      <Label htmlFor="project-logline-desktop" className="text-xs mb-1 block">Logline</Label>
+                      <Textarea
+                        id="project-logline-desktop"
+                        value={editedLogline}
+                        onChange={(e) => setEditedLogline(e.target.value)}
+                        rows={2}
+                        className="text-sm"
+                      />
+                    </div>
+                    <Separator />
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label htmlFor="project-type-desktop" className="text-xs mb-1 block">Type</Label>
+                        <Select value={editedType} onValueChange={setEditedType}>
+                          <SelectTrigger id="project-type-desktop" className="h-8 text-sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="film">Film</SelectItem>
+                            <SelectItem value="series">Serie</SelectItem>
+                            <SelectItem value="book">Buch</SelectItem>
+                            <SelectItem value="audio">Hörspiel</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="project-duration-desktop" className="text-xs mb-1 block">Dauer</Label>
+                        <Input
+                          id="project-duration-desktop"
+                          value={editedDuration}
+                          onChange={(e) => setEditedDuration(e.target.value)}
+                          placeholder="90 min"
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Titel</div>
+                      <div className="font-bold">{editedTitle}</div>
+                    </div>
+                    <Separator />
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Logline</div>
+                      <div className="text-sm text-muted-foreground">{editedLogline || "Keine Logline"}</div>
+                    </div>
+                    <Separator />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Type</div>
+                        <div className="text-sm">{(() => {
+                          const typeInfo = getProjectTypeInfo(editedType);
+                          return typeInfo.label;
+                        })()}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Dauer</div>
+                        <div className="text-sm">{editedDuration || "–"}</div>
+                      </div>
+                    </div>
+                    <Separator />
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Genres</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {editedGenresMulti.length > 0 ? (
+                          editedGenresMulti.map((genre) => (
+                            <Badge key={genre} variant="secondary" className="text-xs">
+                              {genre}
+                            </Badge>
+                          ))
+                        ) : (
+                          <div className="text-sm text-muted-foreground">Keine Genres</div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Cover Right */}
+          <div className="shrink-0">
+            <div className="relative group">
+              <div 
+                onClick={handleCoverClick}
+                className="w-[240px] aspect-[2/3] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 cursor-pointer relative overflow-hidden shadow-lg"
+                style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+              >
+                {!coverImage && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Film className="size-16 text-primary/30" />
+                  </div>
+                )}
+                {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
+                    <Camera className="size-6 text-primary" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Shared Content Below (Scenes, Characters, etc.) */}
+
       {/* Film Timeline Section */}
-      <section className="px-4 mb-8">
+      <section className="px-6 mb-8 mt-8">
         <Collapsible open={structureOpen} onOpenChange={setStructureOpen}>
           <div className="flex items-center justify-between mb-4">
             <Badge className="bg-[#6E59A5] text-white h-8 flex items-center">Structure & Beats</Badge>
@@ -3632,7 +3900,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
       </section>
 
       {/* Characters Section */}
-      <section className="px-4 mb-8">
+      <section className="px-6 mb-8">
         <Collapsible open={charactersOpen} onOpenChange={setCharactersOpen}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">

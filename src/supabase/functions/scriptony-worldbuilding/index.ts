@@ -526,6 +526,102 @@ app.get("/locations", async (c) => {
 });
 
 // =============================================================================
+// IMAGE UPLOAD
+// =============================================================================
+
+/**
+ * POST /worlds/:id/upload-image
+ * Upload world cover image to storage
+ */
+app.post("/worlds/:id/upload-image", async (c) => {
+  try {
+    console.log(`[Worldbuilding] Image upload starting`);
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const worldId = c.req.param("id");
+    const formData = await c.req.formData();
+    const file = formData.get("file") as File;
+
+    if (!file) {
+      return c.json({ error: "File is required" }, 400);
+    }
+
+    // Check file size (max 5MB)
+    const maxSizeMB = 5;
+    const maxSizeBytes = maxSizeMB * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      return c.json({ 
+        error: `File too large: ${(file.size / 1024 / 1024).toFixed(2)} MB (Max: ${maxSizeMB} MB)` 
+      }, 400);
+    }
+
+    // Create bucket if not exists
+    const bucketName = "make-3b52693b-world-images";
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some(bucket => bucket.name === bucketName);
+    
+    if (!bucketExists) {
+      await supabase.storage.createBucket(bucketName, { 
+        public: false, 
+        fileSizeLimit: 10485760 // 10MB
+      });
+      console.log(`[Worldbuilding] Created image bucket`);
+    }
+
+    // Upload file
+    const fileExt = file.name.split('.').pop() || 'jpg';
+    const fileName = `${worldId}-cover-${Date.now()}.${fileExt}`;
+    const filePath = `covers/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(bucketName)
+      .upload(filePath, file, { 
+        contentType: file.type || 'image/jpeg',
+        upsert: true 
+      });
+
+    if (uploadError) {
+      console.error("[Worldbuilding] Upload error:", uploadError);
+      return c.json({ error: uploadError.message }, 500);
+    }
+
+    // Get signed URL (1 year)
+    const { data: urlData } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(filePath, 31536000);
+
+    if (!urlData) {
+      return c.json({ error: "Failed to get signed URL" }, 500);
+    }
+
+    // Update world with image URL
+    const { error: dbError } = await supabase
+      .from("worlds")
+      .update({ 
+        cover_image_url: urlData.signedUrl,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", worldId);
+
+    if (dbError) {
+      console.error("[Worldbuilding] DB update error:", dbError);
+      return c.json({ error: dbError.message }, 500);
+    }
+
+    console.log(`[Worldbuilding] Image uploaded successfully: ${fileName}`);
+    return c.json({ imageUrl: urlData.signedUrl });
+  } catch (error: any) {
+    console.error("[Worldbuilding] Image upload error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
 // START SERVER
 // =============================================================================
 

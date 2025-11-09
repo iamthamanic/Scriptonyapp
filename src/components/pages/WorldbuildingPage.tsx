@@ -4,9 +4,11 @@ import { motion, AnimatePresence } from "motion/react";
 import { projectsApi, worldsApi } from "../../utils/api";
 import { getCharacters } from "../../lib/api/characters-api";
 import { getAuthToken } from "../../lib/auth/getAuthToken";
+import { uploadWorldImage, validateImageFile } from "../../lib/api/image-upload-api";
 import { MapBuilder } from "../MapBuilder";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Separator } from "../ui/separator";
 import { Badge } from "../ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
@@ -87,6 +89,15 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
           lastEdited: new Date(world.updated_at || world.created_at)
         }));
         setWorlds(worldsWithDates);
+        
+        // 📸 Load cover images from DB into state
+        const coverImages: Record<string, string> = {};
+        worldsData.forEach((world: any) => {
+          if (world.cover_image_url) {
+            coverImages[world.id] = world.cover_image_url;
+          }
+        });
+        setWorldCoverImages(coverImages);
         
         // Mark data as loaded (cache)
         dataLoadedRef.current = true;
@@ -203,7 +214,7 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
     }
   };
 
-  const handleUpdateWorld = async (worldId: string, updates: { name: string; description: string; linkedProjectId?: string | null }) => {
+  const handleUpdateWorld = async (worldId: string, updates: { name?: string; description?: string; linked_project_id?: string | null; cover_image_url?: string }) => {
     try {
       const updated = await worldsApi.update(worldId, updates);
       
@@ -214,7 +225,10 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
         lastEdited: new Date(updated.updated_at || new Date())
       } : w));
       
-      toast.success("Welt erfolgreich aktualisiert!");
+      // Only show success toast if not just updating cover image (that has its own toast)
+      if (!updates.cover_image_url || Object.keys(updates).length > 1) {
+        toast.success("Welt erfolgreich aktualisiert!");
+      }
     } catch (error) {
       console.error("Error updating world:", error);
       toast.error("Fehler beim Aktualisieren der Welt");
@@ -248,12 +262,28 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
         world={selectedWorldData} 
         onBack={() => onNavigate("worldbuilding")} 
         onUpdate={handleUpdateWorld}
+        onDuplicate={() => handleDuplicateWorld(selectedWorldData.id)}
+        onShowStats={() => {
+          setSelectedStatsWorld(selectedWorldData);
+          setShowStatsDialog(true);
+        }}
         coverImage={worldCoverImages[selectedWorldData.id]}
-        onCoverImageChange={(imageUrl) => {
+        onCoverImageChange={async (imageUrl) => {
+          // Update local state immediately (optimistic UI)
           setWorldCoverImages(prev => ({
             ...prev,
             [selectedWorldData.id]: imageUrl
           }));
+          
+          // Update in database
+          try {
+            await handleUpdateWorld(selectedWorldData.id, { 
+              cover_image_url: imageUrl 
+            });
+          } catch (error) {
+            console.error('Error saving image URL to database:', error);
+            // Note: Toast already shown in handleFileChange
+          }
         }}
         projects={projects}
         onDelete={handleDeleteWorld}
@@ -493,9 +523,19 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
                         onClick={() => onNavigate("worldbuilding", world.id)}
                       >
                         <div className="flex items-center gap-3 p-3">
-                          {/* Icon/Thumbnail Left */}
-                          <div className="w-[140px] h-[79px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0 flex items-center justify-center">
-                            <Globe className="size-8 text-primary/40" />
+                          {/* Icon/Thumbnail Left - Portrait 2:3 Ratio */}
+                          <div 
+                            className="w-[56px] h-[84px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0 flex items-center justify-center"
+                            style={worldCoverImages[world.id] ? { 
+                              backgroundImage: `url(${worldCoverImages[world.id]})`, 
+                              backgroundSize: 'cover', 
+                              backgroundPosition: 'center',
+                              backgroundBlendMode: 'overlay'
+                            } : {}}
+                          >
+                            {!worldCoverImages[world.id] && (
+                              <Globe className="size-8 text-primary/40" />
+                            )}
                           </div>
 
                           {/* Content Right */}
@@ -747,7 +787,9 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
 interface WorldDetailProps {
   world: any;
   onBack: () => void;
-  onUpdate: (worldId: string, updates: { name: string; description: string; linkedProjectId?: string | null }) => Promise<void>;
+  onUpdate: (worldId: string, updates: { name: string; description: string; linked_project_id?: string | null }) => Promise<void>;
+  onDuplicate?: () => void;
+  onShowStats?: () => void;
   coverImage?: string;
   onCoverImageChange: (imageUrl: string) => void;
   projects: Array<{
@@ -769,7 +811,7 @@ interface WorldDetailProps {
   deleteLoading: boolean;
 }
 
-function WorldDetail({ world, onBack, onUpdate, coverImage, onCoverImageChange, projects: initialProjects, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading }: WorldDetailProps) {
+function WorldDetail({ world, onBack, onUpdate, onDuplicate, onShowStats, coverImage, onCoverImageChange, projects: initialProjects, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading }: WorldDetailProps) {
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [editedName, setEditedName] = useState(world.name);
   const [editedDescription, setEditedDescription] = useState(world.description);
@@ -885,15 +927,29 @@ function WorldDetail({ world, onBack, onUpdate, coverImage, onCoverImageChange, 
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const imageUrl = reader.result as string;
-        onCoverImageChange(imageUrl);
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    try {
+      // Validate file
+      validateImageFile(file, 5);
+
+      // Show loading toast
+      toast.loading('Bild wird hochgeladen...');
+
+      // Upload to Supabase Storage
+      const imageUrl = await uploadWorldImage(world.id, file);
+
+      // Update local state immediately (optimistic UI)
+      onCoverImageChange(imageUrl);
+
+      toast.dismiss();
+      toast.success('Bild erfolgreich hochgeladen!');
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      toast.dismiss();
+      toast.error(error instanceof Error ? error.message : 'Fehler beim Hochladen');
     }
   };
 
@@ -1030,47 +1086,62 @@ function WorldDetail({ world, onBack, onUpdate, coverImage, onCoverImageChange, 
 
   return (
     <div className="min-h-screen pb-24">
-      {/* Header with Cover - Full Width */}
-      <div className="relative group w-full">
-        <div 
-          onClick={handleCoverClick}
-          className="w-full aspect-[16/9] max-h-[200px] bg-gradient-to-br from-primary/20 to-accent/20 cursor-pointer relative overflow-hidden"
-          style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-        >
-          {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
-              <Camera className="size-6 text-primary" />
+      {/* Back Button */}
+      <Button 
+        variant="ghost" 
+        onClick={onBack} 
+        className="absolute top-4 left-4 backdrop-blur-sm bg-background/80 rounded-full h-9 px-3 z-10"
+      >
+        <ArrowLeft className="size-4 mr-1.5" />
+        Zurück
+      </Button>
+
+      {/* Hidden File Input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
+      {/* MOBILE LAYOUT (<768px): Cover oben + Collapsible Info */}
+      <div className="md:hidden">
+        {/* Cover Top Centered */}
+        <div className="pt-16 pb-4 flex justify-center bg-gradient-to-b from-primary/5 to-transparent">
+          <div className="relative group">
+            <div 
+              onClick={handleCoverClick}
+              className="w-[240px] aspect-[2/3] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 cursor-pointer relative overflow-hidden shadow-lg"
+              style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+            >
+              {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
+                  <Camera className="size-6 text-primary" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileChange}
-          className="hidden"
-        />
-        <Button 
-          variant="ghost" 
-          onClick={onBack} 
-          className="absolute top-4 left-4 backdrop-blur-sm bg-background/80 rounded-full h-9 px-3 z-10"
-        >
-          <ArrowLeft className="size-4 mr-1.5" />
-          Zurück
-        </Button>
-      </div>
 
-      <div className="px-4 py-6">
-        <div className="flex items-start justify-between gap-3 mb-6">
-          <div className="flex-1 min-w-0">
-            <h1 className="mb-2">{editedName}</h1>
-            <p className="text-muted-foreground text-sm">{editedDescription}</p>
-          </div>
-        </div>
-
-        {/* Basis-Informationen Card - außerhalb der Tabs */}
-        <Card className="mb-6">
+        {/* Collapsible Info - Default: CLOSED */}
+        <div className="px-4">
+          <Collapsible defaultOpen={false}>
+            <CollapsibleTrigger asChild>
+              <Card className="mb-4 cursor-pointer hover:bg-muted/30 transition-colors">
+                <CardHeader className="p-4 flex flex-row items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Globe className="size-4 text-primary" />
+                    <CardTitle className="text-base">Basis-Informationen</CardTitle>
+                  </div>
+                  <ChevronDown className="size-4 text-muted-foreground transition-transform" />
+                </CardHeader>
+              </Card>
+            </CollapsibleTrigger>
+            
+            <CollapsibleContent>
+              <Card className="mb-4">
           <CardHeader className="p-4 flex flex-row items-center justify-between">
             <CardTitle className="text-base">Basis-Informationen</CardTitle>
             
@@ -1085,7 +1156,7 @@ function WorldDetail({ world, onBack, onUpdate, coverImage, onCoverImageChange, 
                     await onUpdate(world.id, {
                       name: editedName,
                       description: editedDescription,
-                      linkedProjectId: linkedProjectId || null,
+                      linked_project_id: linkedProjectId || null,
                     });
                     setIsEditingInfo(false);
                   }}
@@ -1114,7 +1185,7 @@ function WorldDetail({ world, onBack, onUpdate, coverImage, onCoverImageChange, 
                         await onUpdate(world.id, {
                           name: editedName,
                           description: editedDescription,
-                          linkedProjectId: linkedProjectId || null,
+                          linked_project_id: linkedProjectId || null,
                         });
                         setIsEditingInfo(false);
                       }}>
@@ -1137,6 +1208,25 @@ function WorldDetail({ world, onBack, onUpdate, coverImage, onCoverImageChange, 
                       <DropdownMenuItem onClick={() => setIsEditingInfo(true)}>
                         <Edit2 className="size-3.5 mr-2" />
                         Bearbeiten
+                      </DropdownMenuItem>
+                      {onDuplicate && (
+                        <DropdownMenuItem onClick={onDuplicate}>
+                          <Copy className="size-3.5 mr-2" />
+                          Welt duplizieren
+                        </DropdownMenuItem>
+                      )}
+                      {onShowStats && (
+                        <DropdownMenuItem onClick={onShowStats}>
+                          <BarChart3 className="size-3.5 mr-2" />
+                          Statistiken & Logs
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem 
+                        onClick={() => setShowDeleteDialog(true)}
+                        className="text-red-600 focus:text-red-600"
+                      >
+                        <Trash2 className="size-3.5 mr-2" />
+                        Welt löschen
                       </DropdownMenuItem>
                     </>
                   )}
@@ -1219,47 +1309,215 @@ function WorldDetail({ world, onBack, onUpdate, coverImage, onCoverImageChange, 
             )}
           </CardContent>
         </Card>
-
-        {/* Danger Zone - Collapsible */}
-        <Collapsible defaultOpen={false}>
-          <Card className="border-destructive/50 bg-destructive/5 mb-6">
-            <CollapsibleTrigger className="w-full">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="size-5 text-destructive" />
-                    <CardTitle className="text-destructive">Danger Zone</CardTitle>
-                  </div>
-                  <ChevronDown className="size-5 text-destructive transition-transform [[data-state=open]_&]:rotate-180" />
-                </div>
-                <CardDescription className="text-left">
-                  Unwiderrufliche Aktionen für diese Welt
-                </CardDescription>
-              </CardHeader>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="space-y-3 pt-0">
-                <div className="flex items-center justify-between p-4 border border-destructive/30 rounded-lg bg-background">
-                  <div>
-                    <p className="font-medium text-destructive">Welt löschen</p>
-                    <p className="text-sm text-muted-foreground">
-                      Löscht die Welt permanent mit allen Kategorien, Items und Kartendaten
-                    </p>
-                  </div>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => setShowDeleteDialog(true)}
-                    className="shrink-0"
-                  >
-                    <Trash2 className="size-4 mr-2" />
-                    Löschen
-                  </Button>
-                </div>
-              </CardContent>
             </CollapsibleContent>
-          </Card>
-        </Collapsible>
+          </Collapsible>
+        </div>
+      </div>
+
+      {/* DESKTOP LAYOUT (≥768px): Info links + Cover rechts */}
+      <div className="hidden md:block pt-16 px-6">
+        <div className="flex gap-6 items-start">
+          {/* Info Left - Same height as cover (360px) */}
+          <div className="flex-1">
+            <Card className="h-[360px] flex flex-col">
+              <CardHeader className="p-4 flex flex-row items-center justify-between shrink-0">
+                <CardTitle className="text-base">🌍 Basis-Informationen</CardTitle>
+                
+                {/* SAVE BUTTON + 3-PUNKTE-MENÜ */}
+                <div className="flex items-center gap-2">
+                  {/* SAVE BUTTON - nur im Edit-Modus sichtbar */}
+                  {isEditingInfo && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={async () => {
+                        await onUpdate(world.id, {
+                          name: editedName,
+                          description: editedDescription,
+                          linked_project_id: linkedProjectId || null,
+                        });
+                        setIsEditingInfo(false);
+                      }}
+                      className="h-8 gap-1.5"
+                    >
+                      <Save className="size-3.5" />
+                      Speichern
+                    </Button>
+                  )}
+                  
+                  {/* 3-PUNKTE-MENÜ */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0"
+                      >
+                        <MoreVertical className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {isEditingInfo ? (
+                        <>
+                          <DropdownMenuItem onClick={async () => {
+                            await onUpdate(world.id, {
+                              name: editedName,
+                              description: editedDescription,
+                              linked_project_id: linkedProjectId || null,
+                            });
+                            setIsEditingInfo(false);
+                          }}>
+                            <Save className="size-3.5 mr-2" />
+                            Speichern
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                            // Reset to original values
+                            setIsEditingInfo(false);
+                            setEditedName(world.name || "");
+                            setEditedDescription(world.description || "");
+                            setLinkedProjectId(world.linkedProjectId || "");
+                          }}>
+                            <X className="size-3.5 mr-2" />
+                            Abbrechen
+                          </DropdownMenuItem>
+                        </>
+                      ) : (
+                        <>
+                          <DropdownMenuItem onClick={() => setIsEditingInfo(true)}>
+                            <Edit2 className="size-3.5 mr-2" />
+                            Bearbeiten
+                          </DropdownMenuItem>
+                          {onDuplicate && (
+                            <DropdownMenuItem onClick={onDuplicate}>
+                              <Copy className="size-3.5 mr-2" />
+                              Welt duplizieren
+                            </DropdownMenuItem>
+                          )}
+                          {onShowStats && (
+                            <DropdownMenuItem onClick={onShowStats}>
+                              <BarChart3 className="size-3.5 mr-2" />
+                              Statistiken & Logs
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem 
+                            onClick={() => setShowDeleteDialog(true)}
+                            className="text-red-600 focus:text-red-600"
+                          >
+                            <Trash2 className="size-3.5 mr-2" />
+                            Welt löschen
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-4 pt-0 flex-1 overflow-y-auto space-y-3">
+                {isEditingInfo ? (
+                  <>
+                    {/* Edit form - compact for desktop */}
+                    <div>
+                      <Label htmlFor="world-name-desktop" className="text-xs mb-1 block">Name</Label>
+                      <Input
+                        id="world-name-desktop"
+                        value={editedName}
+                        onChange={(e) => setEditedName(e.target.value)}
+                        className="h-9"
+                      />
+                    </div>
+                    <Separator />
+                    <div>
+                      <Label htmlFor="world-description-desktop" className="text-xs mb-1 block">Beschreibung</Label>
+                      <Textarea
+                        id="world-description-desktop"
+                        value={editedDescription}
+                        onChange={(e) => setEditedDescription(e.target.value)}
+                        rows={2}
+                        className="text-sm"
+                      />
+                    </div>
+                    <Separator />
+                    <div>
+                      <Label htmlFor="linked-project-desktop" className="text-xs mb-1 block">Verknüpftes Projekt</Label>
+                      <Select value={linkedProjectId || "none"} onValueChange={(value) => setLinkedProjectId(value === "none" ? "" : value)}>
+                        <SelectTrigger id="linked-project-desktop" className="h-8 text-sm">
+                          <SelectValue placeholder="Kein Projekt" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Kein Projekt</SelectItem>
+                          {projects.map((project) => (
+                            <SelectItem key={project.id} value={project.id}>
+                              {project.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Name</div>
+                      <div>{editedName}</div>
+                    </div>
+                    <Separator />
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Beschreibung</div>
+                      <div className="text-sm text-muted-foreground">{editedDescription || "Keine Beschreibung"}</div>
+                    </div>
+                    <Separator />
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Verknüpftes Projekt</div>
+                      {linkedProjectId ? (
+                        <div className="flex items-center gap-2">
+                          <Badge variant="secondary" className="text-xs">
+                            <Film className="size-3 mr-1" />
+                            {projects.find(p => p.id === linkedProjectId)?.title || "Nicht gefunden"}
+                          </Badge>
+                          {projectCharacters.length > 0 && (
+                            <span className="text-xs text-muted-foreground">
+                              {projectCharacters.length} Charakter{projectCharacters.length !== 1 ? 'e' : ''}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">Kein Projekt verknüpft</div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Cover Right */}
+          <div className="shrink-0">
+            <div className="relative group">
+              <div 
+                onClick={handleCoverClick}
+                className="w-[240px] aspect-[2/3] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 cursor-pointer relative overflow-hidden shadow-lg"
+                style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+              >
+                {!coverImage && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Globe className="size-16 text-primary/30" />
+                  </div>
+                )}
+                {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
+                    <Camera className="size-6 text-primary" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Shared Content Below (Categories, Map, etc.) */}
+      <div className="px-4 py-6 md:px-6">
 
         {/* Tabs */}
         <Tabs defaultValue="categories" className="w-full">

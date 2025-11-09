@@ -13,6 +13,7 @@ import { AuthPage } from "./components/pages/AuthPage";
 import { MigrationPage } from "./components/pages/MigrationPage";
 import { ResetPasswordPage } from "./components/pages/ResetPasswordPage";
 import { ApiTestPage } from "./components/pages/ApiTestPage";
+import LayoutPrototypePage from "./components/pages/LayoutPrototypePage";
 // FilmTimelinePage removed - use ProjectsPage with FilmDropdown instead
 import { Toaster } from "./components/ui/sonner";
 import { ScriptonyAssistant } from "./components/ScriptonyAssistant";
@@ -154,6 +155,8 @@ function AppContent() {
         );
       case "api-test":
         return <ApiTestPage />;
+      case "layout-prototype":
+        return <LayoutPrototypePage />;
       // film-timeline route removed - navigate to 'projects' instead
       default:
         return <HomePage onNavigate={handleNavigate} />;

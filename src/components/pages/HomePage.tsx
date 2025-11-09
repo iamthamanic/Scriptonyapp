@@ -47,7 +47,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
             description: p.logline || '',
             lastEdited: new Date(p.last_edited || p.created_at),
             type: 'project',
-            thumbnailUrl: p.thumbnailUrl,
+            thumbnailUrl: p.cover_image_url, // ✅ Map DB column to frontend property
             genre: p.genre,
             projectType: p.type,
           });
@@ -62,7 +62,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
             description: w.description || '',
             lastEdited: new Date(w.updated_at || w.created_at),
             type: 'world',
-            thumbnailUrl: w.thumbnailUrl,
+            thumbnailUrl: w.cover_image_url, // ✅ Map DB column to frontend property
           });
         });
       }
@@ -127,9 +127,9 @@ export function HomePage({ onNavigate }: HomePageProps) {
                 onClick={() => onNavigate(item.type === 'project' ? 'projects' : 'worldbuilding', item.id)}
               >
                 <div className="flex items-center gap-3 p-3">
-                  {/* Thumbnail Left */}
+                  {/* Thumbnail Left - Portrait 2:3 Ratio */}
                   <div 
-                    className="w-[100px] h-[56px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0"
+                    className="w-[67px] h-[100px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0"
                     style={item.thumbnailUrl ? { 
                       backgroundImage: `url(${item.thumbnailUrl})`, 
                       backgroundSize: 'cover', 
