@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
-import { Clock, Quote, ChevronRight, Film, Globe, Layers, Tv, Book, Headphones } from "lucide-react";
+import { Clock, Quote, ChevronRight, Film, Globe, Layers, Tv, Book, Headphones, List, LayoutGrid } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { LoadingSpinner } from "../LoadingSpinner";
+import { HomeCarousel } from "../HomeCarousel";
 import { projectsApi, worldsApi } from "../../utils/api";
 
 interface HomePageProps {
@@ -23,10 +25,22 @@ type RecentItem = {
 export function HomePage({ onNavigate }: HomePageProps) {
   const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"carousel" | "list">(() => {
+    // 💾 Load from localStorage, default: list
+    const saved = localStorage.getItem("scriptony_home_view_mode");
+    if (saved === "carousel" || saved === "list") return saved;
+    // Default: list (Desktop & Mobile)
+    return "list";
+  });
 
   useEffect(() => {
     loadRecentItems();
   }, []);
+
+  // 💾 Save view mode to localStorage
+  useEffect(() => {
+    localStorage.setItem("scriptony_home_view_mode", viewMode);
+  }, [viewMode]);
 
   const loadRecentItems = async () => {
     try {
@@ -108,25 +122,74 @@ export function HomePage({ onNavigate }: HomePageProps) {
       </div>
 
       {/* Recent Items */}
-      <section className="px-4 mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2>Zuletzt bearbeitet</h2>
+      <section className={viewMode === "list" ? "px-4 mb-8" : "mb-8"}>
+        <div className="flex items-center justify-end mb-4 px-4">
+          {/* View Toggle */}
+          <div className="flex gap-1 border rounded-lg p-0.5 bg-background">
+            <Button
+              variant={viewMode === "carousel" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setViewMode("carousel")}
+              className="h-7 px-2.5 gap-1.5"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="size-3.5"
+              >
+                {/* Left rectangle - smaller */}
+                <rect x="1" y="4" width="3" height="8" rx="0.5" fill="currentColor" opacity="0.6" />
+                {/* Center rectangle - larger */}
+                <rect x="6" y="2" width="4" height="12" rx="0.5" fill="currentColor" />
+                {/* Right rectangle - smaller */}
+                <rect x="12" y="4" width="3" height="8" rx="0.5" fill="currentColor" opacity="0.6" />
+              </svg>
+              <span className="text-xs hidden sm:inline">Carousel</span>
+            </Button>
+            <Button
+              variant={viewMode === "list" ? "secondary" : "ghost"}
+              size="sm"
+              onClick={() => setViewMode("list")}
+              className="h-7 px-2.5 gap-1.5"
+            >
+              <List className="size-3.5" />
+              <span className="text-xs hidden sm:inline">Liste</span>
+            </Button>
+          </div>
         </div>
+
         {recentItems.length === 0 ? (
-          <Card>
+          <Card className="mx-4">
             <CardContent className="p-8 text-center text-muted-foreground">
               Noch keine Inhalte. Erstelle dein erstes Projekt oder deine erste Welt!
             </CardContent>
           </Card>
+        ) : viewMode === "carousel" ? (
+          <HomeCarousel
+            items={recentItems}
+            onNavigate={(page, id) => onNavigate(page, id)}
+            showLatestLabel={recentItems.length > 0}
+          />
         ) : (
-          <div className="space-y-3">
-            {recentItems.map((item) => (
+          <div className="space-y-3 px-4">
+            {recentItems.map((item, index) => (
               <Card 
                 key={item.id}
-                className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
+                className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30 relative"
                 onClick={() => onNavigate(item.type === 'project' ? 'projects' : 'worldbuilding', item.id)}
               >
-                <div className="flex items-center gap-3 p-3">
+                {/* "Zuletzt bearbeitet" Badge - ONLY first item - TOP RIGHT */}
+                {index === 0 && (
+                  <Badge variant="default" className="absolute top-2 right-2 z-10 text-[9px] h-4 px-1.5 flex items-center gap-0.5 shadow-md">
+                    <Clock className="size-2" />
+                    Zuletzt bearbeitet
+                  </Badge>
+                )}
+                
+                <div className="flex items-center gap-3 p-3 rounded-lg transition-all hover:bg-primary/20 border-2 border-transparent hover:border-primary/30">
                   {/* Thumbnail Left - Portrait 2:3 Ratio */}
                   <div 
                     className="w-[67px] h-[100px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0"
@@ -208,7 +271,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
                       <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
                         <Clock className="size-3" />
                         <span>
-                          Zuletzt: {item.lastEdited.toLocaleDateString("de-DE", { 
+                          {item.lastEdited.toLocaleDateString("de-DE", { 
                             day: "2-digit", 
                             month: "2-digit" 
                           })}, {item.lastEdited.toLocaleTimeString("de-DE", { 

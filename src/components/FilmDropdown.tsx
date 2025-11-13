@@ -54,6 +54,14 @@ interface FilmDropdownProps {
   characters?: Character[]; // Optionally pass characters from parent to avoid double-loading
   initialData?: TimelineData; // 🚀 PERFORMANCE: Pre-loaded timeline data for instant rendering
   onDataChange?: (data: TimelineData) => void; // Callback to update parent cache
+  containerRef?: React.RefObject<HTMLDivElement>; // 🎯 Ref for BeatColumn synchronization
+  // 🎯 Controlled Collapse States for dynamic beat alignment
+  expandedActs?: Set<string>;
+  expandedSequences?: Set<string>;
+  expandedScenes?: Set<string>;
+  onExpandedActsChange?: (expanded: Set<string>) => void;
+  onExpandedSequencesChange?: (expanded: Set<string>) => void;
+  onExpandedScenesChange?: (expanded: Set<string>) => void;
 }
 
 // DnD Types
@@ -334,6 +342,7 @@ export function FilmDropdown({
   characters: externalCharacters,
   initialData,
   onDataChange,
+  containerRef,
 }: FilmDropdownProps) {
   const { getAccessToken } = useAuth();
 
@@ -402,15 +411,8 @@ export function FilmDropdown({
   }, [onDataChange]);
 
   // Update parent cache whenever data changes (debounced with slight delay)
-  // 🔥 FIX: Don't update cache if we're using initialData - it would cause infinite loop!
-  const wasInitialized = useRef(!!initialData);
   useEffect(() => {
-    // NEVER update parent if we started with initialData
-    if (wasInitialized.current) {
-      return;
-    }
-
-    // Only update if we loaded data ourselves (not from cache)
+    // Always notify parent of current data state
     const timer = setTimeout(() => {
       if (onDataChangeRef.current && !loading) {
         onDataChangeRef.current({
@@ -2062,7 +2064,7 @@ export function FilmDropdown({
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className="flex flex-col gap-1.5">
+      <div ref={containerRef} data-beat-container className="flex flex-col gap-1.5 p-4">
         {/* Add Act Button */}
         <Button
           size="sm"
@@ -2111,12 +2113,20 @@ export function FilmDropdown({
                     setExpandedActs(next);
                   }}
                 >
-                  <div className={cn(
-                    "border-2 rounded-lg bg-blue-50 border-blue-200 dark:bg-blue-950/40 dark:border-blue-700 overflow-hidden",
-                    isPending && "opacity-90 animate-pulse"
-                  )}>
+                  <div 
+                    data-act-card
+                    data-act-id={act.id}
+                    className={cn(
+                      "border-2 rounded-lg bg-blue-50 border-blue-200 dark:bg-blue-950/40 dark:border-blue-700 overflow-hidden",
+                      isPending && "opacity-90 animate-pulse"
+                    )}
+                  >
                     {/* Act Header */}
-                  <div className="flex items-center gap-2 py-4 px-3">
+                  <div 
+                    data-act-header
+                    data-act-header-id={act.id}
+                    className="flex items-center gap-2 py-4 px-3"
+                  >
                     <GripVertical className="size-4 text-muted-foreground cursor-move flex-shrink-0" />
                     
                     <CollapsibleTrigger asChild>
@@ -2293,10 +2303,13 @@ export function FilmDropdown({
                                 setExpandedSequences(next);
                               }}
                             >
-                              <div className={cn(
-                                "border-2 rounded-lg bg-green-50 border-green-200 dark:bg-green-950/40 dark:border-green-700 overflow-hidden",
-                                isSeqPending && "opacity-90 animate-pulse"
-                              )}>
+                              <div 
+                                data-sequence-id={sequence.id}
+                                className={cn(
+                                  "border-2 rounded-lg bg-green-50 border-green-200 dark:bg-green-950/40 dark:border-green-700 overflow-hidden",
+                                  isSeqPending && "opacity-90 animate-pulse"
+                                )}
+                              >
                                 {/* Sequence Header */}
                               <div className="flex items-center gap-2 p-2">
                                 <GripVertical className="size-3 text-muted-foreground cursor-move flex-shrink-0" />
@@ -2475,10 +2488,13 @@ export function FilmDropdown({
                                             setExpandedScenes(next);
                                           }}
                                         >
-                                          <div className={cn(
-                                            "border-2 rounded-lg bg-pink-50 border-pink-200 dark:bg-pink-950/40 dark:border-pink-700 overflow-hidden",
-                                            isScenePending && "opacity-90 animate-pulse"
-                                          )}>
+                                          <div 
+                                            data-scene-id={scene.id}
+                                            className={cn(
+                                              "border-2 rounded-lg bg-pink-50 border-pink-200 dark:bg-pink-950/40 dark:border-pink-700 overflow-hidden",
+                                              isScenePending && "opacity-90 animate-pulse"
+                                            )}
+                                          >
                                             {/* Scene Header */}
                                             <div className="flex items-center gap-2 p-2">
                                               <GripVertical className="size-3 text-muted-foreground cursor-move flex-shrink-0" />

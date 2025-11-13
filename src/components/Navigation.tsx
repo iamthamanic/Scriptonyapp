@@ -1,4 +1,4 @@
-import { Home, Film, Globe, Dumbbell, Upload, ShieldCheck, Settings, Moon, Sun, User, Presentation } from "lucide-react";
+import { Home, Film, Globe, Dumbbell, Upload, ShieldCheck, Settings, Moon, Sun, User, Presentation, Layers } from "lucide-react";
 import { Button } from "./ui/button";
 import scriptonyLogo from 'figma:asset/762fa3b0c4bc468cb3c0661e6181aee92a01370d.png';
 
@@ -13,7 +13,7 @@ interface NavigationProps {
 export function Navigation({ currentPage, onNavigate, theme, onToggleTheme, userRole }: NavigationProps) {
   const baseNavItems = [
     { id: "home", label: "Home", icon: Home },
-    { id: "projects", label: "Projekte", icon: Film },
+    { id: "projects", label: "Projekte", icon: Layers },
     { id: "worldbuilding", label: "Welten", icon: Globe },
     { id: "gym", label: "Gym", icon: Dumbbell },
     { id: "present", label: "Present", icon: Presentation },

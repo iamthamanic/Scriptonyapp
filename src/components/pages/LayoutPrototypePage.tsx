@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { ArrowLeft, Camera, Edit2, BarChart3, Trash2, Copy, Save, X, Film, Monitor, Smartphone } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
@@ -12,6 +12,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
+import { BeatRail, type BeatDefinition } from '../BeatRail';
+import { ContainerCard, type ContainerData } from '../ContainerCard';
 
 /**
  * 🎨 LAYOUT PROTOTYPE PAGE
@@ -24,7 +26,7 @@ import {
  */
 
 type ViewMode = 'desktop' | 'mobile';
-type LayoutOption = 'option1' | 'option2';
+type LayoutOption = 'option1' | 'option2' | 'option3';
 
 export default function LayoutPrototypePage() {
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
@@ -68,6 +70,7 @@ export default function LayoutPrototypePage() {
                 <TabsList>
                   <TabsTrigger value="option1">Option 1 (NEU)</TabsTrigger>
                   <TabsTrigger value="option2">Option 2 (AKTUELL)</TabsTrigger>
+                  <TabsTrigger value="option3">Option 3 (BEATS)</TabsTrigger>
                 </TabsList>
               </Tabs>
             </div>
@@ -79,9 +82,13 @@ export default function LayoutPrototypePage() {
               <>
                 <strong>Option 1 (NEU):</strong> Desktop = Info links + Cover rechts | Mobile = Cover oben + Collapsible Info
               </>
-            ) : (
+            ) : selectedOption === 'option2' ? (
               <>
                 <strong>Option 2 (AKTUELL):</strong> Cover oben zentriert + Info unten (volle Breite)
+              </>
+            ) : (
+              <>
+                <strong>Option 3 (BEATS):</strong> Structure & Beats Tab mit Beat-Rail + Container-Stack (Dropdown/Timeline View)
               </>
             )}
           </div>
@@ -99,8 +106,10 @@ export default function LayoutPrototypePage() {
         >
           {selectedOption === 'option1' ? (
             <Option1Layout viewMode={viewMode} />
-          ) : (
+          ) : selectedOption === 'option2' ? (
             <Option2Layout viewMode={viewMode} />
+          ) : (
+            <Option3Layout viewMode={viewMode} />
           )}
         </div>
 
@@ -111,18 +120,45 @@ export default function LayoutPrototypePage() {
               <CardTitle className="text-base">Legende</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
-              <div className="flex items-start gap-2">
-                <Badge variant="outline" className="shrink-0">Cover</Badge>
-                <span className="text-muted-foreground">Portrait 2:3 Ratio (240x360px)</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <Badge variant="outline" className="shrink-0">Info Card</Badge>
-                <span className="text-muted-foreground">Projekt-/Welt-Informationen mit Edit/Delete Buttons</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <Badge variant="outline" className="shrink-0">Collapsible</Badge>
-                <span className="text-muted-foreground">Mobile: Info standardmäßig eingeklappt (spart Platz!)</span>
-              </div>
+              {selectedOption === 'option3' ? (
+                <>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="shrink-0 bg-primary/10">Beat Rail</Badge>
+                    <span className="text-muted-foreground">Lila Spalte mit %-Skala und dynamischen Beat-Bands (klickbar!)</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="shrink-0">Beat Band</Badge>
+                    <span className="text-muted-foreground">Klick auf Beat → expandiert → Edit-Felder erscheinen DIREKT IM BEAT (wie bei Shots!)</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="shrink-0">Edit-Felder</Badge>
+                    <span className="text-muted-foreground">Start/End Container Dropdowns + Percentage Inputs → Beat passt sich live an!</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="shrink-0">Container</Badge>
+                    <span className="text-muted-foreground">Acts → Sequences → Scenes → Shots (alle collapsible)</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="shrink-0 bg-primary/10 text-primary border-primary/30">STC</Badge>
+                    <span className="text-muted-foreground">Template-Badge (STC = Save-The-Cat, HJ = Hero's Journey, etc.)</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="shrink-0">Cover</Badge>
+                    <span className="text-muted-foreground">Portrait 2:3 Ratio (240x360px)</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="shrink-0">Info Card</Badge>
+                    <span className="text-muted-foreground">Projekt-/Welt-Informationen mit Edit/Delete Buttons</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="shrink-0">Collapsible</Badge>
+                    <span className="text-muted-foreground">Mobile: Info standardmäßig eingeklappt (spart Platz!)</span>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -497,3 +533,354 @@ function Option2Layout({ viewMode }: { viewMode: ViewMode }) {
     </div>
   );
 }
+
+/**
+ * OPTION 3: Structure & Beats Prototype
+ * Beat-Rail + Container-Stack mit Dropdown/Timeline Toggle
+ */
+function Option3Layout({ viewMode }: { viewMode: ViewMode }) {
+  const [structureView, setStructureView] = useState<'dropdown' | 'timeline'>('dropdown');
+  const [beats, setBeats] = useState<BeatDefinition[]>(MOCK_BEATS);
+  const containerStackRef = useRef<HTMLDivElement>(null);
+
+  const handleUpdateBeat = (beatId: string, updates: Partial<BeatDefinition>) => {
+    setBeats(prev => prev.map(beat => 
+      beat.id === beatId ? { ...beat, ...updates } : beat
+    ));
+  };
+
+  return (
+    <div className="min-h-screen pb-24">
+      {/* Header */}
+      <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b border-border">
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="sm" className="gap-2">
+                <ArrowLeft className="size-4" />
+                Zurück
+              </Button>
+              <Separator orientation="vertical" className="h-6" />
+              <h2>Mein Episches Filmprojekt</h2>
+            </div>
+
+            {/* View Toggle */}
+            <Tabs value={structureView} onValueChange={(v) => setStructureView(v as any)}>
+              <TabsList>
+                <TabsTrigger value="dropdown">Dropdown</TabsTrigger>
+                <TabsTrigger value="timeline">Timeline</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          {/* Tab Navigation */}
+          <Tabs defaultValue="structure" className="mt-3">
+            <TabsList>
+              <TabsTrigger value="scenes">Szenen</TabsTrigger>
+              <TabsTrigger value="structure">Structure & Beats</TabsTrigger>
+              <TabsTrigger value="timeline">Timeline</TabsTrigger>
+              <TabsTrigger value="characters">Charaktere</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      </div>
+
+      {/* Content: Beat-Rail + Container-Stack */}
+      <div className="flex h-[calc(100vh-200px)]">
+        {/* Beat Rail */}
+        <BeatRail
+          beats={beats}
+          containers={MOCK_CONTAINERS}
+          containerStackRef={containerStackRef}
+          onUpdateBeat={handleUpdateBeat}
+          className="sticky top-[140px] self-start"
+        />
+
+        {/* Container Stack */}
+        <div
+          ref={containerStackRef}
+          className="flex-1 overflow-y-auto p-4 space-y-0"
+        >
+          {structureView === 'dropdown' ? (
+            <>
+              {MOCK_CONTAINERS.map(container => (
+                <ContainerCard
+                  key={container.id}
+                  container={container}
+                  level={0}
+                  defaultExpanded={true}
+                />
+              ))}
+            </>
+          ) : (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              Timeline View (Coming Soon)
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// MOCK DATA
+// =============================================================================
+
+/**
+ * Mock Containers: 3 Acts → Sequences → Scenes → Shots
+ */
+const MOCK_CONTAINERS: ContainerData[] = [
+  {
+    id: 'A1',
+    type: 'act',
+    number: 1,
+    title: 'Act 1 - Einführung',
+    description: 'Setup der Welt und Charaktere',
+    beatChips: ['STC:Opening', 'STC:Theme', 'STC:Setup'],
+    children: [
+      {
+        id: 'A1S1',
+        type: 'sequence',
+        number: 1,
+        title: 'Sequence 1 - Die gewöhnliche Welt',
+        children: [
+          {
+            id: 'A1S1SC1',
+            type: 'scene',
+            number: 1,
+            title: 'Scene 1 - Morgendliche Routine',
+            beatChips: ['STC:Opening'],
+            children: [
+              { id: 'A1S1SC1SH1', type: 'shot', number: 1, title: 'Shot 1 - Wide Shot Stadt', beatChips: ['STC:Opening'] },
+              { id: 'A1S1SC1SH2', type: 'shot', number: 2, title: 'Shot 2 - Close-Up Protagonist' },
+              { id: 'A1S1SC1SH3', type: 'shot', number: 3, title: 'Shot 3 - Medium Shot Kaffee' },
+            ],
+          },
+          {
+            id: 'A1S1SC2',
+            type: 'scene',
+            number: 2,
+            title: 'Scene 2 - Auf dem Weg zur Arbeit',
+            children: [
+              { id: 'A1S1SC2SH1', type: 'shot', number: 1, title: 'Shot 1 - Tracking Shot Straße' },
+              { id: 'A1S1SC2SH2', type: 'shot', number: 2, title: 'Shot 2 - POV Auto' },
+            ],
+          },
+          {
+            id: 'A1S1SC3',
+            type: 'scene',
+            number: 3,
+            title: 'Scene 3 - Im Büro',
+            children: [
+              { id: 'A1S1SC3SH1', type: 'shot', number: 1, title: 'Shot 1 - Establishing Shot Büro' },
+              { id: 'A1S1SC3SH2', type: 'shot', number: 2, title: 'Shot 2 - Medium Shot Schreibtisch' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'A1S2',
+        type: 'sequence',
+        number: 2,
+        title: 'Sequence 2 - Der Ruf zum Abenteuer',
+        beatChips: ['STC:Catalyst'],
+        children: [
+          {
+            id: 'A1S2SC1',
+            type: 'scene',
+            number: 1,
+            title: 'Scene 1 - Mysteriöser Anruf',
+            beatChips: ['STC:Catalyst'],
+            children: [
+              { id: 'A1S2SC1SH1', type: 'shot', number: 1, title: 'Shot 1 - Close-Up Telefon', beatChips: ['STC:Catalyst'] },
+              { id: 'A1S2SC1SH2', type: 'shot', number: 2, title: 'Shot 2 - Reaction Shot' },
+            ],
+          },
+          {
+            id: 'A1S2SC2',
+            type: 'scene',
+            number: 2,
+            title: 'Scene 2 - Erste Hinweise',
+            children: [
+              { id: 'A1S2SC2SH1', type: 'shot', number: 1, title: 'Shot 1 - Insert Shot Dokument' },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'A2',
+    type: 'act',
+    number: 2,
+    title: 'Act 2 - Konfrontation',
+    description: 'Steigende Spannung und Hindernisse',
+    beatChips: ['STC:Midpoint', 'STC:AllIsLost'],
+    children: [
+      {
+        id: 'A2S1',
+        type: 'sequence',
+        number: 1,
+        title: 'Sequence 1 - Neue Verbündete',
+        children: [
+          {
+            id: 'A2S1SC1',
+            type: 'scene',
+            number: 1,
+            title: 'Scene 1 - Treffen im Café',
+            children: [
+              { id: 'A2S1SC1SH1', type: 'shot', number: 1, title: 'Shot 1 - Two Shot Dialog' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'A2S2',
+        type: 'sequence',
+        number: 2,
+        title: 'Sequence 2 - Wendepunkt',
+        beatChips: ['STC:Midpoint'],
+        children: [
+          {
+            id: 'A2S2SC1',
+            type: 'scene',
+            number: 1,
+            title: 'Scene 1 - Die große Enthüllung',
+            beatChips: ['STC:Midpoint'],
+            children: [
+              { id: 'A2S2SC1SH1', type: 'shot', number: 1, title: 'Shot 1 - Dramatic Reveal', beatChips: ['STC:Midpoint'] },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'A3',
+    type: 'act',
+    number: 3,
+    title: 'Act 3 - Auflösung',
+    description: 'Klimax und finale Konfrontation',
+    beatChips: ['STC:Finale', 'STC:FinalImage'],
+    children: [
+      {
+        id: 'A3S1',
+        type: 'sequence',
+        number: 1,
+        title: 'Sequence 1 - Finale Schlacht',
+        beatChips: ['STC:Finale'],
+        children: [
+          {
+            id: 'A3S1SC1',
+            type: 'scene',
+            number: 1,
+            title: 'Scene 1 - Showdown',
+            beatChips: ['STC:Finale'],
+            children: [
+              { id: 'A3S1SC1SH1', type: 'shot', number: 1, title: 'Shot 1 - Epic Wide Shot', beatChips: ['STC:Finale'] },
+              { id: 'A3S1SC1SH2', type: 'shot', number: 2, title: 'Shot 2 - Action Sequence' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'A3S2',
+        type: 'sequence',
+        number: 2,
+        title: 'Sequence 2 - Neue Normalität',
+        beatChips: ['STC:FinalImage'],
+        children: [
+          {
+            id: 'A3S2SC1',
+            type: 'scene',
+            number: 1,
+            title: 'Scene 1 - Ein Jahr später',
+            beatChips: ['STC:FinalImage'],
+            children: [
+              { id: 'A3S2SC1SH1', type: 'shot', number: 1, title: 'Shot 1 - Mirror Opening', beatChips: ['STC:FinalImage'] },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+];
+
+/**
+ * Mock Beats: Save-The-Cat Template (vereinfacht auf 8 Beats)
+ */
+const MOCK_BEATS: BeatDefinition[] = [
+  {
+    id: 'opening-image',
+    label: 'Opening Image',
+    templateAbbr: 'STC',
+    fromContainerId: 'A1S1SC1SH1',
+    toContainerId: 'A1S1SC1SH1',
+    pctFrom: 0,
+    pctTo: 1,
+  },
+  {
+    id: 'theme-stated',
+    label: 'Theme Stated',
+    templateAbbr: 'STC',
+    fromContainerId: 'A1S1SC1SH2',
+    toContainerId: 'A1S1SC1SH3',
+    pctFrom: 1,
+    pctTo: 3,
+  },
+  {
+    id: 'setup',
+    label: 'Set-Up',
+    templateAbbr: 'STC',
+    fromContainerId: 'A1S1SC2SH1',
+    toContainerId: 'A1S1SC3SH2',
+    pctFrom: 3,
+    pctTo: 10,
+  },
+  {
+    id: 'catalyst',
+    label: 'Catalyst',
+    templateAbbr: 'STC',
+    fromContainerId: 'A1S2SC1SH1',
+    toContainerId: 'A1S2SC2SH1',
+    pctFrom: 10,
+    pctTo: 12,
+  },
+  {
+    id: 'midpoint',
+    label: 'Midpoint',
+    templateAbbr: 'STC',
+    fromContainerId: 'A2S2SC1SH1',
+    toContainerId: 'A2S2SC1SH1',
+    pctFrom: 48,
+    pctTo: 52,
+  },
+  {
+    id: 'all-is-lost',
+    label: 'All Is Lost',
+    templateAbbr: 'STC',
+    fromContainerId: 'A2S2',
+    toContainerId: 'A2S2',
+    pctFrom: 70,
+    pctTo: 75,
+  },
+  {
+    id: 'finale',
+    label: 'Finale',
+    templateAbbr: 'STC',
+    fromContainerId: 'A3S1SC1SH1',
+    toContainerId: 'A3S1SC1SH2',
+    pctFrom: 85,
+    pctTo: 95,
+  },
+  {
+    id: 'final-image',
+    label: 'Final Image',
+    templateAbbr: 'STC',
+    fromContainerId: 'A3S2SC1SH1',
+    toContainerId: 'A3S2SC1SH1',
+    pctFrom: 98,
+    pctTo: 100,
+  },
+];

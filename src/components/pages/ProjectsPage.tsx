@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2, LayoutGrid, List, MoreVertical, Copy, BarChart3, ChevronUp, Tv, Book, Headphones } from "lucide-react";
+import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2, List, MoreVertical, Copy, BarChart3, ChevronUp, Tv, Book, Headphones, Layers } from "lucide-react";
 import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { motion, AnimatePresence } from "motion/react";
 import { Button } from "../ui/button";
@@ -23,9 +23,11 @@ import { useColoredTags } from "../hooks/useColoredTags";
 import { ImageCropDialog } from "../ImageCropDialog";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { FilmDropdown } from "../FilmDropdown";
+import { StructureBeatsSection } from "../StructureBeatsSection";
 import { ProjectStatsLogsDialog } from "../ProjectStatsLogsDialogEnhanced";
 import { InspirationCard, ProjectInspiration } from "../InspirationCard";
 import { AddInspirationDialog, InspirationData } from "../AddInspirationDialog";
+import { ProjectCarousel } from "../ProjectCarousel";
 import { projectsApi, worldsApi, itemsApi } from "../../utils/api";
 import { toast } from "sonner@2.0.3";
 import { deleteCharacter as deleteCharacterApi, getCharacters, createCharacter as createCharacterApi, updateCharacter as updateCharacterApi } from "../../lib/api/characters-api";
@@ -62,7 +64,14 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
   const [projectCoverImages, setProjectCoverImages] = useState<Record<string, string>>({});
-  const [viewMode, setViewMode] = useState<"grid" | "list">("list"); // Default: List View
+  const [viewMode, setViewMode] = useState<"carousel" | "list">(() => {
+    // 💾 Load from localStorage, fallback to desktop default "list", mobile default "carousel"
+    const saved = localStorage.getItem("scriptony_projects_view_mode");
+    if (saved === "carousel" || saved === "list") return saved;
+    // Desktop default: list, Mobile default: carousel
+    return window.innerWidth >= 768 ? "list" : "carousel";
+  });
+  const [typeFilter, setTypeFilter] = useState<string | null>(null); // Filter by project type
   
   // API State
   const [projects, setProjects] = useState<any[]>([]);
@@ -123,6 +132,11 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
       dataLoadedRef.current = true;
     }
   }, []);
+
+  // 💾 Persist view mode preference to localStorage
+  useEffect(() => {
+    localStorage.setItem("scriptony_projects_view_mode", viewMode);
+  }, [viewMode]);
 
   // Sync selectedProject state with selectedProjectId prop
   useEffect(() => {
@@ -735,10 +749,24 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setViewMode("grid")}
-              className={`h-8 w-8 p-0 ${viewMode === "grid" ? "bg-background shadow-sm" : ""}`}
+              onClick={() => setViewMode("carousel")}
+              className={`h-8 w-8 p-0 ${viewMode === "carousel" ? "bg-background shadow-sm" : ""}`}
             >
-              <LayoutGrid className="size-4" />
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="size-4"
+              >
+                {/* Left rectangle - smaller */}
+                <rect x="1" y="4" width="3" height="8" rx="0.5" fill="currentColor" opacity="0.6" />
+                {/* Center rectangle - larger */}
+                <rect x="6" y="2" width="4" height="12" rx="0.5" fill="currentColor" />
+                {/* Right rectangle - smaller */}
+                <rect x="12" y="4" width="3" height="8" rx="0.5" fill="currentColor" opacity="0.6" />
+              </svg>
             </Button>
             <Button
               variant="ghost"
@@ -828,31 +856,84 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
           <Plus className="size-4 mr-1.5" />
           Neues Projekt erstellen
         </Button>
+
+        {/* Filter Chips */}
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide mt-4 pb-1">
+          <Badge 
+            variant={typeFilter === null ? "default" : "outline"}
+            className="cursor-pointer whitespace-nowrap px-3 py-1.5"
+            onClick={() => setTypeFilter(null)}
+          >
+            Alle
+          </Badge>
+          <Badge 
+            variant={typeFilter === "film" ? "default" : "outline"}
+            className="cursor-pointer whitespace-nowrap px-3 py-1.5 flex items-center gap-1.5"
+            onClick={() => setTypeFilter(typeFilter === "film" ? null : "film")}
+          >
+            <Film className="size-3" />
+            Film
+          </Badge>
+          <Badge 
+            variant={typeFilter === "series" ? "default" : "outline"}
+            className="cursor-pointer whitespace-nowrap px-3 py-1.5 flex items-center gap-1.5"
+            onClick={() => setTypeFilter(typeFilter === "series" ? null : "series")}
+          >
+            <Tv className="size-3" />
+            Serie
+          </Badge>
+          <Badge 
+            variant={typeFilter === "audio" ? "default" : "outline"}
+            className="cursor-pointer whitespace-nowrap px-3 py-1.5 flex items-center gap-1.5"
+            onClick={() => setTypeFilter(typeFilter === "audio" ? null : "audio")}
+          >
+            <Headphones className="size-3" />
+            Hörspiel
+          </Badge>
+          <Badge 
+            variant={typeFilter === "book" ? "default" : "outline"}
+            className="cursor-pointer whitespace-nowrap px-3 py-1.5 flex items-center gap-1.5"
+            onClick={() => setTypeFilter(typeFilter === "book" ? null : "book")}
+          >
+            <Book className="size-3" />
+            Buch
+          </Badge>
+        </div>
       </div>
 
       {/* Project Cards */}
       <div className="px-4">
         {(() => {
-          const filteredProjects = projects.filter(project => {
-            // Search filter
-            const matchesSearch = !searchQuery || 
-              project.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              project.logline?.toLowerCase().includes(searchQuery.toLowerCase());
-            
-            // Date filter
-            let matchesDate = true;
-            if (project.createdAt) {
-              const projectDate = new Date(project.createdAt);
-              if (dateFrom && projectDate < dateFrom) {
-                matchesDate = false;
+          const filteredProjects = projects
+            .filter(project => {
+              // Search filter
+              const matchesSearch = !searchQuery || 
+                project.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                project.logline?.toLowerCase().includes(searchQuery.toLowerCase());
+              
+              // Type filter
+              const matchesType = !typeFilter || project.type === typeFilter;
+              
+              // Date filter
+              let matchesDate = true;
+              if (project.createdAt) {
+                const projectDate = new Date(project.createdAt);
+                if (dateFrom && projectDate < dateFrom) {
+                  matchesDate = false;
+                }
+                if (dateTo && projectDate > dateTo) {
+                  matchesDate = false;
+                }
               }
-              if (dateTo && projectDate > dateTo) {
-                matchesDate = false;
-              }
-            }
-            
-            return matchesSearch && matchesDate;
-          });
+              
+              return matchesSearch && matchesType && matchesDate;
+            })
+            // Sort by last_edited (newest first)
+            .sort((a, b) => {
+              const dateA = a.last_edited ? new Date(a.last_edited).getTime() : 0;
+              const dateB = b.last_edited ? new Date(b.last_edited).getTime() : 0;
+              return dateB - dateA;
+            });
 
           if (filteredProjects.length === 0) {
             return (
@@ -866,9 +947,23 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
             );
           }
 
+          // Carousel View
+          if (viewMode === "carousel") {
+            return (
+              <ProjectCarousel
+                projects={filteredProjects}
+                projectCoverImages={projectCoverImages}
+                onNavigate={onNavigate}
+                getProjectTypeInfo={getProjectTypeInfo}
+                showLatestLabel={filteredProjects.length > 0 && filteredProjects[0].last_edited !== undefined}
+              />
+            );
+          }
+
+          // List View
           return (
             <motion.div 
-              className={viewMode === "grid" ? "space-y-3" : "space-y-2"}
+              className="space-y-2"
               layout
             >
               <AnimatePresence mode="popLayout">
@@ -881,104 +976,12 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                     exit={{ opacity: 0, y: -20 }}
                     transition={{ duration: 0.2 }}
                   >
-                    {viewMode === "grid" ? (
-                      // GRID VIEW (Original)
-                      <Card
-                        className="active:scale-[0.98] transition-transform cursor-pointer overflow-hidden"
-                        onClick={() => onNavigate("projects", project.id)}
-                      >
-                        <div 
-                          className="aspect-[16/9] bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden"
-                          style={projectCoverImages[project.id] ? { 
-                            backgroundImage: `url(${projectCoverImages[project.id]})`, 
-                            backgroundSize: 'cover', 
-                            backgroundPosition: 'center',
-                            backgroundBlendMode: 'overlay'
-                          } : {}}
-                        >
-                          {!projectCoverImages[project.id] && (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                              <Film className="size-12 text-primary/40" />
-                            </div>
-                          )}
-                        </div>
-                        <CardHeader className="p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <CardTitle className="text-base mb-2">{project.title}</CardTitle>
-                              <CardDescription className="text-sm line-clamp-2 mb-3">
-                                {project.logline}
-                              </CardDescription>
-                              <div className="flex flex-wrap gap-2">
-                                <Badge variant="secondary" className="text-xs">{project.type}</Badge>
-                                <Badge variant="outline" className="text-xs">{project.genre}</Badge>
-                                {project.lastEdited && (
-                                  <Badge className="text-xs bg-primary/10 text-primary hover:bg-primary/15 border-0">
-                                    {new Date(project.lastEdited).toLocaleDateString("de-DE", { 
-                                      day: "2-digit", 
-                                      month: "2-digit", 
-                                      year: "numeric" 
-                                    })}, {new Date(project.lastEdited).toLocaleTimeString("de-DE", { 
-                                      hour: "2-digit", 
-                                      minute: "2-digit" 
-                                    })} Uhr
-                                  </Badge>
-                                )}
-                              </div>
-                            </div>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-8 w-8 p-0 shrink-0"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <MoreVertical className="size-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                                <DropdownMenuItem onClick={(e) => {
-                                  e.stopPropagation();
-                                  onNavigate("projects", project.id);
-                                }}>
-                                  <Edit2 className="size-3.5 mr-2" />
-                                  Edit Project
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDuplicateProject(project.id);
-                                }}>
-                                  <Copy className="size-3.5 mr-2" />
-                                  Duplicate Project
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={(e) => handleOpenStatsDialog(project, e)}>
-                                  <BarChart3 className="size-3.5 mr-2" />
-                                  Project Stats & Logs
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedProject(project.id);
-                                    setShowDeleteDialog(true);
-                                  }}
-                                  className="text-red-600 focus:text-red-600"
-                                >
-                                  <Trash2 className="size-3.5 mr-2" />
-                                  Delete Project
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </CardHeader>
-                      </Card>
-                    ) : (
-                      // LIST VIEW (NEW!)
+                    {/* LIST VIEW */}
                       <Card
                         className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
                         onClick={() => onNavigate("projects", project.id)}
                       >
-                        <div className="flex items-center gap-3 p-3">
+                        <div className="flex items-center gap-3 p-3 rounded-lg transition-all hover:bg-primary/20 border-2 border-transparent hover:border-primary/30">
                           {/* Thumbnail Left - Portrait 2:3 Ratio */}
                           <div 
                             className="w-[56px] h-[84px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0"
@@ -1086,7 +1089,6 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                           </div>
                         </div>
                       </Card>
-                    )}
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -1445,8 +1447,8 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                 ) : (
                   <div className="flex flex-col items-center justify-center">
                     <Upload className="size-6 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-sm mb-1">Upload Image</p>
-                    <p className="text-xs text-muted-foreground">Empfohlen: 1200×630px</p>
+                    <p className="text-sm mb-1">Cover-Bild hochladen</p>
+                    <p className="text-xs text-muted-foreground">Ideal: 800 × 1200 px (2:3 Hochformat)</p>
                   </div>
                 )}
               </div>
@@ -3230,8 +3232,20 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
               style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
             >
               {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
+              {/* Project Type Icon + Dimensions - Centered when no cover */}
+              {!coverImage && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                  {(() => {
+                    const typeInfo = getProjectTypeInfo(project.type);
+                    const TypeIcon = typeInfo.Icon;
+                    return <TypeIcon className="size-16 text-primary/30" />;
+                  })()}
+                  <p className="text-xs text-muted-foreground">800 × 1200 px</p>
+                </div>
+              )}
+              {/* Hover overlay for camera icon */}
               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
+                <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-lg px-4 py-2 backdrop-blur-sm">
                   <Camera className="size-6 text-primary" />
                 </div>
               </div>
@@ -3751,9 +3765,9 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                       />
                     </div>
                     <Separator />
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <div>
-                        <Label htmlFor="project-type-desktop" className="text-xs mb-1 block">Type</Label>
+                        <Label htmlFor="project-type-desktop" className="text-xs mb-1 block">Projekt Type</Label>
                         <Select value={editedType} onValueChange={setEditedType}>
                           <SelectTrigger id="project-type-desktop" className="h-8 text-sm">
                             <SelectValue />
@@ -3776,6 +3790,25 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                           className="h-8 text-sm"
                         />
                       </div>
+                      <div>
+                        <Label className="text-xs mb-1 block">Genres</Label>
+                        <div className="flex flex-wrap gap-1 max-h-8 overflow-hidden">
+                          {editedGenresMulti.length > 0 ? (
+                            editedGenresMulti.slice(0, 2).map((genre) => (
+                              <Badge key={genre} variant="secondary" className="text-xs h-5 px-1.5">
+                                {genre}
+                              </Badge>
+                            ))
+                          ) : (
+                            <span className="text-xs text-muted-foreground">–</span>
+                          )}
+                          {editedGenresMulti.length > 2 && (
+                            <Badge variant="secondary" className="text-xs h-5 px-1.5">
+                              +{editedGenresMulti.length - 2}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </>
                 ) : (
@@ -3790,9 +3823,9 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                       <div className="text-sm text-muted-foreground">{editedLogline || "Keine Logline"}</div>
                     </div>
                     <Separator />
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <div className="text-xs text-muted-foreground mb-1">Type</div>
+                        <div className="text-xs text-muted-foreground mb-1">Projekt Type</div>
                         <div className="text-sm">{(() => {
                           const typeInfo = getProjectTypeInfo(editedType);
                           return typeInfo.label;
@@ -3802,20 +3835,19 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                         <div className="text-xs text-muted-foreground mb-1">Dauer</div>
                         <div className="text-sm">{editedDuration || "–"}</div>
                       </div>
-                    </div>
-                    <Separator />
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-1">Genres</div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {editedGenresMulti.length > 0 ? (
-                          editedGenresMulti.map((genre) => (
-                            <Badge key={genre} variant="secondary" className="text-xs">
-                              {genre}
-                            </Badge>
-                          ))
-                        ) : (
-                          <div className="text-sm text-muted-foreground">Keine Genres</div>
-                        )}
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Genres</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {editedGenresMulti.length > 0 ? (
+                            editedGenresMulti.map((genre) => (
+                              <Badge key={genre} variant="secondary" className="text-xs">
+                                {genre}
+                              </Badge>
+                            ))
+                          ) : (
+                            <div className="text-sm text-muted-foreground">Keine Genres</div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </>
@@ -3833,11 +3865,17 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                 style={coverImage ? { backgroundImage: `url(${coverImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
               >
                 {!coverImage && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Film className="size-16 text-primary/30" />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                    {(() => {
+                      const typeInfo = getProjectTypeInfo(project.type);
+                      const TypeIcon = typeInfo.Icon;
+                      return <TypeIcon className="size-16 text-primary/30" />;
+                    })()}
+                    <p className="text-xs text-muted-foreground">800 × 1200 px</p>
                   </div>
                 )}
                 {coverImage && <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-accent/20" />}
+                {/* Hover overlay for camera icon */}
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
                   <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 rounded-full p-3 backdrop-blur-sm">
                     <Camera className="size-6 text-primary" />
@@ -3851,52 +3889,13 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
 
       {/* Shared Content Below (Scenes, Characters, etc.) */}
 
-      {/* Film Timeline Section */}
+      {/* Structure & Beats Section */}
       <section className="px-6 mb-8 mt-8">
-        <Collapsible open={structureOpen} onOpenChange={setStructureOpen}>
-          <div className="flex items-center justify-between mb-4">
-            <Badge className="bg-[#6E59A5] text-white h-8 flex items-center">Structure & Beats</Badge>
-            <CollapsibleTrigger asChild>
-              <Button 
-                variant="ghost" 
-                size="sm"
-                className="h-8 w-8 p-0"
-              >
-                {structureOpen ? (
-                  <ChevronUp className="h-4 w-4" />
-                ) : (
-                  <ChevronDown className="h-4 w-4" />
-                )}
-              </Button>
-            </CollapsibleTrigger>
-          </div>
-
-          <CollapsibleContent>
-            <Tabs value={structureView} onValueChange={(value) => setStructureView(value as "dropdown" | "timeline")} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-4">
-            <TabsTrigger value="dropdown">Dropdown</TabsTrigger>
-            <TabsTrigger value="timeline">Timeline</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="dropdown" className="mt-0">
-            {/* Film Dropdown (Hierarchical View with Collapse/Expand) */}
-            <FilmDropdown 
-              projectId={project.id} 
-              characters={charactersState}
-              initialData={timelineCache[project.id]}
-              onDataChange={(data) => onTimelineDataChange(project.id, data)}
-            />
-          </TabsContent>
-          
-          <TabsContent value="timeline" className="mt-0">
-            {/* Timeline View - Coming Soon */}
-            <div className="border-2 border-dashed border-muted-foreground/20 rounded-lg p-12 text-center">
-              <p className="text-muted-foreground">Timeline-Ansicht wird bald verfügbar sein</p>
-            </div>
-          </TabsContent>
-            </Tabs>
-          </CollapsibleContent>
-        </Collapsible>
+        <StructureBeatsSection
+          projectId={project.id}
+          initialData={timelineCache[project.id]}
+          onDataChange={(data) => onTimelineDataChange(project.id, data)}
+        />
       </section>
 
       {/* Characters Section */}
@@ -4012,8 +4011,8 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                   <InspirationCard
                     key={inspiration.id}
                     inspiration={inspiration}
-                    onEdit={handleEditInspiration}
-                    onDelete={handleDeleteInspiration}
+                    onEdit={onEditInspiration}
+                    onDelete={(id) => onDeleteInspiration(id)}
                   />
                 ))}
               </div>

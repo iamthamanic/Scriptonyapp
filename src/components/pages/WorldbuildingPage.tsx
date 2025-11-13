@@ -24,6 +24,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/colla
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../ui/alert-dialog";
 import { useImagePreview } from "../hooks/useImagePreview";
 import { WorldStatsLogsDialog } from "../WorldStatsLogsDialog";
+import { WorldCarousel } from "../WorldCarousel";
 import { toast } from "sonner@2.0.3";
 
 interface WorldbuildingPageProps {
@@ -41,7 +42,11 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
   const [projects, setProjects] = useState<any[]>([]);
   const [worlds, setWorlds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<"grid" | "list">("list"); // Default: List View
+  // Load view preference from localStorage, default to "carousel"
+  const [viewMode, setViewMode] = useState<"carousel" | "list">(() => {
+    const saved = localStorage.getItem("worlds_view_mode");
+    return (saved === "carousel" || saved === "list") ? saved : "carousel";
+  });
   
   // Delete World States
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -241,6 +246,11 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
     setShowStatsDialog(true);
   };
 
+  // Save view mode preference to localStorage
+  useEffect(() => {
+    localStorage.setItem("worlds_view_mode", viewMode);
+  }, [viewMode]);
+
   // Show world detail if world is selected
   if (selectedWorldId && worlds.length > 0) {
     const selectedWorldData = worlds.find(w => w.id === selectedWorldId);
@@ -316,10 +326,24 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setViewMode("grid")}
-              className={`h-8 w-8 p-0 ${viewMode === "grid" ? "bg-background shadow-sm" : ""}`}
+              onClick={() => setViewMode("carousel")}
+              className={`h-8 w-8 p-0 ${viewMode === "carousel" ? "bg-background shadow-sm" : ""}`}
             >
-              <LayoutGrid className="size-4" />
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="size-4"
+              >
+                {/* Left rectangle - smaller */}
+                <rect x="1" y="4" width="3" height="8" rx="0.5" fill="currentColor" opacity="0.6" />
+                {/* Center rectangle - larger */}
+                <rect x="6" y="2" width="4" height="12" rx="0.5" fill="currentColor" />
+                {/* Right rectangle - smaller */}
+                <rect x="12" y="4" width="3" height="8" rx="0.5" fill="currentColor" opacity="0.6" />
+              </svg>
             </Button>
             <Button
               variant="ghost"
@@ -412,22 +436,36 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
       </div>
 
       {/* Worlds List */}
-      <div className="px-4">
+      <div className={viewMode === "carousel" ? "" : "px-4"}>
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           </div>
         ) : worlds.length === 0 ? (
-          <EmptyState
-            icon={Globe}
-            title="Keine Welten vorhanden"
-            description="Erstelle deine erste Welt und füge Kategorien und Assets hinzu."
-            actionLabel="Neue Welt erstellen"
-            onAction={() => setShowNewWorldDialog(true)}
+          <div className="px-4">
+            <EmptyState
+              icon={Globe}
+              title="Keine Welten vorhanden"
+              description="Erstelle deine erste Welt und füge Kategorien und Assets hinzu."
+              actionLabel="Neue Welt erstellen"
+              onAction={() => setShowNewWorldDialog(true)}
+            />
+          </div>
+        ) : viewMode === "carousel" ? (
+          // CAROUSEL VIEW
+          <WorldCarousel
+            worlds={worlds.filter(world => 
+              searchQuery === "" || 
+              world.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              world.description.toLowerCase().includes(searchQuery.toLowerCase())
+            )}
+            worldCoverImages={worldCoverImages}
+            onNavigate={onNavigate}
+            showLatestLabel={true}
           />
         ) : (
           <motion.div 
-            className={viewMode === "grid" ? "space-y-3" : "space-y-2"}
+            className="space-y-2"
             layout
           >
             <AnimatePresence mode="popLayout">
@@ -446,83 +484,12 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
                     exit={{ opacity: 0, y: -20 }}
                     transition={{ duration: 0.2 }}
                   >
-                    {viewMode === "grid" ? (
-                      // GRID VIEW
-                      <Card 
-                        className="cursor-pointer active:scale-[0.98] transition-transform"
-                        onClick={() => onNavigate("worldbuilding", world.id)}
-                      >
-                        <CardHeader className="p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1 min-w-0">
-                              <CardTitle className="mb-2">{world.name}</CardTitle>
-                              <CardDescription className="mb-3 line-clamp-2">
-                                {world.description}
-                              </CardDescription>
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5">
-                                {world.lastEdited.toLocaleDateString("de-DE", { 
-                                  day: "2-digit", 
-                                  month: "2-digit", 
-                                  year: "2-digit" 
-                                })}, {world.lastEdited.toLocaleTimeString("de-DE", { 
-                                  hour: "2-digit", 
-                                  minute: "2-digit" 
-                                })}
-                              </Badge>
-                            </div>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-8 w-8 p-0 shrink-0"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <MoreVertical className="size-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                                <DropdownMenuItem onClick={(e) => {
-                                  e.stopPropagation();
-                                  onNavigate("worldbuilding", world.id);
-                                }}>
-                                  <Edit2 className="size-3.5 mr-2" />
-                                  Welt bearbeiten
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDuplicateWorld(world.id);
-                                }}>
-                                  <Copy className="size-3.5 mr-2" />
-                                  Welt duplizieren
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={(e) => handleOpenStatsDialog(world, e)}>
-                                  <BarChart3 className="size-3.5 mr-2" />
-                                  Statistiken & Logs
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedWorld(world.id);
-                                    setShowDeleteDialog(true);
-                                  }}
-                                  className="text-red-600 focus:text-red-600"
-                                >
-                                  <Trash2 className="size-3.5 mr-2" />
-                                  Welt löschen
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </CardHeader>
-                      </Card>
-                    ) : (
-                      // LIST VIEW (NEW!)
+                    {/* LIST VIEW */}
                       <Card
                         className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
                         onClick={() => onNavigate("worldbuilding", world.id)}
                       >
-                        <div className="flex items-center gap-3 p-3">
+                        <div className="flex items-center gap-3 p-3 rounded-lg transition-all hover:bg-primary/20 border-2 border-transparent hover:border-primary/30">
                           {/* Icon/Thumbnail Left - Portrait 2:3 Ratio */}
                           <div 
                             className="w-[56px] h-[84px] rounded-lg bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden shrink-0 flex items-center justify-center"
@@ -609,7 +576,6 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
                           </div>
                         </div>
                       </Card>
-                    )}
                   </motion.div>
                 ))}
             </AnimatePresence>

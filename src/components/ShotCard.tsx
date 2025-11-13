@@ -593,6 +593,7 @@ export const ShotCard = memo(function ShotCard({
     <div 
       ref={combinedRef} 
       className="relative group"
+      data-shot-id={shot.id}
       style={{
         cursor: isDragging ? 'grabbing' : 'move',
       }}
