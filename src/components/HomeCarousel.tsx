@@ -197,7 +197,7 @@ export function HomeCarousel({
                   onClick={() => {
                     if (index === current) {
                       // Click on center item → Navigate
-                      onNavigate(item.type === 'project' ? 'projects' : 'worldbuilding', item.id);
+                      onNavigate(item.type === 'project' ? 'projekte' : 'worldbuilding', item.id);
                     } else {
                       // Click on side item → Scroll to center
                       api?.scrollTo(index);

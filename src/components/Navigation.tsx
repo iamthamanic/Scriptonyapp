@@ -13,7 +13,7 @@ interface NavigationProps {
 export function Navigation({ currentPage, onNavigate, theme, onToggleTheme, userRole }: NavigationProps) {
   const baseNavItems = [
     { id: "home", label: "Home", icon: Home },
-    { id: "projects", label: "Projekte", icon: Layers },
+    { id: "projekte", label: "Projekte", icon: Layers },
     { id: "worldbuilding", label: "Welten", icon: Globe },
     { id: "gym", label: "Gym", icon: Dumbbell },
     { id: "present", label: "Present", icon: Presentation },
@@ -28,7 +28,7 @@ export function Navigation({ currentPage, onNavigate, theme, onToggleTheme, user
   // Map page IDs to display titles
   const pageTitles: { [key: string]: string } = {
     home: "Home",
-    projects: "Projekte",
+    projekte: "Projekte",
     worldbuilding: "Worldbuilding",
     gym: "Creative Gym",
     upload: "Skriptanalyse",

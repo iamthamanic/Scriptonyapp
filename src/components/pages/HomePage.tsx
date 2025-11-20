@@ -179,7 +179,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
               <Card 
                 key={item.id}
                 className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30 relative"
-                onClick={() => onNavigate(item.type === 'project' ? 'projects' : 'worldbuilding', item.id)}
+                onClick={() => onNavigate(item.type === 'project' ? 'projekte' : 'worldbuilding', item.id)}
               >
                 {/* "Zuletzt bearbeitet" Badge - ONLY first item - TOP RIGHT */}
                 {index === 0 && (
@@ -203,7 +203,16 @@ export function HomePage({ onNavigate }: HomePageProps) {
                     {!item.thumbnailUrl && (
                       <div className="absolute inset-0 flex items-center justify-center">
                         {item.type === 'project' ? (
-                          <Film className="size-5 text-primary/40" />
+                          // Show icon based on project type
+                          item.projectType === 'book' ? (
+                            <Book className="size-5 text-primary/40" />
+                          ) : item.projectType === 'series' ? (
+                            <Tv className="size-5 text-primary/40" />
+                          ) : item.projectType === 'audio' ? (
+                            <Headphones className="size-5 text-primary/40" />
+                          ) : (
+                            <Film className="size-5 text-primary/40" />
+                          )
                         ) : (
                           <Globe className="size-5 text-primary/40" />
                         )}

@@ -250,7 +250,7 @@ export function UploadPage({ onNavigate }: UploadPageProps) {
             </Button>
             <Button onClick={() => {
               setShowResultDialog(false);
-              onNavigate("projects", "new");
+              onNavigate("projekte", "new");
             }} className="h-11">
               Projekt erstellen
             </Button>

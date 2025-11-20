@@ -51,6 +51,7 @@ export interface TimelineData {
 
 interface FilmDropdownProps {
   projectId: string;
+  projectType?: string; // 🎯 NEW: Project type for dynamic labels (film/series/book/audio)
   characters?: Character[]; // Optionally pass characters from parent to avoid double-loading
   initialData?: TimelineData; // 🚀 PERFORMANCE: Pre-loaded timeline data for instant rendering
   onDataChange?: (data: TimelineData) => void; // Callback to update parent cache
@@ -338,13 +339,47 @@ function DraggableShot({ shot, index, onSwap, children }: DraggableShotProps) {
 // =====================================================
 
 export function FilmDropdown({ 
-  projectId, 
+  projectId,
+  projectType = 'film', // Default to film if not provided
   characters: externalCharacters,
   initialData,
   onDataChange,
   containerRef,
 }: FilmDropdownProps) {
   const { getAccessToken } = useAuth();
+
+  // 🎯 DYNAMIC LABELS based on project type
+  const getLabels = () => {
+    if (projectType === 'book') {
+      return {
+        sequence: 'Kapitel',
+        sequences: 'Kapitel',
+        addSequence: 'Kapitel hinzufügen',
+        scene: 'Abschnitt',
+        scenes: 'Abschnitte',
+        addScene: 'Abschnitt hinzufügen',
+        shot: 'Shot', // Not used for books
+        shots: 'Shots',
+        addShot: 'Shot hinzufügen',
+        showShots: false, // Hide shots for books
+      };
+    }
+    // Default: film/series/audio
+    return {
+      sequence: 'Sequence',
+      sequences: 'Sequences',
+      addSequence: 'Sequence hinzufügen',
+      scene: 'Szene',
+      scenes: 'Szenen',
+      addScene: 'Szene hinzufügen',
+      shot: 'Shot',
+      shots: 'Shots',
+      addShot: 'Shot hinzufügen',
+      showShots: true,
+    };
+  };
+
+  const labels = getLabels();
 
   // State - Initialize with initialData if available for instant rendering 🚀
   const [acts, setActs] = useState<Act[]>(initialData?.acts || []);
@@ -2773,6 +2808,7 @@ export function FilmDropdown({
           nodeType={infoDialogData.type}
           node={infoDialogData.node}
           projectId={projectId}
+          projectType={projectType}
         />
       )}
     </DndProvider>

@@ -17,7 +17,8 @@ import {
   BarChart3, 
   Calendar, 
   Clock, 
-  Film, 
+  Film,
+  BookOpen,
   Users, 
   Activity,
   Loader2,
@@ -76,6 +77,7 @@ interface TimelineNodeStatsDialogProps {
   nodeType: NodeType;
   node: Act | Sequence | Scene | Shot;
   projectId: string;
+  projectType?: string; // 🎯 NEW: 'film' | 'book' to determine labels
 }
 
 interface NodeStats {
@@ -172,6 +174,7 @@ export function TimelineNodeStatsDialog({
   nodeType,
   node,
   projectId,
+  projectType,
 }: TimelineNodeStatsDialogProps) {
   const [loading, setLoading] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -427,6 +430,17 @@ export function TimelineNodeStatsDialog({
   };
 
   const getNodeTypeLabel = () => {
+    // 🎯 Dynamic labels based on projectType
+    if (projectType === 'book') {
+      switch (nodeType) {
+        case 'act': return 'Act';
+        case 'sequence': return 'Kapitel';
+        case 'scene': return 'Abschnitt';
+        case 'shot': return 'Shot'; // Should not exist in books
+      }
+    }
+    
+    // Film/Series defaults
     switch (nodeType) {
       case 'act': return 'Act';
       case 'sequence': return 'Sequenz';
@@ -535,7 +549,11 @@ export function TimelineNodeStatsDialog({
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base flex items-center gap-2">
-                      <Film className="size-4 text-primary" />
+                      {projectType === 'book' ? (
+                        <BookOpen className="size-4 text-primary" />
+                      ) : (
+                        <Film className="size-4 text-primary" />
+                      )}
                       {getNodeTypeLabel()} Information
                     </CardTitle>
                   </CardHeader>
@@ -557,14 +575,18 @@ export function TimelineNodeStatsDialog({
                       
                       {'sequenceNumber' in node && (
                         <div>
-                          <div className="text-xs text-muted-foreground mb-1">Sequenz Nummer</div>
+                          <div className="text-xs text-muted-foreground mb-1">
+                            {projectType === 'book' ? 'Kapitel Nummer' : 'Sequenz Nummer'}
+                          </div>
                           <div className="font-semibold">{(node as Sequence).sequenceNumber}</div>
                         </div>
                       )}
                       
                       {'sceneNumber' in node && (
                         <div>
-                          <div className="text-xs text-muted-foreground mb-1">Szenen Nummer</div>
+                          <div className="text-xs text-muted-foreground mb-1">
+                            {projectType === 'book' ? 'Abschnitt Nummer' : 'Szenen Nummer'}
+                          </div>
                           <div className="font-semibold">{(node as Scene).sceneNumber}</div>
                         </div>
                       )}
@@ -620,28 +642,39 @@ export function TimelineNodeStatsDialog({
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base flex items-center gap-2">
-                        <Film className="size-4 text-primary" />
+                        {projectType === 'book' ? (
+                          <BookOpen className="size-4 text-primary" />
+                        ) : (
+                          <Film className="size-4 text-primary" />
+                        )}
                         Struktur-Übersicht
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {/* Sequences / Kapitel */}
                       {basicStats.sequences !== undefined && (
                         <div className="flex flex-col gap-1 p-3 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-100 dark:border-green-900">
-                          <span className="text-xs text-muted-foreground">Sequenzen</span>
+                          <span className="text-xs text-muted-foreground">
+                            {projectType === 'book' ? 'Kapitel' : 'Sequenzen'}
+                          </span>
                           <span className="text-2xl font-bold text-green-600 dark:text-green-400">
                             {basicStats.sequences}
                           </span>
                         </div>
                       )}
+                      {/* Scenes / Abschnitte */}
                       {basicStats.scenes !== undefined && (
                         <div className="flex flex-col gap-1 p-3 bg-pink-50 dark:bg-pink-950/20 rounded-lg border border-pink-100 dark:border-pink-900">
-                          <span className="text-xs text-muted-foreground">Szenen</span>
+                          <span className="text-xs text-muted-foreground">
+                            {projectType === 'book' ? 'Abschnitte' : 'Szenen'}
+                          </span>
                           <span className="text-2xl font-bold text-pink-600 dark:text-pink-400">
                             {basicStats.scenes}
                           </span>
                         </div>
                       )}
-                      {basicStats.shots !== undefined && (
+                      {/* Shots - nur für Film-Projekte anzeigen */}
+                      {basicStats.shots !== undefined && projectType !== 'book' && (
                         <div className="flex flex-col gap-1 p-3 bg-yellow-50 dark:bg-yellow-950/20 rounded-lg border border-yellow-100 dark:border-yellow-900">
                           <span className="text-xs text-muted-foreground">Shots</span>
                           <span className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">

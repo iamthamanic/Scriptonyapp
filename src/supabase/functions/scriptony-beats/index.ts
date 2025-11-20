@@ -135,11 +135,27 @@ serve(async (req) => {
       }
 
       // Verify user owns the project
+      // Get user's organization(s) from organization_members
+      const { data: memberData, error: memberError } = await supabase
+        .from('organization_members')
+        .select('organization_id')
+        .eq('user_id', user.id);
+
+      if (memberError || !memberData || memberData.length === 0) {
+        console.error('User has no organizations:', memberError);
+        return new Response(
+          JSON.stringify({ error: 'User has no organization' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const userOrgIds = memberData.map(m => m.organization_id);
+
       const { data: project, error: projectError } = await supabase
         .from('projects')
         .select('id')
         .eq('id', body.project_id)
-        .eq('user_id', user.id)
+        .in('organization_id', userOrgIds)
         .single();
 
       if (projectError || !project) {
@@ -207,11 +223,27 @@ serve(async (req) => {
         );
       }
 
+      // Get user's organization(s) from organization_members
+      const { data: memberData, error: memberError } = await supabase
+        .from('organization_members')
+        .select('organization_id')
+        .eq('user_id', user.id);
+
+      if (memberError || !memberData || memberData.length === 0) {
+        console.error('User has no organizations:', memberError);
+        return new Response(
+          JSON.stringify({ error: 'User has no organization' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const userOrgIds = memberData.map(m => m.organization_id);
+
       const { data: project, error: projectError } = await supabase
         .from('projects')
         .select('id')
         .eq('id', existingBeat.project_id)
-        .eq('user_id', user.id)
+        .in('organization_id', userOrgIds)
         .single();
 
       if (projectError || !project) {
@@ -266,11 +298,27 @@ serve(async (req) => {
         );
       }
 
+      // Get user's organization(s) from organization_members
+      const { data: memberData, error: memberError } = await supabase
+        .from('organization_members')
+        .select('organization_id')
+        .eq('user_id', user.id);
+
+      if (memberError || !memberData || memberData.length === 0) {
+        console.error('User has no organizations:', memberError);
+        return new Response(
+          JSON.stringify({ error: 'User has no organization' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const userOrgIds = memberData.map(m => m.organization_id);
+
       const { data: project, error: projectError } = await supabase
         .from('projects')
         .select('id')
         .eq('id', existingBeat.project_id)
-        .eq('user_id', user.id)
+        .in('organization_id', userOrgIds)
         .single();
 
       if (projectError || !project) {

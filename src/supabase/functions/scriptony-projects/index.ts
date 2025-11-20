@@ -242,8 +242,25 @@ app.put("/projects/:id", async (c) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
+    const orgId = await getUserOrganization(userId);
+    if (!orgId) {
+      return c.json({ error: "User has no organization" }, 403);
+    }
+
     const projectId = c.req.param("id");
     const updates = await c.req.json();
+
+    // Verify project belongs to user's organization
+    const { data: existingProject, error: fetchError } = await supabase
+      .from("projects")
+      .select("id, organization_id")
+      .eq("id", projectId)
+      .eq("organization_id", orgId)
+      .single();
+
+    if (fetchError || !existingProject) {
+      return c.json({ error: "Project not found or access denied" }, 404);
+    }
 
     const { data, error } = await supabase
       .from("projects")
@@ -277,7 +294,24 @@ app.delete("/projects/:id", async (c) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
+    const orgId = await getUserOrganization(userId);
+    if (!orgId) {
+      return c.json({ error: "User has no organization" }, 403);
+    }
+
     const projectId = c.req.param("id");
+
+    // Verify project belongs to user's organization
+    const { data: existingProject, error: fetchError } = await supabase
+      .from("projects")
+      .select("id, organization_id")
+      .eq("id", projectId)
+      .eq("organization_id", orgId)
+      .single();
+
+    if (fetchError || !existingProject) {
+      return c.json({ error: "Project not found or access denied" }, 404);
+    }
 
     const { error } = await supabase
       .from("projects")
@@ -403,6 +437,118 @@ app.get("/projects/:id/stats", async (c) => {
     });
   } catch (error: any) {
     console.error("Project stats error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// BOOK METRICS - Calculate Word Count
+// =============================================================================
+
+/**
+ * POST /projects/:id/calculate-words
+ * Calculate total word count for book projects by counting words in all section descriptions
+ */
+app.post("/projects/:id/calculate-words", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const projectId = c.req.param("id");
+
+    // Verify project exists and is a book project
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("type, organization_id")
+      .eq("id", projectId)
+      .single();
+
+    if (projectError || !project) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    if (project.type !== "book") {
+      return c.json({ error: "Only book projects support word counting" }, 400);
+    }
+
+    // Verify user has access to organization
+    const userOrgId = await getUserOrganization(userId);
+    if (!userOrgId || userOrgId !== project.organization_id) {
+      return c.json({ error: "Unauthorized - not member of organization" }, 403);
+    }
+
+    let totalWords = 0;
+
+    // Fetch all sections (level 3 = Abschnitt) for this book project
+    const { data: sections, error: sectionsError } = await supabase
+      .from("timeline_nodes")
+      .select("metadata")
+      .eq("project_id", projectId)
+      .eq("level", 3); // Level 3 = Abschnitt (Section)
+
+    if (sectionsError) {
+      console.error("Error fetching sections:", sectionsError);
+      return c.json({ error: sectionsError.message }, 500);
+    }
+
+    // Count words in each section's content (stored in metadata.content)
+    if (sections && sections.length > 0) {
+      for (const section of sections) {
+        if (section.metadata?.content) {
+          const content = section.metadata.content;
+          
+          // Extract text from TipTap JSON format
+          let textContent = '';
+          
+          if (content.type === 'doc' && content.content) {
+            for (const node of content.content) {
+              if (node.content) {
+                for (const textNode of node.content) {
+                  if (textNode.text) {
+                    textContent += textNode.text + ' ';
+                  }
+                }
+              }
+            }
+          }
+          
+          // Count words (split by whitespace, filter empty strings)
+          if (textContent.trim()) {
+            const words = textContent.trim().split(/\s+/).filter(w => w.length > 0);
+            totalWords += words.length;
+          }
+        }
+      }
+    }
+
+    // Update project with calculated word count
+    const { error: updateError } = await supabase
+      .from("projects")
+      .update({ 
+        current_words: totalWords,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", projectId);
+
+    if (updateError) {
+      console.error("Error updating word count:", updateError);
+      return c.json({ error: updateError.message }, 500);
+    }
+
+    console.log(`📊 [BOOK METRICS] Calculated ${totalWords} words for project ${projectId} from ${sections?.length || 0} sections`);
+    
+    return c.json({ 
+      success: true, 
+      current_words: totalWords,
+      sections_count: sections?.length || 0,
+      message: `Calculated ${totalWords} words across ${sections?.length || 0} sections`
+    });
+  } catch (error: any) {
+    console.error("Calculate words error:", error);
     return c.json({ error: error.message }, 500);
   }
 });

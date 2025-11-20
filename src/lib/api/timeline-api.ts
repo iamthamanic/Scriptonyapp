@@ -87,6 +87,7 @@ function nodeToScene(node: TimelineNode): Scene {
     location: node.metadata?.location,
     timeOfDay: node.metadata?.timeOfDay,
     characters: node.metadata?.characters || [],
+    content: node.metadata?.content, // 📚 Support for book content
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };
@@ -236,6 +237,7 @@ export async function createScene(
       location: sceneData.location,
       timeOfDay: sceneData.timeOfDay,
       characters: sceneData.characters || [],
+      content: sceneData.content, // 📚 Support for book content
     },
   });
   
@@ -254,6 +256,7 @@ export async function updateScene(
   if (updates.location !== undefined) metadata.location = updates.location;
   if (updates.timeOfDay !== undefined) metadata.timeOfDay = updates.timeOfDay;
   if (updates.characters !== undefined) metadata.characters = updates.characters;
+  if (updates.content !== undefined) metadata.content = updates.content; // 📚 Support for book content
   
   const node = await NodesAPI.updateNode(sceneId, {
     nodeNumber: updates.sceneNumber,

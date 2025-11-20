@@ -6,17 +6,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { motion, AnimatePresence } from 'motion/react';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 
 /**
- * 🎬 BEAT CARD - Phone-Screen Design
+ * 🎬 BEAT CARD - Resizable Beat Block
  * 
- * Großer, interaktiver Beat-Block im Phone-Screen-Stil:
- * - Header mit Prozent, Zeit, Von-Bis Dropdown
- * - Großer Beat-Titel
- * - Mehrere Hook-Labels (mit fading opacity)
- * - Grid-Icon
- * - Footer mit Position-Selector
+ * FL Studio-style resizable beat block mit:
+ * - Top/Bottom Resize Handles
+ * - Notes-Feld
+ * - Label + Percentage
  */
 
 export interface BeatCardData {
@@ -26,6 +24,8 @@ export interface BeatCardData {
   pctTo: number;
   color?: string;
   description?: string;
+  notes?: string; // 🆕 Notes field
+  templateAbbr?: string; // 🆕 Template abbreviation (e.g., "STC" for Save the Cat)
   // Position anchors
   fromAct?: string;
   fromSequence?: string;
@@ -52,426 +52,135 @@ interface BeatCardProps {
   onDelete?: (beatId: string) => void;
   timelineData?: TimelineNode[]; // Acts with nested sequences/scenes/shots
   className?: string;
+  // 🆕 FL Studio-style resize
+  onResize?: (beatId: string, handle: 'top' | 'bottom', newPctFrom: number, newPctTo: number) => void;
+  resizing?: boolean;
+  setResizing?: (beatId: string | null) => void;
+  // 🎯 Selection
+  selected?: boolean;
+  setSelected?: (beatId: string | null) => void;
 }
 
-export function BeatCard({ beat, onUpdate, onDelete, timelineData, className = '' }: BeatCardProps) {
+export function BeatCard({ beat, onUpdate, onDelete, timelineData, className = '', onResize, resizing, setResizing, selected, setSelected }: BeatCardProps) {
   const bgColor = beat.color || '#B8A8D8'; // Default violet
-  const pctSpan = beat.pctTo - beat.pctFrom;
-  const isHookBeat = beat.label === 'Hook';
-  const [isPositionDialogOpen, setIsPositionDialogOpen] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizeHandle, setResizeHandle] = useState<'top' | 'bottom' | null>(null);
+  const notesRef = useRef<HTMLTextAreaElement>(null);
 
-  // State for position selectors
-  const [fromAct, setFromAct] = useState(beat.fromAct || '');
-  const [fromSequence, setFromSequence] = useState(beat.fromSequence || '');
-  const [fromScene, setFromScene] = useState(beat.fromScene || '');
-  const [fromShot, setFromShot] = useState(beat.fromShot || '');
-  const [toAct, setToAct] = useState(beat.toAct || '');
-  const [toSequence, setToSequence] = useState(beat.toSequence || '');
-  const [toScene, setToScene] = useState(beat.toScene || '');
-  const [toShot, setToShot] = useState(beat.toShot || '');
-
-  // Get nested data based on selections
-  const selectedFromAct = timelineData?.find(a => a.id === fromAct);
-  const selectedFromSequence = selectedFromAct?.sequences?.find(s => s.id === fromSequence);
-  const selectedFromScene = selectedFromSequence?.scenes?.find(sc => sc.id === fromScene);
-  
-  const selectedToAct = timelineData?.find(a => a.id === toAct);
-  const selectedToSequence = selectedToAct?.sequences?.find(s => s.id === toSequence);
-  const selectedToScene = selectedToSequence?.scenes?.find(sc => sc.id === toScene);
-
-  const handleSavePosition = () => {
-    if (onUpdate) {
-      // Save position IDs
-      onUpdate(beat.id, {
-        fromAct,
-        fromSequence,
-        fromScene,
-        fromShot,
-        toAct,
-        toSequence,
-        toScene,
-        toShot,
-      });
-      
-      // 🎯 Calculate pixel position and convert to percentage
-      // Find the container (FilmDropdown)
-      const container = document.querySelector('[data-beat-container]') as HTMLElement;
-      if (!container) {
-        console.warn('⚠️ Beat container not found for position calculation');
-        setIsPositionDialogOpen(false);
-        return;
-      }
-      
-      // Find first and last act to determine content area
-      const firstAct = container.querySelector('[data-act-card]') as HTMLElement;
-      const allActs = container.querySelectorAll('[data-act-card]');
-      const lastAct = allActs.length > 0 ? allActs[allActs.length - 1] as HTMLElement : null;
-      
-      if (!firstAct || !lastAct) {
-        console.warn('⚠️ Acts not found for position calculation');
-        setIsPositionDialogOpen(false);
-        return;
-      }
-      
-      const firstActTop = firstAct.offsetTop;
-      const lastActBottom = lastAct.offsetTop + lastAct.offsetHeight;
-      const contentHeight = lastActBottom - firstActTop;
-      
-      // Find "from" element (prefer shot > scene > sequence > act)
-      let fromElement: HTMLElement | null = null;
-      if (fromShot) {
-        fromElement = container.querySelector(`[data-shot-id="${fromShot}"]`) as HTMLElement;
-      } else if (fromScene) {
-        fromElement = container.querySelector(`[data-scene-id="${fromScene}"]`) as HTMLElement;
-      } else if (fromSequence) {
-        fromElement = container.querySelector(`[data-sequence-id="${fromSequence}"]`) as HTMLElement;
-      } else if (fromAct) {
-        fromElement = container.querySelector(`[data-act-id="${fromAct}"]`) as HTMLElement;
-      }
-      
-      // Find "to" element
-      let toElement: HTMLElement | null = null;
-      if (toShot) {
-        toElement = container.querySelector(`[data-shot-id="${toShot}"]`) as HTMLElement;
-      } else if (toScene) {
-        toElement = container.querySelector(`[data-scene-id="${toScene}"]`) as HTMLElement;
-      } else if (toSequence) {
-        toElement = container.querySelector(`[data-sequence-id="${toSequence}"]`) as HTMLElement;
-      } else if (toAct) {
-        toElement = container.querySelector(`[data-act-id="${toAct}"]`) as HTMLElement;
-      }
-      
-      if (fromElement && toElement && contentHeight > 0) {
-        // Calculate positions relative to content area
-        const fromTopPx = fromElement.offsetTop - firstActTop;
-        const toBottomPx = (toElement.offsetTop + toElement.offsetHeight) - firstActTop;
-        
-        // Convert to percentage
-        const fromPct = (fromTopPx / contentHeight) * 100;
-        const toPct = (toBottomPx / contentHeight) * 100;
-        
-        console.log('🎯 Beat position calculated:', {
-          fromTopPx,
-          toBottomPx,
-          contentHeight,
-          fromPct,
-          toPct,
-        });
-        
-        // Update beat with new percentages
-        onUpdate(beat.id, {
-          pctFrom: Math.max(0, Math.min(100, fromPct)),
-          pctTo: Math.max(0, Math.min(100, toPct)),
-        });
-      }
-    }
-    setIsPositionDialogOpen(false);
+  // Handle click to select this beat
+  const handleBeatClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelected?.(beat.id);
+    console.log(`🎯 Beat selected: ${beat.label}`);
   };
 
-  const handlePctChange = (field: 'pctFrom' | 'pctTo', value: string) => {
-    const numValue = parseFloat(value);
-    if (!isNaN(numValue) && onUpdate) {
-      onUpdate(beat.id, { [field]: Math.max(0, Math.min(100, numValue)) });
-    }
+  // Handle mouse down on resize handles
+  const handleMouseDown = (handle: 'top' | 'bottom', e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onResize) return;
+    
+    setIsResizing(true);
+    setResizeHandle(handle);
+    setResizing?.(beat.id);
+    
+    const startY = e.clientY;
+    const startPctFrom = beat.pctFrom;
+    const startPctTo = beat.pctTo;
+
+    // Find parent element to calculate relative movement
+    const parentElement = (e.target as HTMLElement).closest('.relative')?.parentElement?.parentElement;
+    if (!parentElement) return;
+    
+    const parentHeight = parentElement.scrollHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const deltaPercent = (deltaY / parentHeight) * 100;
+
+      if (handle === 'top') {
+        const newFrom = Math.max(0, Math.min(startPctTo - 1, startPctFrom + deltaPercent));
+        onResize(beat.id, 'top', newFrom, beat.pctTo);
+      } else {
+        const newTo = Math.min(100, Math.max(startPctFrom + 1, startPctTo + deltaPercent));
+        onResize(beat.id, 'bottom', beat.pctFrom, newTo);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      setResizeHandle(null);
+      setResizing?.(null);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
-  // 🎯 HOOK BEAT: Special layout - Compact vertical card WITHOUT inputs
-  if (isHookBeat) {
-    return (
-      <Card 
-        className="relative overflow-hidden border-2 w-full h-full flex flex-col"
-        style={{
-          backgroundColor: bgColor,
-          borderColor: '#8B7AB8',
-          borderRadius: '12px', // Rounded corners
-        }}
-      >
-        {/* Header with percentage, time, dropdown, and menu */}
-        <div 
-          className="flex-shrink-0 px-2 py-2 flex flex-col gap-2 border-b-2"
-          style={{ borderColor: '#8B7AB8', backgroundColor: '#9B8BC0' }}
-        >
-          {/* Row 1: Percentage + Time + Menu */}
-          <div className="flex items-center justify-between gap-2">
-            {/* Percentage */}
-            <div className="bg-white/90 rounded-full px-2 py-1 text-[10px] font-semibold text-gray-800">
-              {beat.pctFrom.toFixed(0)}%
-            </div>
-            {/* Time estimate */}
-            <div className="text-[9px] text-white/90">
-              10Min
-            </div>
-            {/* Menu button */}
-            <button className="text-white/90 hover:text-white p-0.5">
-              <MoreVertical className="w-3 h-3" />
-            </button>
-          </div>
-
-          {/* Row 2: Von-Bis Dropdown (full width) */}
-          <Dialog open={isPositionDialogOpen} onOpenChange={setIsPositionDialogOpen}>
-            <DialogTrigger asChild>
-              <button
-                className="w-full bg-white/90 rounded px-2 py-1.5 flex items-center justify-between hover:bg-white transition-colors cursor-pointer"
-              >
-                <span className="text-[10px] font-semibold text-gray-800">
-                  {beat.fromAct || beat.toAct ? '✓ Position gesetzt' : 'Von - Bis'}
-                </span>
-                <ChevronDown className="w-3 h-3 text-gray-600" />
-              </button>
-            </DialogTrigger>
-            
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Hook Position einstellen</DialogTitle>
-              </DialogHeader>
-              
-              <div className="space-y-4 py-4">
-                {/* FROM Section */}
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-violet-600">Von (Start)</h3>
-                  
-                  {/* Act */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Akt</label>
-                    <Select value={fromAct} onValueChange={(v) => { setFromAct(v); setFromSequence(''); setFromScene(''); setFromShot(''); }}>
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Akt wählen..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {timelineData?.map((act) => (
-                          <SelectItem key={act.id} value={act.id}>{act.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Sequence - Always visible, disabled if no act selected */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Sequenz</label>
-                    <Select 
-                      value={fromSequence} 
-                      onValueChange={(v) => { setFromSequence(v); setFromScene(''); setFromShot(''); }}
-                      disabled={!fromAct || !selectedFromAct?.sequences}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Sequenz wählen..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedFromAct?.sequences?.map((seq) => (
-                          <SelectItem key={seq.id} value={seq.id}>{seq.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Scene - Always visible, disabled if no sequence selected */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Szene</label>
-                    <Select 
-                      value={fromScene} 
-                      onValueChange={(v) => { setFromScene(v); setFromShot(''); }}
-                      disabled={!fromSequence || !selectedFromSequence?.scenes}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Szene wählen..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedFromSequence?.scenes?.map((scene) => (
-                          <SelectItem key={scene.id} value={scene.id}>{scene.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Shot - Always visible, disabled if no scene selected */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Shot</label>
-                    <Select 
-                      value={fromShot} 
-                      onValueChange={setFromShot}
-                      disabled={!fromScene || !selectedFromScene?.shots}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Shot wählen..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedFromScene?.shots?.map((shot) => (
-                          <SelectItem key={shot.id} value={shot.id}>{shot.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* TO Section */}
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold text-violet-600">Bis (Ende)</h3>
-                  
-                  {/* Act */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Akt</label>
-                    <Select value={toAct} onValueChange={(v) => { setToAct(v); setToSequence(''); setToScene(''); setToShot(''); }}>
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Akt wählen..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {timelineData?.map((act) => (
-                          <SelectItem key={act.id} value={act.id}>{act.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Sequence - Always visible, disabled if no act selected */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Sequenz</label>
-                    <Select 
-                      value={toSequence} 
-                      onValueChange={(v) => { setToSequence(v); setToScene(''); setToShot(''); }}
-                      disabled={!toAct || !selectedToAct?.sequences}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Sequenz wählen..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedToAct?.sequences?.map((seq) => (
-                          <SelectItem key={seq.id} value={seq.id}>{seq.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Scene - Always visible, disabled if no sequence selected */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Szene</label>
-                    <Select 
-                      value={toScene} 
-                      onValueChange={(v) => { setToScene(v); setToShot(''); }}
-                      disabled={!toSequence || !selectedToSequence?.scenes}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Szene wählen..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedToSequence?.scenes?.map((scene) => (
-                          <SelectItem key={scene.id} value={scene.id}>{scene.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Shot - Always visible, disabled if no scene selected */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground">Shot</label>
-                    <Select 
-                      value={toShot} 
-                      onValueChange={setToShot}
-                      disabled={!toScene || !selectedToScene?.shots}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Shot wählen..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedToScene?.shots?.map((shot) => (
-                          <SelectItem key={shot.id} value={shot.id}>{shot.title}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* Save Button */}
-                <div className="flex justify-end gap-2 pt-4">
-                  <Button variant="outline" onClick={() => setIsPositionDialogOpen(false)}>
-                    Abbrechen
-                  </Button>
-                  <Button onClick={handleSavePosition} className="bg-violet-600 hover:bg-violet-700">
-                    Speichern
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
-
-        {/* Main Content Area with stacked Hook labels */}
-        <div className="flex-1 flex flex-col items-center justify-center py-6 gap-2 min-h-0">
-          {[100, 80, 60, 40, 25, 15].map((opacity, i) => (
-            <div
-              key={i}
-              className="font-bold text-center leading-none"
-              style={{
-                opacity: opacity / 100,
-                fontSize: i === 0 ? '13px' : '11px',
-                color: '#2C2C2C',
-              }}
-            >
-              Hook
-            </div>
-          ))}
-        </div>
-      </Card>
-    );
-  }
-
-  // 🎬 NORMAL BEAT: Regular card layout
+  // 🎬 NEW DESIGN: Resizable Beat Block with Top/Bottom Handles
   return (
-    <Card 
-      className={`relative overflow-hidden border-2 h-full flex flex-col ${className}`}
-      style={{
-        backgroundColor: bgColor,
-        borderColor: '#8B7AB8',
-        minHeight: '250px',
-        borderRadius: '24px', // Phone-like rounded corners
-      }}
-    >
-      {/* Header (Phone top bar style) */}
-      <div 
-        className="flex-shrink-0 px-3 py-2 flex items-center justify-center border-b-2"
-        style={{ borderColor: '#8B7AB8', backgroundColor: '#9B8BC0' }}
-      >
-        {/* Percentage Chip */}
-        <div className="bg-white/90 rounded-full px-2 py-0.5 text-[10px] font-semibold text-gray-800">
-          {beat.pctFrom}%
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex items-start justify-center px-3 py-6 relative">
-        {/* Grid Icon (left side) */}
-        <div className="absolute left-2 top-4">
-          <div className="grid grid-cols-2 gap-0.5">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="w-1.5 h-1.5 bg-black/70 rounded-sm" />
-            ))}
+    <div className="relative w-full h-full group">
+      {/* Top Resize Handle - nur bei selected anzeigen */}
+      {selected && (
+        <div
+          className={`absolute -top-1 left-0 right-0 h-2 cursor-ns-resize flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity ${
+            resizeHandle === 'top' ? 'opacity-100' : ''
+          }`}
+          onMouseDown={(e) => handleMouseDown('top', e)}
+          style={{ zIndex: 30 }}
+        >
+          <div className="h-1 w-12 bg-white/90 rounded-full shadow-md flex items-center justify-center">
+            <GripVertical className="w-2.5 h-2.5 text-gray-600" />
           </div>
         </div>
+      )}
 
-        {/* Beat Labels (stacked with fading opacity) */}
-        <div className="flex flex-col items-center gap-1 mt-2">
-          {[100, 70, 50, 30].map((opacity, i) => (
-            <div
-              key={i}
-              className="font-bold text-center"
-              style={{
-                opacity: opacity / 100,
-                fontSize: i === 0 ? '14px' : '12px',
-                color: '#1F1F1F',
-              }}
-            >
-              {beat.label}
-            </div>
-          ))}
+      {/* Beat Block Content */}
+      <div
+        className={`h-full rounded-lg border-2 transition-all ${
+          selected 
+            ? 'border-white shadow-lg' 
+            : isResizing 
+            ? 'cursor-ns-resize border-white shadow-lg' 
+            : 'border-transparent hover:border-white/50'
+        }`}
+        style={{ backgroundColor: bgColor }}
+        onClick={handleBeatClick}
+      >
+        <div className="h-full flex flex-col p-1.5">
+          {/* Header with Label */}
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[10px] font-semibold text-white leading-tight">{beat.label}</span>
+          </div>
+
+          {/* Notes Field */}
+          <textarea
+            ref={notesRef}
+            value={beat.notes || ''}
+            onChange={(e) => onUpdate?.(beat.id, { notes: e.target.value })}
+            onClick={(e) => e.stopPropagation()}
+            placeholder="Notes..."
+            className="flex-1 bg-white/10 text-white placeholder:text-white/50 text-[9px] rounded px-1.5 py-1 resize-none focus:bg-white/20 focus:outline-none focus:ring-1 focus:ring-white/30 transition-colors"
+            style={{ minHeight: '24px' }}
+          />
         </div>
       </div>
 
-      {/* Footer (Phone bottom bar style) */}
-      <div 
-        className="flex-shrink-0 h-6 flex items-center justify-center border-t-2"
-        style={{ borderColor: '#8B7AB8', backgroundColor: '#9B8BC0' }}
-      >
-        <div className="w-8 h-0.5 bg-white/60 rounded-full" />
-      </div>
-    </Card>
+      {/* Bottom Resize Handle - nur bei selected anzeigen */}
+      {selected && (
+        <div
+          className={`absolute -bottom-1 left-0 right-0 h-2 cursor-ns-resize flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity ${
+            resizeHandle === 'bottom' ? 'opacity-100' : ''
+          }`}
+          onMouseDown={(e) => handleMouseDown('bottom', e)}
+          style={{ zIndex: 30 }}
+        >
+          <div className="h-1 w-12 bg-white/90 rounded-full shadow-md flex items-center justify-center">
+            <GripVertical className="w-2.5 h-2.5 text-gray-600" />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

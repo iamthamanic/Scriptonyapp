@@ -28,15 +28,19 @@ import { ProjectStatsLogsDialog } from "../ProjectStatsLogsDialogEnhanced";
 import { InspirationCard, ProjectInspiration } from "../InspirationCard";
 import { AddInspirationDialog, InspirationData } from "../AddInspirationDialog";
 import { ProjectCarousel } from "../ProjectCarousel";
+import { ProjectDebugger } from "../ProjectDebugger";
 import { projectsApi, worldsApi, itemsApi } from "../../utils/api";
 import { toast } from "sonner@2.0.3";
 import { deleteCharacter as deleteCharacterApi, getCharacters, createCharacter as createCharacterApi, updateCharacter as updateCharacterApi } from "../../lib/api/characters-api";
 import { getAuthToken } from "../../lib/auth/getAuthToken";
+import { projectId } from "../../utils/supabase/info";
 import { uploadProjectImage, validateImageFile } from "../../lib/api/image-upload-api";
 import * as TimelineAPI from "../../lib/api/timeline-api";
 import * as TimelineAPIV2 from "../../lib/api/timeline-api-v2";
 import * as ShotsAPI from "../../lib/api/shots-api";
 import * as InspirationsAPI from "../../lib/api/inspirations-api";
+import * as BeatsAPI from "../../lib/api/beats-api";
+import { BEAT_TEMPLATES } from "../../lib/beat-templates";
 import type { TimelineData } from "../FilmDropdown";
 
 interface ProjectsPageProps {
@@ -97,6 +101,11 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
   const [customEpisodeLayout, setCustomEpisodeLayout] = useState<string>("");
   const [customSeasonEngine, setCustomSeasonEngine] = useState<string>("");
   const [customBeatTemplate, setCustomBeatTemplate] = useState<string>("");
+  
+  // 📖 NEW: Book Metrics States (Create Dialog)
+  const [newProjectTargetPages, setNewProjectTargetPages] = useState<string>("");
+  const [newProjectWordsPerPage, setNewProjectWordsPerPage] = useState<string>("250");
+  const [newProjectReadingSpeed, setNewProjectReadingSpeed] = useState<string>("230");
   
   // Delete Project States
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -333,7 +342,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
     }
   };
 
-  // 🚀 PERFORMANCE: Update timeline cache when FilmDropdown changes data
+  // 🚀 PERFORMANCE: Update timeline cache when FilmDropdown/BookDropdown changes data
   const handleTimelineDataChange = (projectId: string, data: TimelineData) => {
     console.log('[ProjectsPage] 🔄 Updating timeline cache for project:', projectId);
     setTimelineCache(prev => ({ ...prev, [projectId]: data }));
@@ -509,6 +518,10 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         // Film/Book/Audio: narrative_structure
         narrative_structure: newProjectType !== 'series' ? (narrativeStructureValue || undefined) : undefined,
         beat_template: beatTemplateValue || undefined,
+        // 📖 Book Metrics
+        target_pages: newProjectType === 'book' ? (newProjectTargetPages ? parseInt(newProjectTargetPages) : undefined) : undefined,
+        words_per_page: newProjectType === 'book' ? (newProjectWordsPerPage ? parseInt(newProjectWordsPerPage) : 250) : undefined,
+        reading_speed_wpm: newProjectType === 'book' ? (newProjectReadingSpeed ? parseInt(newProjectReadingSpeed) : 230) : undefined,
       });
 
       // Upload cover image AFTER project creation
@@ -558,6 +571,9 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
       setCustomEpisodeLayout("");
       setCustomSeasonEngine("");
       setCustomBeatTemplate("");
+      setNewProjectTargetPages("");
+      setNewProjectWordsPerPage("250");
+      setNewProjectReadingSpeed("230");
       setNewProjectEpisodeLayout("");
       setNewProjectSeasonEngine("");
       
@@ -614,7 +630,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
       toast.success("Projekt erfolgreich gelöscht");
       
       // Navigate back to projects list
-      onNavigate("projects");
+      onNavigate("projekte");
     } catch (error: any) {
       console.error("Error deleting project:", error);
       toast.error(error.message || "Fehler beim Löschen des Projekts");
@@ -674,7 +690,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
     return (
       <ProjectDetail 
         project={currentProject} 
-        onBack={() => onNavigate("projects")}
+        onBack={() => onNavigate("projekte")}
         coverImage={projectCoverImages[currentProject.id]}
         onCoverImageChange={async (imageUrl) => {
           // Update local state immediately (optimistic UI)
@@ -979,7 +995,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                     {/* LIST VIEW */}
                       <Card
                         className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
-                        onClick={() => onNavigate("projects", project.id)}
+                        onClick={() => onNavigate("projekte", project.id)}
                       >
                         <div className="flex items-center gap-3 p-3 rounded-lg transition-all hover:bg-primary/20 border-2 border-transparent hover:border-primary/30">
                           {/* Thumbnail Left - Portrait 2:3 Ratio */}
@@ -1019,7 +1035,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                                 <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                                   <DropdownMenuItem onClick={(e) => {
                                     e.stopPropagation();
-                                    onNavigate("projects", project.id);
+                                    onNavigate("projekte", project.id);
                                   }}>
                                     <Edit2 className="size-3.5 mr-2" />
                                     Edit Project
@@ -1361,18 +1377,65 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
               <p className="text-xs text-muted-foreground">Please select at least one genre</p>
             </div>
 
-            {/* Duration */}
-            <div className="space-y-2">
-              <Label htmlFor="duration">Duration (minutes)</Label>
-              <Input 
-                id="duration" 
-                type="number" 
-                placeholder="Project duration in minutes" 
-                className="h-11"
-                value={newProjectDuration}
-                onChange={(e) => setNewProjectDuration(e.target.value)}
-              />
-            </div>
+            {/* Duration / Target Pages - Type-dependent */}
+            {newProjectType === 'book' ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="target-pages">Zielumfang (Seiten)</Label>
+                  <Input 
+                    id="target-pages" 
+                    type="number" 
+                    placeholder="z.B. 300" 
+                    className="h-11"
+                    value={newProjectTargetPages}
+                    onChange={(e) => setNewProjectTargetPages(e.target.value)}
+                  />
+                  {newProjectTargetPages && (
+                    <p className="text-xs text-muted-foreground">
+                      Bei {newProjectWordsPerPage} Wörtern/Seite ≈ {(parseInt(newProjectTargetPages || '0') * parseInt(newProjectWordsPerPage || '250')).toLocaleString('de-DE')} Wörter
+                    </p>
+                  )}
+                </div>
+                
+                {/* Advanced Book Metrics - Collapsible */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="words-per-page" className="text-xs">Wörter pro Seite</Label>
+                    <Input 
+                      id="words-per-page" 
+                      type="number" 
+                      placeholder="250" 
+                      className="h-11"
+                      value={newProjectWordsPerPage}
+                      onChange={(e) => setNewProjectWordsPerPage(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reading-speed" className="text-xs">Lesegeschw. (WPM)</Label>
+                    <Input 
+                      id="reading-speed" 
+                      type="number" 
+                      placeholder="230" 
+                      className="h-11"
+                      value={newProjectReadingSpeed}
+                      onChange={(e) => setNewProjectReadingSpeed(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="duration">Duration (minutes)</Label>
+                <Input 
+                  id="duration" 
+                  type="number" 
+                  placeholder="Project duration in minutes" 
+                  className="h-11"
+                  value={newProjectDuration}
+                  onChange={(e) => setNewProjectDuration(e.target.value)}
+                />
+              </div>
+            )}
 
             {/* Inspirations */}
             <div className="space-y-2">
@@ -2662,6 +2725,11 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
   const [editedGenresMulti, setEditedGenresMulti] = useState<string[]>(project.genre ? project.genre.split(", ") : []);
   const [editedEpisodeLayout, setEditedEpisodeLayout] = useState(project.episode_layout || "");
   const [editedSeasonEngine, setEditedSeasonEngine] = useState(project.season_engine || "");
+  // 📖 NEW: Book Metrics States (Edit Mode)
+  const [editedTargetPages, setEditedTargetPages] = useState<string>(project.target_pages?.toString() || "");
+  const [editedWordsPerPage, setEditedWordsPerPage] = useState<string>(project.words_per_page?.toString() || "250");
+  const [editedReadingSpeed, setEditedReadingSpeed] = useState<string>(project.reading_speed_wpm?.toString() || "230");
+  const [isCalculatingWords, setIsCalculatingWords] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 🎯 Performance Monitoring: Track when ProjectDetail is rendered
@@ -2689,7 +2757,63 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
     setEditedGenresMulti(project.genre ? project.genre.split(", ") : []);
     setEditedEpisodeLayout(project.episode_layout || "");
     setEditedSeasonEngine(project.season_engine || "");
-  }, [project.id, project.title, project.logline, project.type, project.genre, project.duration, project.narrative_structure, project.beat_template, project.episode_layout, project.season_engine]);
+    setEditedTargetPages(project.target_pages?.toString() || "");
+    setEditedWordsPerPage(project.words_per_page?.toString() || "250");
+    setEditedReadingSpeed(project.reading_speed_wpm?.toString() || "230");
+  }, [project.id, project.title, project.logline, project.type, project.genre, project.duration, project.narrative_structure, project.beat_template, project.episode_layout, project.season_engine, project.target_pages, project.words_per_page, project.reading_speed_wpm]);
+
+  // 📖 Calculate word count from timeline cache (live recalculation)
+  const [calculatedWords, setCalculatedWords] = useState(project.current_words || 0);
+  
+  useEffect(() => {
+    if (project.type !== 'book') return;
+    
+    const timelineData = timelineCache[project.id];
+    if (!timelineData?.scenes) {
+      // Fallback to stored value
+      setCalculatedWords(project.current_words || 0);
+      return;
+    }
+    
+    // Extract text from TipTap JSON
+    const extractTextFromTiptap = (node: any): string => {
+      if (!node) return '';
+      let text = '';
+      if (node.text) text += node.text;
+      if (node.content && Array.isArray(node.content)) {
+        for (const child of node.content) {
+          text += extractTextFromTiptap(child) + ' ';
+        }
+      }
+      return text;
+    };
+    
+    // Count words in all scenes
+    let totalWords = 0;
+    timelineData.scenes.forEach((scene) => {
+      const content = scene.content || scene.metadata?.content || scene.description;
+      if (content) {
+        try {
+          const contentObj = typeof content === 'string' ? JSON.parse(content) : content;
+          const textContent = extractTextFromTiptap(contentObj);
+          if (textContent.trim()) {
+            const words = textContent.trim().split(/\s+/).filter(w => w.length > 0);
+            totalWords += words.length;
+          }
+        } catch (e) {
+          const textContent = typeof content === 'string' ? content : '';
+          if (textContent.trim()) {
+            const words = textContent.trim().split(/\s+/).filter(w => w.length > 0);
+            totalWords += words.length;
+          }
+        }
+      }
+    });
+    
+    console.log(`📊 [BOOK METRICS] Calculated ${totalWords} words from timeline cache (${timelineData.scenes.length} scenes)`);
+    setCalculatedWords(totalWords);
+  }, [project.id, project.type, timelineCache, project.current_words]);
+
   // Scenes State with localStorage persistence
   const getInitialScenes = () => {
     const storageKey = `project-${project.id}-scenes`;
@@ -3172,6 +3296,9 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
     }
 
     try {
+      const previousBeatTemplate = project.beat_template;
+      const beatTemplateChanged = editedBeatTemplate !== previousBeatTemplate;
+
       // Update project in backend
       await projectsApi.update(project.id, {
         title: editedTitle,
@@ -3185,7 +3312,48 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         // Film/Book/Audio: narrative_structure
         narrative_structure: editedType !== 'series' ? (editedNarrativeStructure || undefined) : undefined,
         beat_template: editedBeatTemplate || undefined,
+        // 📖 Book Metrics
+        target_pages: editedType === 'book' ? (editedTargetPages ? parseInt(editedTargetPages) : undefined) : undefined,
+        words_per_page: editedType === 'book' ? (editedWordsPerPage ? parseInt(editedWordsPerPage) : 250) : undefined,
+        reading_speed_wpm: editedType === 'book' ? (editedReadingSpeed ? parseInt(editedReadingSpeed) : 230) : undefined,
       });
+
+      // 🎬 Generate Beats if template changed
+      if (beatTemplateChanged && editedBeatTemplate && editedBeatTemplate !== 'custom') {
+        const template = BEAT_TEMPLATES[editedBeatTemplate];
+        if (template) {
+          toast.info("Generiere Beats...");
+          
+          // Delete existing beats for this project
+          const existingBeats = await BeatsAPI.getBeats(project.id);
+          await Promise.all(existingBeats.map(beat => BeatsAPI.deleteBeat(beat.id)));
+          
+          // Create new beats from template
+          // Assuming first act exists for container reference
+          const acts = await TimelineAPI.getActs(project.id, await getAuthToken() || '');
+          const firstActId = acts[0]?.id || 'temp-act-id';
+          
+          await Promise.all(
+            template.beats.map((beat, index) => 
+              BeatsAPI.createBeat({
+                project_id: project.id,
+                label: beat.label,
+                template_abbr: template.abbr,
+                description: '',
+                from_container_id: firstActId,
+                to_container_id: firstActId,
+                pct_from: beat.pctFrom,
+                pct_to: beat.pctTo,
+                color: beat.color,
+                notes: '',
+                order_index: index,
+              })
+            )
+          );
+          
+          toast.success(`${template.beats.length} Beats generiert`);
+        }
+      }
 
       // Refresh data to sync with backend
       await onUpdate();
@@ -3392,16 +3560,57 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                     </Select>
                   </div>
                   <div>
-                    <Label htmlFor="project-duration" className="text-sm mb-2 block font-bold">Dauer</Label>
-                    <Input
-                      id="project-duration"
-                      value={editedDuration}
-                      onChange={(e) => setEditedDuration(e.target.value)}
-                      placeholder="90 min"
-                      className="h-9"
-                    />
+                    <Label htmlFor="project-duration" className="text-sm mb-2 block font-bold">
+                      {editedType === 'book' ? 'Zielumfang' : 'Dauer'}
+                    </Label>
+                    {editedType === 'book' ? (
+                      <Input
+                        id="project-target-pages"
+                        type="number"
+                        value={editedTargetPages}
+                        onChange={(e) => setEditedTargetPages(e.target.value)}
+                        placeholder="300"
+                        className="h-9"
+                      />
+                    ) : (
+                      <Input
+                        id="project-duration"
+                        value={editedDuration}
+                        onChange={(e) => setEditedDuration(e.target.value)}
+                        placeholder="90 min"
+                        className="h-9"
+                      />
+                    )}
                   </div>
                 </div>
+
+                {/* Book Advanced Metrics - Mobile */}
+                {editedType === 'book' && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="words-per-page-mobile" className="text-sm mb-2 block font-bold">Wörter/Seite</Label>
+                      <Input
+                        id="words-per-page-mobile"
+                        type="number"
+                        value={editedWordsPerPage}
+                        onChange={(e) => setEditedWordsPerPage(e.target.value)}
+                        placeholder="250"
+                        className="h-9"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="reading-speed-mobile" className="text-sm mb-2 block font-bold">Lesegeschw. (WPM)</Label>
+                      <Input
+                        id="reading-speed-mobile"
+                        type="number"
+                        value={editedReadingSpeed}
+                        onChange={(e) => setEditedReadingSpeed(e.target.value)}
+                        placeholder="230"
+                        className="h-9"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* Genres - Multi-Select Pills */}
                 <div className="col-span-3">
@@ -3631,7 +3840,16 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                 <div>
                   <p className="text-sm font-bold mb-1">Beat Template</p>
                   <p className="text-sm text-muted-foreground">
-                    {editedBeatTemplate || "Kein Template"}
+                    {editedBeatTemplate === 'lite-7' ? 'Lite-7 (minimal)' :
+                     editedBeatTemplate === 'save-the-cat' ? 'Save the Cat! (15)' :
+                     editedBeatTemplate === 'syd-field' ? 'Syd Field / Paradigm' :
+                     editedBeatTemplate === 'heroes-journey' ? 'Heldenreise (Vogler, 12)' :
+                     editedBeatTemplate === 'seven-point' ? 'Seven-Point Structure' :
+                     editedBeatTemplate === '8-sequences' ? '8-Sequenzen' :
+                     editedBeatTemplate === 'story-circle' ? 'Story Circle 8' :
+                     editedBeatTemplate === 'season-lite-5' ? 'Season-Lite-5 (Macro)' :
+                     editedBeatTemplate === 'custom' ? 'Custom' :
+                     'Kein Template'}
                   </p>
                 </div>
 
@@ -3655,7 +3873,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
           <div className="flex-1">
             <Card className="h-[360px] flex flex-col">
               <CardHeader className="p-4 flex flex-row items-center justify-between shrink-0">
-                <CardTitle className="text-base">📽️ Projekt-Informationen</CardTitle>
+                <CardTitle className="text-base">{project.type === 'book' ? '📚' : '📽️'} Projekt-Informationen</CardTitle>
                 
                 {/* SAVE BUTTON + 3-PUNKTE-MENÜ */}
                 <div className="flex items-center gap-2">
@@ -3703,6 +3921,9 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                             setEditedGenresMulti(project.genre ? project.genre.split(", ") : []);
                             setEditedEpisodeLayout(project.episode_layout || "");
                             setEditedSeasonEngine(project.season_engine || "");
+                            setEditedTargetPages(project.target_pages?.toString() || "");
+                            setEditedWordsPerPage(project.words_per_page?.toString() || "250");
+                            setEditedReadingSpeed(project.reading_speed_wpm?.toString() || "230");
                           }}>
                             <X className="size-3.5 mr-2" />
                             Abbrechen
@@ -3781,14 +4002,27 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                         </Select>
                       </div>
                       <div>
-                        <Label htmlFor="project-duration-desktop" className="text-xs mb-1 block">Dauer</Label>
-                        <Input
-                          id="project-duration-desktop"
-                          value={editedDuration}
-                          onChange={(e) => setEditedDuration(e.target.value)}
-                          placeholder="90 min"
-                          className="h-8 text-sm"
-                        />
+                        <Label htmlFor="project-duration-desktop" className="text-xs mb-1 block">
+                          {editedType === 'book' ? 'Zielumfang' : 'Dauer'}
+                        </Label>
+                        {editedType === 'book' ? (
+                          <Input
+                            id="project-target-pages-desktop"
+                            type="number"
+                            value={editedTargetPages}
+                            onChange={(e) => setEditedTargetPages(e.target.value)}
+                            placeholder="300"
+                            className="h-8 text-sm"
+                          />
+                        ) : (
+                          <Input
+                            id="project-duration-desktop"
+                            value={editedDuration}
+                            onChange={(e) => setEditedDuration(e.target.value)}
+                            placeholder="90 min"
+                            className="h-8 text-sm"
+                          />
+                        )}
                       </div>
                       <div>
                         <Label className="text-xs mb-1 block">Genres</Label>
@@ -3809,6 +4043,136 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                           )}
                         </div>
                       </div>
+                    </div>
+                    
+                    {/* Book Advanced Metrics - Desktop */}
+                    {editedType === 'book' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label htmlFor="words-per-page-desktop" className="text-xs mb-1 block">Wörter/Seite</Label>
+                          <Input
+                            id="words-per-page-desktop"
+                            type="number"
+                            value={editedWordsPerPage}
+                            onChange={(e) => setEditedWordsPerPage(e.target.value)}
+                            placeholder="250"
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="reading-speed-desktop" className="text-xs mb-1 block">Lesegeschw. (WPM)</Label>
+                          <Input
+                            id="reading-speed-desktop"
+                            type="number"
+                            value={editedReadingSpeed}
+                            onChange={(e) => setEditedReadingSpeed(e.target.value)}
+                            placeholder="230"
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <Separator />
+
+                    {/* Narrative Structure / Episode Layout - Desktop Edit */}
+                    {editedType === 'series' ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label htmlFor="episode-layout-desktop" className="text-xs mb-1 block">Episode Layout</Label>
+                          <Select value={editedEpisodeLayout} onValueChange={setEditedEpisodeLayout}>
+                            <SelectTrigger id="episode-layout-desktop" className="h-8 text-sm">
+                              <SelectValue placeholder="Keine" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="sitcom-2-act">Sitcom 2-Akt</SelectItem>
+                              <SelectItem value="sitcom-4-act">Sitcom 4-Akt</SelectItem>
+                              <SelectItem value="network-5-act">Network 5-Akt</SelectItem>
+                              <SelectItem value="streaming-3-act">Streaming 3-Akt</SelectItem>
+                              <SelectItem value="streaming-4-act">Streaming 4-Akt</SelectItem>
+                              <SelectItem value="anime-ab">Anime A/B</SelectItem>
+                              <SelectItem value="sketch-segmented">Sketch/Segmented</SelectItem>
+                              <SelectItem value="kids-11min">Kids 11-Min</SelectItem>
+                              <SelectItem value="custom">Custom</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label htmlFor="season-engine-desktop" className="text-xs mb-1 block">Season Engine</Label>
+                          <Select value={editedSeasonEngine} onValueChange={setEditedSeasonEngine}>
+                            <SelectTrigger id="season-engine-desktop" className="h-8 text-sm">
+                              <SelectValue placeholder="Keine" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="serial">Serial (Season-Arc)</SelectItem>
+                              <SelectItem value="motw">MOTW/COTW</SelectItem>
+                              <SelectItem value="hybrid">Hybrid (Arc+MOTW)</SelectItem>
+                              <SelectItem value="anthology">Anthology (episodisch)</SelectItem>
+                              <SelectItem value="seasonal-anthology">Seasonal Anthology</SelectItem>
+                              <SelectItem value="limited-series">Limited Series</SelectItem>
+                              <SelectItem value="custom">Custom</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <Label htmlFor="narrative-structure-desktop" className="text-xs mb-1 block">Narrative Structure</Label>
+                        <Select value={editedNarrativeStructure} onValueChange={setEditedNarrativeStructure}>
+                          <SelectTrigger id="narrative-structure-desktop" className="h-8 text-sm">
+                            <SelectValue placeholder="Keine" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {editedType === 'film' && (
+                              <>
+                                <SelectItem value="3-act">3-Akt (klassisch)</SelectItem>
+                                <SelectItem value="4-act">4-Akt (gesplittetes Act II)</SelectItem>
+                                <SelectItem value="5-act">5-Akt (Freytag)</SelectItem>
+                                <SelectItem value="8-sequences">8-Sequenzen ("Mini-Movies")</SelectItem>
+                                <SelectItem value="kishotenketsu">Kishōtenketsu (4-Teiler)</SelectItem>
+                                <SelectItem value="non-linear">Nicht-linear / Rashomon</SelectItem>
+                              </>
+                            )}
+                            {editedType === 'book' && (
+                              <>
+                                <SelectItem value="3-part">3-Teiler (klassisch)</SelectItem>
+                                <SelectItem value="hero-journey">Heldenreise</SelectItem>
+                                <SelectItem value="save-the-cat">Save the Cat (adapted)</SelectItem>
+                              </>
+                            )}
+                            {editedType === 'audio' && (
+                              <>
+                                <SelectItem value="30min-3-act">30 min / 3-Akt</SelectItem>
+                                <SelectItem value="60min-4-act">60 min / 4-Akt</SelectItem>
+                                <SelectItem value="podcast-25-35min">Podcast 25–35 min</SelectItem>
+                              </>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <Separator />
+
+                    {/* Beat Template - Desktop Edit */}
+                    <div>
+                      <Label htmlFor="beat-template-desktop" className="text-xs mb-1 block">Beat Template</Label>
+                      <Select value={editedBeatTemplate} onValueChange={setEditedBeatTemplate}>
+                        <SelectTrigger id="beat-template-desktop" className="h-8 text-sm">
+                          <SelectValue placeholder="Kein Template" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="lite-7">Lite-7 (minimal)</SelectItem>
+                          <SelectItem value="save-the-cat">Save the Cat! (15)</SelectItem>
+                          <SelectItem value="syd-field">Syd Field / Paradigm</SelectItem>
+                          <SelectItem value="heroes-journey">Heldenreise (Vogler, 12)</SelectItem>
+                          <SelectItem value="seven-point">Seven-Point Structure</SelectItem>
+                          <SelectItem value="8-sequences">8-Sequenzen</SelectItem>
+                          <SelectItem value="story-circle">Story Circle 8</SelectItem>
+                          {editedType === 'series' && (
+                            <SelectItem value="season-lite-5">Season-Lite-5 (Macro)</SelectItem>
+                          )}
+                          <SelectItem value="custom">Custom</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </>
                 ) : (
@@ -3832,8 +4196,15 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                         })()}</div>
                       </div>
                       <div>
-                        <div className="text-xs text-muted-foreground mb-1">Dauer</div>
-                        <div className="text-sm">{editedDuration || "–"}</div>
+                        <div className="text-xs text-muted-foreground mb-1">
+                          {editedType === 'book' ? 'Zielumfang' : 'Dauer'}
+                        </div>
+                        <div className="text-sm">
+                          {editedType === 'book' 
+                            ? (editedTargetPages ? `${editedTargetPages} Seiten` : '–')
+                            : (editedDuration || '–')
+                          }
+                        </div>
                       </div>
                       <div>
                         <div className="text-xs text-muted-foreground mb-1">Genres</div>
@@ -3850,6 +4221,97 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
                         </div>
                       </div>
                     </div>
+                    <Separator />
+
+                    {/* Narrative Structure / Episode Layout - Desktop Read-Only */}
+                    {editedType === 'series' ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">Episode Layout</div>
+                          <div className="text-sm">{editedEpisodeLayout || "–"}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">Season Engine</div>
+                          <div className="text-sm">{editedSeasonEngine || "–"}</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="text-xs text-muted-foreground mb-1">Narrative Structure</div>
+                        <div className="text-sm">{editedNarrativeStructure || "–"}</div>
+                      </div>
+                    )}
+                    <Separator />
+
+                    {/* Beat Template - Desktop Read-Only */}
+                    <div>
+                      <div className="text-xs text-muted-foreground mb-1">Beat Template</div>
+                      <div className="text-sm">
+                        {editedBeatTemplate === 'lite-7' ? 'Lite-7 (minimal)' :
+                         editedBeatTemplate === 'save-the-cat' ? 'Save the Cat! (15)' :
+                         editedBeatTemplate === 'syd-field' ? 'Syd Field / Paradigm' :
+                         editedBeatTemplate === 'heroes-journey' ? 'Heldenreise (Vogler, 12)' :
+                         editedBeatTemplate === 'seven-point' ? 'Seven-Point Structure' :
+                         editedBeatTemplate === '8-sequences' ? '8-Sequenzen' :
+                         editedBeatTemplate === 'story-circle' ? 'Story Circle 8' :
+                         editedBeatTemplate === 'season-lite-5' ? 'Season-Lite-5 (Macro)' :
+                         editedBeatTemplate === 'custom' ? 'Custom' :
+                         '–'}
+                      </div>
+                    </div>
+
+                    {/* 📖 BOOK METRICS CARD - nur für Bücher */}
+                    {editedType === 'book' && (
+                      <Card className="mt-4">
+                        <CardHeader className="pb-3">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <Book className="size-4" />
+                            Schreibfortschritt
+                            {isCalculatingWords && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          {/* Current Words */}
+                          <div className="text-center p-3 bg-primary/5 rounded-lg">
+                            <div className="text-2xl font-bold text-primary">
+                              {isCalculatingWords ? '...' : calculatedWords.toLocaleString('de-DE')}
+                            </div>
+                            <div className="text-xs text-muted-foreground">Wörter</div>
+                          </div>
+                          
+                          {/* Current Pages */}
+                          <div className="text-center p-3 bg-muted/50 rounded-lg">
+                            <div className="text-2xl font-bold">
+                              ~{(calculatedWords / (project.words_per_page || 250)).toFixed(1)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">Seiten</div>
+                          </div>
+                          
+                          {/* Progress % */}
+                          <div className="text-center p-3 bg-muted/50 rounded-lg">
+                            <div className="text-2xl font-bold text-green-600">
+                              {project.target_pages 
+                                ? ((calculatedWords / ((project.target_pages || 0) * (project.words_per_page || 250))) * 100).toFixed(1)
+                                : 0}%
+                            </div>
+                            <div className="text-xs text-muted-foreground">Fortschritt</div>
+                          </div>
+                          
+                          {/* Reading Time */}
+                          <div className="text-center p-3 bg-muted/50 rounded-lg">
+                            <div className="text-xl font-bold">
+                              {(() => {
+                                const minutes = Math.round(calculatedWords / (project.reading_speed_wpm || 230));
+                                const hours = Math.floor(minutes / 60);
+                                const mins = minutes % 60;
+                                return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                              })()}
+                            </div>
+                            <div className="text-xs text-muted-foreground">Lesezeit (Ø)</div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
                   </>
                 )}
               </CardContent>
@@ -3893,6 +4355,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
       <section className="px-6 mb-8 mt-8">
         <StructureBeatsSection
           projectId={project.id}
+          projectType={project.type}
           initialData={timelineCache[project.id]}
           onDataChange={(data) => onTimelineDataChange(project.id, data)}
         />

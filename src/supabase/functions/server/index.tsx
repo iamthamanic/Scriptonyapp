@@ -451,14 +451,110 @@ app.get("/make-server-3b52693b/projects/:projectId/acts", async (c) => {
 });
 
 // =====================================================
+// BOOK METRICS - Calculate Word Count
+// =====================================================
+app.post("/make-server-3b52693b/projects/:projectId/calculate-words", async (c) => {
+  try {
+    const userId = await getUserIdFromAuth(c.req.header("Authorization"));
+    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.param("projectId");
+
+    // Verify project belongs to user's organization
+    const { data: project } = await supabase
+      .from("projects")
+      .select("organization_id, type")
+      .eq("id", projectId)
+      .single();
+
+    if (!project) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    // Only calculate for book projects
+    if (project.type !== "book") {
+      return c.json({ error: "Only book projects support word counting" }, 400);
+    }
+
+    // Verify user has access to organization
+    const { data: membership } = await supabase
+      .from("organization_members")
+      .select("*")
+      .eq("organization_id", project.organization_id)
+      .eq("user_id", userId)
+      .single();
+
+    if (!membership) {
+      return c.json({ error: "Unauthorized - not member of organization" }, 403);
+    }
+
+    let totalWords = 0;
+
+    // Fetch all acts for project
+    const { data: acts } = await supabase
+      .from("acts")
+      .select("id")
+      .eq("project_id", projectId);
+
+    if (acts && acts.length > 0) {
+      // For each act, fetch chapters (sequences in DB)
+      for (const act of acts) {
+        const { data: chapters } = await supabase
+          .from("sequences")
+          .select("id")
+          .eq("act_id", act.id);
+
+        if (chapters && chapters.length > 0) {
+          // For each chapter, fetch sections (scenes in DB)
+          for (const chapter of chapters) {
+            const { data: sections } = await supabase
+              .from("scenes")
+              .select("description")
+              .eq("sequence_id", chapter.id);
+
+            if (sections && sections.length > 0) {
+              // Count words in each section's description field
+              for (const section of sections) {
+                if (section.description && section.description.trim()) {
+                  const words = section.description.trim().split(/\s+/).length;
+                  totalWords += words;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Update project with calculated word count
+    const { error: updateError } = await supabase
+      .from("projects")
+      .update({ current_words: totalWords })
+      .eq("id", projectId);
+
+    if (updateError) throw updateError;
+
+    return c.json({ 
+      success: true, 
+      current_words: totalWords,
+      message: `Calculated ${totalWords} words across all sections`
+    });
+  } catch (error: any) {
+    console.error("Calculate words error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =====================================================
 // TIMELINE ROUTES (from separate route files with proper camelCase/snake_case conversion)
 // =====================================================
-app.route("/make-server-3b52693b/acts", createActsRoutes(getSupabaseClient, getUserIdFromAuth));
-app.route("/make-server-3b52693b/sequences", createSequencesRoutes(getSupabaseClient, getUserIdFromAuth));
-app.route("/make-server-3b52693b/scenes", createScenesRoutes(getSupabaseClient, getUserIdFromAuth));
-app.route("/make-server-3b52693b/shots", shotsRoutes);
-app.route("/make-server-3b52693b/projects", createProjectsInitRoutes(supabase, getUserIdFromAuth));
-app.route("/make-server-3b52693b/debug", createDebugRoutes());
+// MIGRATED to scriptony-timeline-v2 Edge Function
+// app.route("/make-server-3b52693b/acts", createActsRoutes(getSupabaseClient, getUserIdFromAuth));
+// app.route("/make-server-3b52693b/sequences", createSequencesRoutes(getSupabaseClient, getUserIdFromAuth));
+// app.route("/make-server-3b52693b/scenes", createScenesRoutes(getSupabaseClient, getUserIdFromAuth));
+// app.route("/make-server-3b52693b/shots", shotsRoutes);
+// app.route("/make-server-3b52693b/projects", createProjectsInitRoutes(supabase, getUserIdFromAuth));
+// app.route("/make-server-3b52693b/debug", createDebugRoutes());
 
 // =====================================================
 // AI CHAT ROUTES - DISABLED

@@ -217,7 +217,7 @@ export function ProjectCarousel({
                   onClick={() => {
                     if (index === current) {
                       // Click on center project → Navigate
-                      onNavigate("projects", project.id);
+                      onNavigate("projekte", project.id);
                     } else {
                       // Click on side project → Scroll to center
                       api?.scrollTo(index);

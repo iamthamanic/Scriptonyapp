@@ -87,45 +87,5 @@ export function ConnectionStatusIndicator() {
   }
 
   // Error state - full alert
-  return (
-    <div className="fixed bottom-4 right-4 z-50 max-w-md">
-      <Alert className="bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 shadow-lg">
-        <div className="flex items-start gap-3">
-          <WifiOff className="size-5 text-red-600 dark:text-red-400 mt-0.5" />
-          <div className="flex-1 space-y-2">
-            <AlertDescription className="text-red-800 dark:text-red-200">
-              <div className="font-medium mb-1">⚠️ Verbindungsproblem</div>
-              <div className="text-sm">
-                Die Scriptony Edge Functions sind nicht erreichbar.
-              </div>
-              {errorDetails && (
-                <div className="text-xs mt-2 font-mono bg-red-100 dark:bg-red-900/30 p-2 rounded overflow-x-auto">
-                  {errorDetails}
-                </div>
-              )}
-            </AlertDescription>
-            
-            <div className="flex items-center gap-2 pt-1">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => window.location.href = '/api-test'}
-                className="text-xs border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/30"
-              >
-                Diagnose starten
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setDismissed(true)}
-                className="text-xs text-red-700 dark:text-red-300"
-              >
-                Ausblenden
-              </Button>
-            </div>
-          </div>
-        </div>
-      </Alert>
-    </div>
-  );
+  return null;
 }
