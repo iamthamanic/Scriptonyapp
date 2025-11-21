@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 interface StructureBeatsSectionProps {
   projectId: string;
   projectType?: string; // 🎯 NEW: Project type for dynamic labels (film/series/book/audio)
+  beatTemplate?: string; // 🎯 NEW: Beat template from project (e.g., "lite-7", "save-the-cat")
   className?: string;
   initialData?: TimelineData; // Pre-loaded timeline data from parent
   onDataChange?: (data: TimelineData) => void; // Callback when timeline changes
@@ -47,7 +48,7 @@ const TEST_BEAT_HOOK: BeatCardData = {
   pctTo: 8,   // Ende bei 8% (6% hoch = ca. 60px bei 1000px Höhe)
 };
 
-export function StructureBeatsSection({ projectId, projectType, initialData, onDataChange, className = '' }: StructureBeatsSectionProps) {
+export function StructureBeatsSection({ projectId, projectType, beatTemplate, initialData, onDataChange, className = '' }: StructureBeatsSectionProps) {
   const containerStackRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(true); // DEFAULT: OPEN
   const [structureView, setStructureView] = useState<'dropdown' | 'timeline' | 'native'>('dropdown');
@@ -137,8 +138,8 @@ export function StructureBeatsSection({ projectId, projectType, initialData, onD
         // Check if beats already exist
         const existingBeats = await BeatsAPI.getBeats(projectId);
         
-        if (existingBeats.length === 0) {
-          console.log('[StructureBeatsSection] 🎬 No beats found, auto-generating Save the Cat template...');
+        if (existingBeats.length === 0 && beatTemplate) {
+          console.log(`[StructureBeatsSection] 🎬 No beats found, auto-generating ${beatTemplate} template...`);
           
           // Get first act to use as container
           const acts = await TimelineAPI.getActs(projectId);
@@ -149,8 +150,8 @@ export function StructureBeatsSection({ projectId, projectType, initialData, onD
             for (let i = 1; i <= 3; i++) {
               await TimelineAPI.createAct({
                 projectId,
-                title: `Akt ${i}`,
                 actNumber: i,
+                title: `Akt ${i}`,
                 description: '',
               });
             }
@@ -159,16 +160,22 @@ export function StructureBeatsSection({ projectId, projectType, initialData, onD
             console.log('[StructureBeatsSection] ✅ Created 3 default acts:', newActs);
           }
           
-          // Generate beats from template
-          const template = SAVE_THE_CAT_TEMPLATE;
-          const generatedBeats = generateBeatsFromTemplate(template);
+          // 🎯 Select template based on project's beat_template
+          const templateMap: Record<string, any> = {
+            'lite-7': LITE_7_TEMPLATE,
+            'save-the-cat': SAVE_THE_CAT_TEMPLATE,
+            // Add more templates as needed
+          };
+          
+          const selectedTemplate = templateMap[beatTemplate] || SAVE_THE_CAT_TEMPLATE;
+          const generatedBeats = generateBeatsFromTemplate(selectedTemplate);
           
           // Get acts again (in case we just created them)
           const finalActs = await TimelineAPI.getActs(projectId);
           const firstActId = finalActs[0]?.id || 'placeholder-act';
           const lastActId = finalActs[finalActs.length - 1]?.id || firstActId;
           
-          console.log(`[StructureBeatsSection] 🎯 Creating ${generatedBeats.length} beats...`);
+          console.log(`[StructureBeatsSection] 🎯 Creating ${generatedBeats.length} beats from ${beatTemplate} template...`);
           
           // Create beats in database
           const createdBeats = [];
@@ -178,7 +185,7 @@ export function StructureBeatsSection({ projectId, projectType, initialData, onD
               const newBeat = await BeatsAPI.createBeat({
                 project_id: projectId,
                 label: beat.label,
-                template_abbr: beat.templateAbbr || 'STC',
+                template_abbr: beat.templateAbbr || beatTemplate.toUpperCase().replace('-', ''),
                 description: beat.items?.join(', ') || '',
                 from_container_id: firstActId,
                 to_container_id: lastActId,
@@ -196,7 +203,7 @@ export function StructureBeatsSection({ projectId, projectType, initialData, onD
           console.log(`[StructureBeatsSection] ✅ Successfully created ${createdBeats.length} beats`);
           setBeats(createdBeats);
           toast.success(`${createdBeats.length} Story Beats automatisch generiert`);
-        } else {
+        } else if (existingBeats.length > 0) {
           console.log(`[StructureBeatsSection] ℹ️ Found ${existingBeats.length} existing beats`);
           setBeats(existingBeats);
         }
@@ -207,7 +214,7 @@ export function StructureBeatsSection({ projectId, projectType, initialData, onD
     };
 
     autoGenerateBeats();
-  }, [projectId]);
+  }, [projectId, beatTemplate]);
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className={className}>

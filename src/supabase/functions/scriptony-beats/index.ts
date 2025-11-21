@@ -41,9 +41,22 @@ serve(async (req) => {
   }
 
   try {
+    // Client für Auth (mit Anon Key)
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      }
+    );
+
+    // Admin Client für interne Queries (mit Service Role Key)
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
       {
         auth: {
           autoRefreshToken: false,
@@ -115,6 +128,12 @@ serve(async (req) => {
     if (req.method === 'POST' && path === '/beats') {
       const body: Partial<StoryBeat> = await req.json();
 
+      console.log('[POST /beats] Request received:', { 
+        project_id: body.project_id, 
+        label: body.label,
+        user_id: user.id 
+      });
+
       // Validate required fields
       if (!body.project_id || !body.label || !body.from_container_id || !body.to_container_id) {
         return new Response(
@@ -134,38 +153,35 @@ serve(async (req) => {
         );
       }
 
-      // Verify user owns the project
-      // Get user's organization(s) from organization_members
-      const { data: memberData, error: memberError } = await supabase
-        .from('organization_members')
-        .select('organization_id')
-        .eq('user_id', user.id);
-
-      if (memberError || !memberData || memberData.length === 0) {
-        console.error('User has no organizations:', memberError);
-        return new Response(
-          JSON.stringify({ error: 'User has no organization' }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const userOrgIds = memberData.map(m => m.organization_id);
-
-      const { data: project, error: projectError } = await supabase
+      // Verify project exists
+      const { data: project, error: projectError } = await supabaseAdmin
         .from('projects')
-        .select('id')
+        .select('id, organization_id, title')
         .eq('id', body.project_id)
-        .in('organization_id', userOrgIds)
         .single();
 
+      console.log('[POST /beats] Project query:', { 
+        project, 
+        projectError,
+        project_id: body.project_id
+      });
+
       if (projectError || !project) {
+        console.error('[POST /beats] Project not found:', {
+          projectError,
+          project_id: body.project_id
+        });
+
         return new Response(
-          JSON.stringify({ error: 'Project not found or access denied' }),
+          JSON.stringify({ 
+            error: 'Project not found',
+            details: projectError?.message
+          }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
-      const { data: beat, error } = await supabase
+      const { data: beat, error } = await supabaseAdmin
         .from('story_beats')
         .insert({
           ...body,
@@ -177,13 +193,14 @@ serve(async (req) => {
         .single();
 
       if (error) {
-        console.error('Error creating beat:', error);
+        console.error('[POST /beats] Error creating beat:', error);
         return new Response(
           JSON.stringify({ error: error.message }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
+      console.log('[POST /beats] Beat created successfully:', beat.id);
       return new Response(
         JSON.stringify({ beat }),
         { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -210,7 +227,7 @@ serve(async (req) => {
       }
 
       // Verify user owns the beat (via project)
-      const { data: existingBeat, error: fetchError } = await supabase
+      const { data: existingBeat, error: fetchError } = await supabaseAdmin
         .from('story_beats')
         .select('project_id')
         .eq('id', beatId)
@@ -223,40 +240,24 @@ serve(async (req) => {
         );
       }
 
-      // Get user's organization(s) from organization_members
-      const { data: memberData, error: memberError } = await supabase
-        .from('organization_members')
-        .select('organization_id')
-        .eq('user_id', user.id);
-
-      if (memberError || !memberData || memberData.length === 0) {
-        console.error('User has no organizations:', memberError);
-        return new Response(
-          JSON.stringify({ error: 'User has no organization' }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const userOrgIds = memberData.map(m => m.organization_id);
-
-      const { data: project, error: projectError } = await supabase
+      // Verify project exists
+      const { data: project, error: projectError } = await supabaseAdmin
         .from('projects')
         .select('id')
         .eq('id', existingBeat.project_id)
-        .in('organization_id', userOrgIds)
         .single();
 
       if (projectError || !project) {
         return new Response(
-          JSON.stringify({ error: 'Access denied' }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: 'Project not found' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
       // Remove fields that shouldn't be updated
       const { id, project_id, user_id, created_at, updated_at, ...updateData } = body as any;
 
-      const { data: beat, error } = await supabase
+      const { data: beat, error } = await supabaseAdmin
         .from('story_beats')
         .update(updateData)
         .eq('id', beatId)
@@ -285,7 +286,7 @@ serve(async (req) => {
       const beatId = deleteMatch[1];
 
       // Verify user owns the beat (via project)
-      const { data: existingBeat, error: fetchError } = await supabase
+      const { data: existingBeat, error: fetchError } = await supabaseAdmin
         .from('story_beats')
         .select('project_id')
         .eq('id', beatId)
@@ -298,37 +299,21 @@ serve(async (req) => {
         );
       }
 
-      // Get user's organization(s) from organization_members
-      const { data: memberData, error: memberError } = await supabase
-        .from('organization_members')
-        .select('organization_id')
-        .eq('user_id', user.id);
-
-      if (memberError || !memberData || memberData.length === 0) {
-        console.error('User has no organizations:', memberError);
-        return new Response(
-          JSON.stringify({ error: 'User has no organization' }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const userOrgIds = memberData.map(m => m.organization_id);
-
-      const { data: project, error: projectError } = await supabase
+      // Verify project exists
+      const { data: project, error: projectError } = await supabaseAdmin
         .from('projects')
         .select('id')
         .eq('id', existingBeat.project_id)
-        .in('organization_id', userOrgIds)
         .single();
 
       if (projectError || !project) {
         return new Response(
-          JSON.stringify({ error: 'Access denied' }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: 'Project not found' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
-      const { error } = await supabase
+      const { error } = await supabaseAdmin
         .from('story_beats')
         .delete()
         .eq('id', beatId);

@@ -184,11 +184,15 @@ BEGIN
   INSERT INTO public.activity_logs (
     project_id,
     user_id,
+    entity_type,
+    entity_id,
     action,
     details
   ) VALUES (
     v_project_id,
     v_user_id,
+    'StoryBeat',
+    COALESCE(NEW.id, OLD.id),
     v_action,
     v_details
   );

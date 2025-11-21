@@ -77,7 +77,7 @@ export const LITE_7_TEMPLATE: BeatTemplate = {
     {
       label: 'Resolution',
       templateAbbr: 'L7',
-      pctFrom: 100,
+      pctFrom: 95,
       pctTo: 100,
       color: '#AB97D4',
       items: [],
@@ -445,7 +445,7 @@ export const SEVEN_POINT_TEMPLATE: BeatTemplate = {
     {
       label: 'Resolution',
       templateAbbr: '7PT',
-      pctFrom: 100,
+      pctFrom: 95,
       pctTo: 100,
       color: '#AB97D4',
       items: [],

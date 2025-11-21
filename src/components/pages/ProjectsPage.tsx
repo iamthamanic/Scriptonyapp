@@ -4356,6 +4356,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         <StructureBeatsSection
           projectId={project.id}
           projectType={project.type}
+          beatTemplate={project.beat_template}
           initialData={timelineCache[project.id]}
           onDataChange={(data) => onTimelineDataChange(project.id, data)}
         />
