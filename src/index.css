@@ -618,6 +618,10 @@
     inset-block: calc(var(--spacing) * 0);
   }
 
+  .-top-0\.5 {
+    top: calc(var(--spacing) * -.5);
+  }
+
   .-top-1 {
     top: calc(var(--spacing) * -1);
   }
@@ -1182,6 +1186,10 @@
     height: calc(var(--spacing) * 1);
   }
 
+  .h-1\.5 {
+    height: calc(var(--spacing) * 1.5);
+  }
+
   .h-2 {
     height: calc(var(--spacing) * 2);
   }
@@ -1248,10 +1256,6 @@
 
   .h-24 {
     height: calc(var(--spacing) * 24);
-  }
-
-  .h-30 {
-    height: calc(var(--spacing) * 30);
   }
 
   .h-32 {
@@ -1452,6 +1456,10 @@
 
   .min-h-\[120px\] {
     min-height: 120px;
+  }
+
+  .min-h-\[200px\] {
+    min-height: 200px;
   }
 
   .min-h-\[300px\] {
@@ -1874,6 +1882,10 @@
     cursor: not-allowed;
   }
 
+  .cursor-ns-resize {
+    cursor: ns-resize;
+  }
+
   .cursor-pointer {
     cursor: pointer;
   }
@@ -2271,6 +2283,11 @@
   .border-b-2 {
     border-bottom-style: var(--tw-border-style);
     border-bottom-width: 2px;
+  }
+
+  .border-b-4 {
+    border-bottom-style: var(--tw-border-style);
+    border-bottom-width: 4px;
   }
 
   .border-l {
@@ -3976,6 +3993,16 @@
     }
   }
 
+  .text-muted-foreground\/70 {
+    color: var(--muted-foreground);
+  }
+
+  @supports (color: color-mix(in lab, red, red)) {
+    .text-muted-foreground\/70 {
+      color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+    }
+  }
+
   .text-neutral-400 {
     color: var(--color-neutral-400);
   }
@@ -4569,6 +4596,12 @@
   }
 
   @media (hover: hover) {
+    .hover\:w-1:hover {
+      width: calc(var(--spacing) * 1);
+    }
+  }
+
+  @media (hover: hover) {
     .hover\:scale-105:hover {
       --tw-scale-x: 105%;
       --tw-scale-y: 105%;
@@ -4583,6 +4616,13 @@
       --tw-scale-y: 110%;
       --tw-scale-z: 110%;
       scale: var(--tw-scale-x) var(--tw-scale-y);
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:border-b-4:hover {
+      border-bottom-style: var(--tw-border-style);
+      border-bottom-width: 4px;
     }
   }
 
@@ -4613,6 +4653,12 @@
   @media (hover: hover) {
     .hover\:border-character-blue:hover {
       border-color: var(--character-blue);
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:border-primary:hover {
+      border-color: var(--primary);
     }
   }
 
@@ -4775,18 +4821,6 @@
   @media (hover: hover) {
     .hover\:bg-green-200:hover {
       background-color: var(--color-green-200);
-    }
-  }
-
-  @media (hover: hover) {
-    .hover\:bg-green-500\/20:hover {
-      background-color: color-mix(in srgb, oklch(.723 .219 149.579) 20%, transparent);
-    }
-
-    @supports (color: color-mix(in lab, red, red)) {
-      .hover\:bg-green-500\/20:hover {
-        background-color: color-mix(in oklab, var(--color-green-500) 20%, transparent);
-      }
     }
   }
 

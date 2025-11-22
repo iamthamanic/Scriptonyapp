@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Plus } from 'lucide-react';
+import { Play, Pause, Plus, Maximize2, Minimize2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { cn } from './ui/utils';
 import * as BeatsAPI from '../lib/api/beats-api';
@@ -9,6 +9,7 @@ import type { TimelineData } from './FilmDropdown';
 import type { BookTimelineData } from './BookDropdown';
 import { RichTextEditorModal } from './RichTextEditorModal';
 import { ReadonlyTiptapView } from './ReadonlyTiptapView';
+import { TimelineTextPreview } from './TimelineTextPreview';
 
 /**
  * 🎬 VIDEO EDITOR TIMELINE (CapCut Style)
@@ -158,14 +159,255 @@ export function VideoEditorTimeline({
   const DEFAULT_EMPTY_ACT_MIN = 5; // 5 minutes
   const isBookProject = projectType === 'book';
   
-  console.log('[VideoEditorTimeline] 📖 Book Timeline:', {
-    durationMin: `${totalDurationMin.toFixed(1)} min`,
-    durationSec: `${totalDurationSec.toFixed(0)}s`,
-    totalWords: (totalWords ?? 0).toLocaleString(),
-    readingSpeedWpm,
-    acts: timelineData?.acts?.length || 0,
-    note: 'Timeline = sum of all acts (text-based + default for empty)'
+  // 📖 PLAYBACK STATE: Word-by-word text display (MUST BE AFTER isBookProject)
+  const [currentWordIndex, setCurrentWordIndex] = useState(0);
+  const [currentSceneId, setCurrentSceneId] = useState<string | null>(null);
+  const [wordsArray, setWordsArray] = useState<string[]>([]);
+  const playbackStartTimeRef = useRef<number>(0);
+  const playbackAnimationRef = useRef<number | null>(null);
+  const sceneBlocksRef = useRef<any[]>([]);
+  
+  // 🎯 CURSOR DRAG STATE
+  const [isDraggingCursor, setIsDraggingCursor] = useState(false);
+  const dragStartXRef = useRef(0);
+  const dragStartTimeRef = useRef(0);
+  
+  // 🎯 FULLSCREEN STATE
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  // 🎯 TRACK HEIGHTS (CapCut-Style with localStorage)
+  const TRACK_CONSTRAINTS = {
+    beat: { min: 40, max: 120, default: 64 },
+    act: { min: 40, max: 100, default: 48 },
+    sequence: { min: 40, max: 80, default: 40 },
+    scene: { min: 80, max: 400, default: 120 }
+  };
+  
+  const STORAGE_KEY = `scriptony-timeline-heights-${projectId}`;
+  
+  const [trackHeights, setTrackHeights] = useState(() => {
+    // Load from localStorage or use defaults
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch (e) {
+          console.error('[VideoEditorTimeline] Failed to parse stored heights:', e);
+        }
+      }
+    }
+    return {
+      beat: TRACK_CONSTRAINTS.beat.default,
+      act: TRACK_CONSTRAINTS.act.default,
+      sequence: TRACK_CONSTRAINTS.sequence.default,
+      scene: TRACK_CONSTRAINTS.scene.default
+    };
   });
+  
+  // 🎯 RESIZE STATE
+  const [resizingTrack, setResizingTrack] = useState<string | null>(null);
+  const resizeStartYRef = useRef(0);
+  const resizeStartHeightRef = useRef(0);
+  
+  // 💾 SAVE HEIGHTS TO LOCALSTORAGE
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trackHeights));
+      console.log('[VideoEditorTimeline] 💾 Saved track heights:', trackHeights);
+    }
+  }, [trackHeights, STORAGE_KEY]);
+  
+  // 🎯 RESIZE HANDLERS
+  const handleResizeStart = (track: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    setResizingTrack(track);
+    resizeStartYRef.current = e.clientY;
+    resizeStartHeightRef.current = trackHeights[track as keyof typeof trackHeights];
+    console.log(`[Resize] 🎯 Start resizing ${track} at Y=${e.clientY}, height=${resizeStartHeightRef.current}px`);
+  };
+  
+  const handleResizeMove = (e: MouseEvent) => {
+    if (!resizingTrack) return;
+    
+    const deltaY = e.clientY - resizeStartYRef.current;
+    const newHeight = resizeStartHeightRef.current + deltaY;
+    const constraints = TRACK_CONSTRAINTS[resizingTrack as keyof typeof TRACK_CONSTRAINTS];
+    const clampedHeight = Math.max(constraints.min, Math.min(constraints.max, newHeight));
+    
+    setTrackHeights(prev => ({
+      ...prev,
+      [resizingTrack]: clampedHeight
+    }));
+  };
+  
+  const handleResizeEnd = () => {
+    if (resizingTrack) {
+      console.log(`[Resize] ✅ Finished resizing ${resizingTrack} to ${trackHeights[resizingTrack as keyof typeof trackHeights]}px`);
+    }
+    setResizingTrack(null);
+  };
+  
+  // 🎯 GLOBAL RESIZE LISTENERS
+  useEffect(() => {
+    if (resizingTrack) {
+      window.addEventListener('mousemove', handleResizeMove);
+      window.addEventListener('mouseup', handleResizeEnd);
+      return () => {
+        window.removeEventListener('mousemove', handleResizeMove);
+        window.removeEventListener('mouseup', handleResizeEnd);
+      };
+    }
+  }, [resizingTrack, trackHeights]);
+  
+  console.log('[VideoEditorTimeline] 📖 Book Timeline:', {
+    isBookProject,
+    totalWords,
+    wordsPerPage,
+    targetPages,
+    readingSpeedWpm,
+  });
+  
+  // 📖 HELPER: Extract text from TipTap JSON and split into words
+  const extractWordsFromContent = (content: any): string[] => {
+    if (!content?.content || !Array.isArray(content.content)) {
+      return [];
+    }
+    
+    let text = '';
+    for (const node of content.content) {
+      if (node.type === 'paragraph' && node.content) {
+        for (const child of node.content) {
+          if (child.type === 'text' && child.text) {
+            text += child.text + ' ';
+          }
+        }
+        text += ' '; // Space between paragraphs
+      }
+    }
+    
+    return text.trim().split(/\s+/).filter(w => w.length > 0);
+  };
+  
+  // 📖 PLAYBACK LOOP: Animate word-by-word
+  useEffect(() => {
+    if (!isPlaying || !isBookProject) return;
+    
+    const msPerWord = 60000 / readingSpeedWpm; // Convert WPM to ms per word
+    
+    const animate = (timestamp: number) => {
+      if (!playbackStartTimeRef.current) {
+        playbackStartTimeRef.current = timestamp;
+      }
+      
+      const elapsed = timestamp - playbackStartTimeRef.current;
+      const wordsElapsed = Math.floor(elapsed / msPerWord);
+      
+      if (wordsElapsed < wordsArray.length) {
+        // Still within current scene
+        setCurrentWordIndex(wordsElapsed);
+        
+        // Update timeline cursor
+        const secondsPerWord = 60 / readingSpeedWpm;
+        const newTime = currentTime + (wordsElapsed * secondsPerWord);
+        setCurrentTime(newTime);
+        
+        playbackAnimationRef.current = requestAnimationFrame(animate);
+      } else {
+        // Scene complete - advance to next scene
+        console.log('[Playback] 🎬 Scene complete, advancing to next...');
+        advanceToNextScene();
+      }
+    };
+    
+    playbackAnimationRef.current = requestAnimationFrame(animate);
+    
+    return () => {
+      if (playbackAnimationRef.current) {
+        cancelAnimationFrame(playbackAnimationRef.current);
+        playbackAnimationRef.current = null;
+      }
+    };
+  }, [isPlaying, wordsArray.length, currentTime, readingSpeedWpm, isBookProject]);
+  
+  // 🚀 ADVANCE TO NEXT SCENE
+  const advanceToNextScene = () => {
+    const scenes = sceneBlocksRef.current.filter(s => s.startSec >= currentTime);
+    
+    if (scenes.length > 0) {
+      const nextScene = scenes[0];
+      console.log('[Playback] ➡️ Loading next scene:', nextScene.title);
+      
+      // Load words from next scene
+      const words = extractWordsFromContent(nextScene.content);
+      
+      if (words.length > 0) {
+        setCurrentSceneId(nextScene.id);
+        setWordsArray(words);
+        setCurrentWordIndex(0);
+        setCurrentTime(nextScene.startSec);
+        playbackStartTimeRef.current = 0; // Reset timer
+      } else {
+        // Empty scene - skip to next
+        setCurrentTime(nextScene.endSec);
+        advanceToNextScene();
+      }
+    } else {
+      // End of timeline
+      console.log('[Playback] 🛑 End of timeline');
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setCurrentWordIndex(0);
+      setWordsArray([]);
+      setCurrentSceneId(null);
+    }
+  };
+  
+  // 🎬 HANDLE PLAY/PAUSE TOGGLE
+  const handlePlayPause = () => {
+    if (!isBookProject) {
+      // Film projects: not implemented yet
+      console.log('[Playback] ⚠️ Playback only supported for book projects');
+      return;
+    }
+    
+    if (!isPlaying) {
+      // START PLAYBACK
+      console.log('[Playback] ▶️ Starting playback...');
+      
+      // Find scene at current time or start from beginning
+      const currentScene = sceneBlocksRef.current.find(s => 
+        currentTime >= s.startSec && currentTime <= s.endSec
+      ) || sceneBlocksRef.current[0];
+      
+      if (!currentScene) {
+        console.error('[Playback] ❌ No scenes found');
+        return;
+      }
+      
+      // Extract words from scene content
+      const words = extractWordsFromContent(currentScene.content);
+      
+      if (words.length === 0) {
+        console.error('[Playback] ❌ Scene has no text content');
+        return;
+      }
+      
+      console.log(`[Playback] 📖 Loaded ${words.length} words from "${currentScene.title}"`);
+      
+      setCurrentSceneId(currentScene.id);
+      setWordsArray(words);
+      setCurrentWordIndex(0);
+      setCurrentTime(currentScene.startSec);
+      playbackStartTimeRef.current = 0;
+      setIsPlaying(true);
+    } else {
+      // PAUSE PLAYBACK
+      console.log('[Playback] ⏸️ Pausing playback...');
+      setIsPlaying(false);
+      playbackStartTimeRef.current = 0;
+    }
+  };
   
   // 📏 MEASURE VIEWPORT WIDTH
   useEffect(() => {
@@ -720,6 +962,25 @@ export function VideoEditorTimeline({
     });
   }
   
+  // 🎯 UPDATE REF: Store sceneBlocks for playback functions
+  sceneBlocksRef.current = sceneBlocks;
+  
+  // 🚀 INITIAL TEXT LOAD: Load first scene text on mount
+  useEffect(() => {
+    if (isBookProject && sceneBlocks.length > 0 && wordsArray.length === 0) {
+      const firstScene = sceneBlocks[0];
+      const words = extractWordsFromContent(firstScene.content);
+      
+      if (words.length > 0) {
+        console.log(`[VideoEditorTimeline] 📚 Loading initial text from "${firstScene.title}": ${words.length} words`);
+        setCurrentSceneId(firstScene.id);
+        setWordsArray(words);
+        setCurrentWordIndex(0);
+        setCurrentTime(firstScene.startSec);
+      }
+    }
+  }, [isBookProject, sceneBlocks.length, wordsArray.length]);
+  
   // 📖 PAGE MARKERS FOR BOOKS (based on word count, not time!)
   const pageMarkers: { x: number; page: number }[] = [];
   
@@ -776,36 +1037,172 @@ export function VideoEditorTimeline({
     const newTime = viewStartSec + clickX / pxPerSec;
     
     setCurrentTime(Math.max(0, Math.min(duration, newTime)));
+    
+    // 📖 LOAD TEXT AT CURSOR POSITION (for book projects)
+    if (isBookProject && sceneBlocksRef.current.length > 0) {
+      const sceneAtTime = sceneBlocksRef.current.find(s => 
+        newTime >= s.startSec && newTime <= s.endSec
+      );
+      
+      if (sceneAtTime) {
+        const words = extractWordsFromContent(sceneAtTime.content);
+        
+        if (words.length > 0) {
+          // Calculate word index based on time within scene
+          const timeIntoScene = newTime - sceneAtTime.startSec;
+          const secondsPerWord = 60 / readingSpeedWpm;
+          const wordIndex = Math.floor(timeIntoScene / secondsPerWord);
+          
+          console.log(`[Playhead] 📍 Jumped to scene "${sceneAtTime.title}" at word ${wordIndex}/${words.length}`);
+          
+          setCurrentSceneId(sceneAtTime.id);
+          setWordsArray(words);
+          setCurrentWordIndex(Math.min(wordIndex, words.length - 1));
+        }
+      }
+    }
+  };
+  
+  // Handle cursor drag start
+  const handleCursorDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!viewportRef.current) return;
+    
+    const rect = viewportRef.current.getBoundingClientRect();
+    const dragStartX = e.clientX - rect.left;
+    const dragStartTime = currentTime;
+    
+    dragStartXRef.current = dragStartX;
+    dragStartTimeRef.current = dragStartTime;
+    setIsDraggingCursor(true);
+  };
+  
+  // Handle cursor drag move
+  const handleCursorDragMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDraggingCursor || !viewportRef.current) return;
+    
+    const rect = viewportRef.current.getBoundingClientRect();
+    const dragCurrentX = e.clientX - rect.left;
+    const dragStartX = dragStartXRef.current;
+    const dragStartTime = dragStartTimeRef.current;
+    
+    const dragDeltaX = dragCurrentX - dragStartX;
+    const dragDeltaSec = dragDeltaX / pxPerSec;
+    
+    const newTime = dragStartTime + dragDeltaSec;
+    const clampedTime = Math.max(0, Math.min(duration, newTime));
+    setCurrentTime(clampedTime);
+    
+    // 📖 UPDATE TEXT AT DRAG POSITION (for book projects)
+    if (isBookProject && sceneBlocksRef.current.length > 0) {
+      const sceneAtTime = sceneBlocksRef.current.find(s => 
+        clampedTime >= s.startSec && clampedTime <= s.endSec
+      );
+      
+      if (sceneAtTime) {
+        const words = extractWordsFromContent(sceneAtTime.content);
+        
+        if (words.length > 0) {
+          // Calculate word index based on time within scene
+          const timeIntoScene = clampedTime - sceneAtTime.startSec;
+          const secondsPerWord = 60 / readingSpeedWpm;
+          const wordIndex = Math.floor(timeIntoScene / secondsPerWord);
+          
+          // Only update if scene changed or word changed significantly
+          if (currentSceneId !== sceneAtTime.id || Math.abs(wordIndex - currentWordIndex) > 2) {
+            setCurrentSceneId(sceneAtTime.id);
+            setWordsArray(words);
+            setCurrentWordIndex(Math.min(wordIndex, words.length - 1));
+          }
+        }
+      }
+    }
+  };
+  
+  // Handle cursor drag end
+  const handleCursorDragEnd = () => {
+    if (isDraggingCursor) {
+      console.log(`[Cursor] 🛑 Drag end at ${formatTimeLabel(currentTime)}`);
+    }
+    setIsDraggingCursor(false);
   };
   
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* Preview Area */}
+    <div className={cn(
+      "flex flex-col bg-background",
+      isFullscreen ? "fixed inset-0 z-50" : "h-full"
+    )}>
+      {/* Preview Area - Word Display (Karaoke Style) */}
       <div className="flex-shrink-0 bg-card p-6 border-b border-border">
-        <div className="text-sm text-muted-foreground mb-2">Videoplayer Ansicht</div>
-        <div className="max-w-xs mx-auto">
-          <div className="relative aspect-video bg-muted rounded overflow-hidden border-2 border-border">
-            <img 
-              src="https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&h=225&fit=crop"
-              alt="Preview"
-              className="w-full h-full object-cover"
-            />
+        <div className="text-sm text-muted-foreground mb-2">
+          {isBookProject ? 'Text-Ansicht' : 'Videoplayer Ansicht'}
+        </div>
+        <div className="max-w-2xl mx-auto">
+          <div className="relative min-h-[200px] bg-muted rounded overflow-hidden border-2 border-border p-8">
+            {isBookProject && wordsArray.length > 0 ? (
+              // 📖 BOOK: 3-Sentence display with highlighted current word
+              <TimelineTextPreview
+                wordsArray={wordsArray}
+                currentWordIndex={currentWordIndex}
+                currentSceneTitle={sceneBlocks.find(s => s.id === currentSceneId)?.title}
+              />
+            ) : (
+              // 🎬 FILM: Video placeholder
+              <>
+                <img 
+                  src="https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&h=450&fit=crop"
+                  alt="Preview"
+                  className="w-full h-full object-cover rounded"
+                />
+                
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Button
+                    variant="default"
+                    size="icon"
+                    className="rounded-full bg-background/20 hover:bg-background/30 backdrop-blur-sm w-16 h-16"
+                    onClick={handlePlayPause}
+                  >
+                    {isPlaying ? <Pause className="w-8 h-8 text-foreground" /> : <Play className="w-8 h-8 text-foreground ml-1" />}
+                  </Button>
+                </div>
+              </>
+            )}
             
-            <div className="absolute inset-0 flex items-center justify-center">
+            {!isBookProject && (
+              <div className="absolute bottom-2 left-2 bg-primary text-primary-foreground px-2 py-0.5 rounded text-xs font-mono">
+                {formatTimeLabel(currentTime)}
+              </div>
+            )}
+          </div>
+          
+          {/* Playback Controls Below Preview */}
+          {isBookProject && (
+            <div className="mt-4 flex items-center gap-3">
               <Button
                 variant="default"
-                size="icon"
-                className="rounded-full bg-background/20 hover:bg-background/30 backdrop-blur-sm w-12 h-12"
-                onClick={() => setIsPlaying(!isPlaying)}
+                size="sm"
+                onClick={handlePlayPause}
+                className="bg-primary hover:bg-primary/90"
               >
-                {isPlaying ? <Pause className="w-6 h-6 text-foreground" /> : <Play className="w-6 h-6 text-foreground ml-1" />}
+                {isPlaying ? <Pause className="w-4 h-4 mr-2" /> : <Play className="w-4 h-4 mr-2" />}
+                {isPlaying ? 'Pause' : 'Play'}
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsFullscreen(!isFullscreen)}
+                className="border-border"
+              >
+                {isFullscreen ? <Minimize2 className="w-4 h-4 mr-2" /> : <Maximize2 className="w-4 h-4 mr-2" />}
+                {isFullscreen ? 'Exit' : 'Fullscreen'}
+              </Button>
+              <div className="flex-1 bg-muted px-3 py-1.5 rounded text-xs font-mono text-foreground border border-border">
+                {formatTimeLabel(currentTime)} / {formatTimeLabel(duration)}
+              </div>
+              <div className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded border border-border">
+                {readingSpeedWpm} WPM
+              </div>
             </div>
-            
-            <div className="absolute bottom-2 left-2 bg-primary text-primary-foreground px-2 py-0.5 rounded text-xs font-mono">
-              {formatTimeLabel(currentTime)}
-            </div>
-          </div>
+          )}
         </div>
       </div>
       
@@ -841,23 +1238,63 @@ export function VideoEditorTimeline({
           <div className="h-12 border-b border-border px-2 flex items-center bg-card">
             <span className="text-[9px] text-foreground font-medium">Zeit</span>
           </div>
-          <div className="h-16 border-b border-border px-2 flex items-center bg-card">
+          <div 
+            className="border-b border-border px-2 flex items-center bg-card relative"
+            style={{ height: `${trackHeights.beat}px` }}
+          >
             <span className="text-[9px] text-foreground font-medium">Beat</span>
+            <div 
+              className={cn(
+                "absolute bottom-0 left-0 right-0 h-1 cursor-ns-resize transition-all",
+                resizingTrack === 'beat' ? 'border-b-4 border-primary' : 'hover:border-b-4 hover:border-primary'
+              )}
+              onMouseDown={(e) => handleResizeStart('beat', e)}
+            />
           </div>
-          <div className="h-12 border-b border-border px-2 flex items-center bg-card">
+          <div 
+            className="border-b border-border px-2 flex items-center bg-card relative"
+            style={{ height: `${trackHeights.act}px` }}
+          >
             <span className="text-[9px] text-foreground font-medium">
               {isBookProject ? 'Akt' : 'Act'}
             </span>
+            <div 
+              className={cn(
+                "absolute bottom-0 left-0 right-0 h-1 cursor-ns-resize transition-all",
+                resizingTrack === 'act' ? 'border-b-4 border-primary' : 'hover:border-b-4 hover:border-primary'
+              )}
+              onMouseDown={(e) => handleResizeStart('act', e)}
+            />
           </div>
-          <div className="h-10 border-b border-border px-2 flex items-center bg-card">
+          <div 
+            className="border-b border-border px-2 flex items-center bg-card relative"
+            style={{ height: `${trackHeights.sequence}px` }}
+          >
             <span className="text-[9px] text-foreground font-medium">
               {isBookProject ? 'Kapitel' : 'Seq'}
             </span>
+            <div 
+              className={cn(
+                "absolute bottom-0 left-0 right-0 h-1 cursor-ns-resize transition-all",
+                resizingTrack === 'sequence' ? 'border-b-4 border-primary' : 'hover:border-b-4 hover:border-primary'
+              )}
+              onMouseDown={(e) => handleResizeStart('sequence', e)}
+            />
           </div>
-          <div className="h-30 border-b border-border px-2 flex items-center bg-card">
+          <div 
+            className="border-b border-border px-2 flex items-center bg-card relative"
+            style={{ height: `${trackHeights.scene}px` }}
+          >
             <span className="text-[9px] text-foreground font-medium">
               {isBookProject ? 'Abschnitt' : 'Scene'}
             </span>
+            <div 
+              className={cn(
+                "absolute bottom-0 left-0 right-0 h-1 cursor-ns-resize transition-all",
+                resizingTrack === 'scene' ? 'border-b-4 border-primary' : 'hover:border-b-4 hover:border-primary'
+              )}
+              onMouseDown={(e) => handleResizeStart('scene', e)}
+            />
           </div>
         </div>
         
@@ -866,6 +1303,9 @@ export function VideoEditorTimeline({
           ref={scrollRef}
           className="flex-1 overflow-x-auto scrollbar-thin scrollbar-thumb-primary scrollbar-track-muted"
           onWheel={handleWheel}
+          onMouseMove={handleCursorDragMove}
+          onMouseUp={handleCursorDragEnd}
+          onMouseLeave={handleCursorDragEnd}
         >
           <div ref={viewportRef} style={{ width: `${totalWidthPx}px` }}>
             {/* Time Ruler */}
@@ -896,28 +1336,32 @@ export function VideoEditorTimeline({
                     className="absolute bottom-0 flex flex-col items-center"
                     style={{ left: `${marker.x}px` }}
                   >
+                    <div className="w-px h-1.5 bg-border" />
                     <span className={cn(
-                      'text-[9px] font-mono mb-0.5 whitespace-nowrap',
+                      'text-[9px] font-mono mt-6 whitespace-nowrap',
                       isWholePage ? 'text-primary font-bold' : 'text-muted-foreground'
                     )}>
                       S.{marker.page % 1 === 0 ? marker.page.toFixed(0) : marker.page.toFixed(1)}
                     </span>
-                    <div className="w-px h-3 bg-border" />
                   </div>
                 );
               })}
               
-              {/* Playhead */}
+              {/* Playhead - Draggable */}
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-30"
+                className="absolute top-0 bottom-0 w-0.5 bg-primary cursor-ew-resize z-30 hover:w-1 transition-all"
                 style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+                onMouseDown={handleCursorDragStart}
               >
-                <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-primary rounded-sm" />
+                <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-2 h-2 bg-primary rounded-full shadow-md" />
               </div>
             </div>
             
             {/* Beat Track */}
-            <div className="relative h-16 border-b border-border bg-muted/30">
+            <div 
+              className="relative border-b border-border bg-muted/30"
+              style={{ height: `${trackHeights.beat}px` }}
+            >
               {beatBlocks
                 .filter(beat => beat.visible)
                 .map(beat => (
@@ -948,7 +1392,10 @@ export function VideoEditorTimeline({
             </div>
             
             {/* Act Track */}
-            <div className="relative h-12 border-b border-border bg-muted/30">
+            <div 
+              className="relative border-b border-border bg-muted/30"
+              style={{ height: `${trackHeights.act}px` }}
+            >
               {actBlocks
                 .filter(act => act.visible)
                 .map(act => (
@@ -976,7 +1423,10 @@ export function VideoEditorTimeline({
             </div>
             
             {/* Sequence/Chapter Track */}
-            <div className="relative h-10 border-b border-border bg-muted/30">
+            <div 
+              className="relative border-b border-border bg-muted/30"
+              style={{ height: `${trackHeights.sequence}px` }}
+            >
               {sequenceBlocks
                 .filter(seq => seq.visible)
                 .map(seq => (
@@ -1004,7 +1454,10 @@ export function VideoEditorTimeline({
             </div>
             
             {/* Scene/Section Track */}
-            <div className="relative h-30 border-b border-border bg-muted/30">
+            <div 
+              className="relative border-b border-border bg-muted/30"
+              style={{ height: `${trackHeights.scene}px` }}
+            >
               {sceneBlocks
                 .filter(scene => scene.visible)
                 .map(scene => (

@@ -162,22 +162,6 @@ export function Navigation({ currentPage, onNavigate, theme, onToggleTheme, user
           
           {/* Right Actions */}
           <div className="flex items-center gap-1">
-            {/* Word Count Recalculate Button */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleRecalculateWordCounts}
-              disabled={isRecalculating}
-              className="text-xs h-8 px-2 bg-green-500/10 hover:bg-green-500/20"
-              title="Word Counts neu berechnen"
-            >
-              {isRecalculating ? (
-                <>📊 ...</>
-              ) : (
-                <>📊 WC</>
-              )}
-            </Button>
-            
             {/* TEMP: Layout Prototype Button */}
             <Button
               variant="ghost"
@@ -197,13 +181,18 @@ export function Navigation({ currentPage, onNavigate, theme, onToggleTheme, user
               <Settings className="size-4" />
             </Button>
             
+            {/* Theme Toggle */}
             <Button
               variant="ghost"
               size="icon"
               onClick={onToggleTheme}
-              className="rounded-full w-9 h-9"
+              className="size-9"
             >
-              {theme === "light" ? <Moon className="size-4" /> : <Sun className="size-4" />}
+              {theme === "dark" ? (
+                <Sun className="size-4" />
+              ) : (
+                <Moon className="size-4" />
+              )}
             </Button>
             
             {userRole === "superadmin" && (
