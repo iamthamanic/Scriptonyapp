@@ -115,6 +115,7 @@ export interface Scene {
   duration?: number; // in minutes
   orderIndex?: number; // Sortierung innerhalb Sequence
   color?: string; // NEW: Farbe für Scene
+  wordCount?: number; // 📖 For books (sections): Word count in this section
   createdAt: string;
   updatedAt: string;
   // Relations
@@ -134,6 +135,7 @@ export interface Act {
   description?: string;
   color?: string; // Hex color for UI
   orderIndex: number;
+  wordCount?: number; // 📖 For books: Total word count in this act
   createdAt: string;
   updatedAt: string;
   // Relations
@@ -148,6 +150,7 @@ export interface Sequence {
   description?: string;
   color?: string; // Hex color for UI
   orderIndex: number;
+  wordCount?: number; // 📖 For books (chapters): Total word count in this chapter
   createdAt: string;
   updatedAt: string;
   // Relations

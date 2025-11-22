@@ -196,8 +196,23 @@ export function NativeBookView({ projectId, projectType, initialData }: NativeBo
           return;
         }
         
-        // Save to API
-        await updateScene(sectionId, { content: updatedSection.content }, token);
+        // 📊 CALCULATE WORD COUNT from content
+        let wordCount = 0;
+        try {
+          const parsed = typeof updatedSection.content === 'string' 
+            ? JSON.parse(updatedSection.content) 
+            : updatedSection.content;
+          const textContent = extractTextFromTiptap(parsed);
+          wordCount = textContent.trim() 
+            ? textContent.trim().split(/\s+/).filter(w => w.length > 0).length 
+            : 0;
+          console.log(`[NativeBookView] 💾 Saving section with ${wordCount} words`);
+        } catch (e) {
+          console.warn('[NativeBookView] Could not parse content for word count:', e);
+        }
+        
+        // Save to API with word count
+        await updateScene(sectionId, { content: updatedSection.content, wordCount }, token);
         toast.success('Gespeichert', { duration: 1000 });
       }
     } catch (error) {

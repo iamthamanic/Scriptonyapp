@@ -46,6 +46,14 @@ export interface BookTimelineData {
   scenes: Scene[]; // Abschnitte with text content
 }
 
+// 📖 DEFAULT WORD COUNTS FOR NEW ITEMS
+// Based on typical book structure and 250 words per page
+const DEFAULT_WORD_COUNTS = {
+  ACT: 25000,        // ~100 pages (typical act in a novel)
+  CHAPTER: 2500,     // ~10 pages (typical chapter)
+  SECTION: 625,      // ~2.5 pages (typical section/scene)
+};
+
 interface BookDropdownProps {
   projectId: string;
   projectType?: string; // 🎯 NEW: Project type for dynamic labels
@@ -76,9 +84,10 @@ interface DropZoneProps {
   onDrop: (draggedItemId: string, targetIndex: number) => void;
   label: string;
   height?: 'act' | 'sequence' | 'scene';
+  onAdd?: () => void;
 }
 
-function DropZone({ type, index, onDrop, label, height = 'act' }: DropZoneProps) {
+function DropZone({ type, index, onDrop, label, height = 'act', onAdd }: DropZoneProps) {
   const [{ isOver, canDrop }, drop] = useDrop({
     accept: type,
     drop: (item: { id: string; index: number }) => {
@@ -90,6 +99,8 @@ function DropZone({ type, index, onDrop, label, height = 'act' }: DropZoneProps)
     }),
   });
 
+  const [isHovering, setIsHovering] = useState(false);
+
   const heightClass = {
     act: 'h-12',
     sequence: 'h-10',
@@ -99,15 +110,37 @@ function DropZone({ type, index, onDrop, label, height = 'act' }: DropZoneProps)
   return (
     <div
       ref={drop}
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
       className={cn(
-        'transition-all duration-200',
+        'transition-all duration-200 relative group',
         heightClass,
         isOver && canDrop && 'bg-violet-100 dark:bg-violet-900/20 border-2 border-dashed border-violet-400 rounded-md',
-        !isOver && 'h-2'
+        !isOver && 'h-3 hover:h-6' // Slight expand on hover to make button clickable
       )}
-    />
+    >
+      {/* Inline Add Button - Visible on Hover */}
+      {onAdd && (isHovering || isOver) && !canDrop && (
+        <div className="absolute inset-0 flex items-center justify-center z-10">
+          <div className="w-full h-px bg-primary/20 absolute top-1/2 left-0 transform -translate-y-1/2" />
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-6 w-6 rounded-full bg-background border shadow-sm hover:bg-primary hover:text-primary-foreground transition-all relative z-20"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAdd();
+            }}
+            title={label.replace('Vor', 'Einfügen:')}
+          >
+            <Plus className="h-3 w-3" />
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
+
 
 // =====================================================
 // DRAGGABLE ACT CARD
@@ -248,6 +281,72 @@ export function BookDropdown({
   // 🔥 FIX: Debounced save for scene content
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // 📖 AUTO-CALCULATE WORD COUNTS: Update parent items based on children
+  useEffect(() => {
+    if (loading) return;
+
+    let updated = false;
+    const updatedSequences = sequences.map(seq => {
+      // Calculate total words in this sequence from its scenes
+      const sequenceScenes = scenes.filter(sc => sc.sequenceId === seq.id);
+      const totalWords = sequenceScenes.reduce((sum, sc) => sum + (sc.wordCount || 0), 0);
+      
+      if (totalWords !== seq.wordCount) {
+        updated = true;
+        return { ...seq, wordCount: totalWords };
+      }
+      return seq;
+    });
+
+    const updatedActs = acts.map(act => {
+      // Calculate total words in this act from its sequences
+      const actSequences = updatedSequences.filter(s => s.actId === act.id);
+      const totalWords = actSequences.reduce((sum, s) => sum + (s.wordCount || 0), 0);
+      
+      if (totalWords !== act.wordCount) {
+        updated = true;
+        return { ...act, wordCount: totalWords };
+      }
+      return act;
+    });
+
+    if (updated) {
+      console.log('[BookDropdown] 📖 Auto-updating word counts for acts and sequences');
+      setSequences(updatedSequences);
+      setActs(updatedActs);
+      
+      // 💾 PERSIST TO DATABASE
+      persistWordCounts(updatedActs, updatedSequences);
+    }
+  }, [scenes, sequences, acts, loading]);
+  
+  // 💾 Persist word counts to database
+  const persistWordCounts = async (actsToUpdate: Act[], sequencesToUpdate: Sequence[]) => {
+    try {
+      const token = await getAccessToken();
+      if (!token) return;
+      
+      // Update acts in parallel
+      const actPromises = actsToUpdate
+        .filter(act => act.wordCount !== acts.find(a => a.id === act.id)?.wordCount)
+        .map(act => 
+          TimelineAPI.updateAct(act.id, { wordCount: act.wordCount }, token)
+        );
+      
+      // Update sequences in parallel
+      const sequencePromises = sequencesToUpdate
+        .filter(seq => seq.wordCount !== sequences.find(s => s.id === seq.id)?.wordCount)
+        .map(seq =>
+          TimelineAPI.updateSequence(seq.id, { wordCount: seq.wordCount }, token)
+        );
+      
+      await Promise.all([...actPromises, ...sequencePromises]);
+      console.log('[BookDropdown] 💾 Persisted word counts to database');
+    } catch (error) {
+      console.error('[BookDropdown] Error persisting word counts:', error);
+    }
+  };
+
   // Notify parent of data changes (only when data actually changes)
   useEffect(() => {
     if (onDataChange && !loading) {
@@ -266,22 +365,60 @@ export function BookDropdown({
     }
   }, [projectId]);
 
-  // 🔥 Helper: Parse scene content if it's a JSON string
+  // 🔥 Helper: Parse scene content if it's a JSON string AND calculate word count
   const parseSceneContent = (scene: Scene): Scene => {
-    if (scene.content && typeof scene.content === 'string') {
+    // 🚀 PRIORITY: Use wordCount from database (metadata->wordCount) if available
+    if (scene.metadata?.wordCount !== undefined && scene.metadata?.wordCount !== null) {
+      console.log(`[BookDropdown] ✅ Using DB wordCount for scene "${scene.title}": ${scene.metadata.wordCount} words`);
+      return { ...scene, wordCount: scene.metadata.wordCount };
+    }
+    
+    // 🔄 FALLBACK: Calculate from TipTap content if DB value is missing
+    console.log(`[BookDropdown] ⚠️ No DB wordCount for scene "${scene.title}", calculating from content...`);
+    
+    // Helper to extract text from Tiptap JSON
+    const extractTextFromTiptap = (node: any): string => {
+      if (!node) return '';
+      let text = '';
+      if (node.text) {
+        text += node.text;
+      }
+      if (node.content && Array.isArray(node.content)) {
+        node.content.forEach((child: any) => {
+          text += extractTextFromTiptap(child);
+          if (child.type === 'paragraph' || child.type === 'heading') {
+            text += ' ';
+          }
+        });
+      }
+      return text;
+    };
+    
+    // Try to get content from scene.content or scene.metadata.content
+    const contentSource = scene.content || scene.metadata?.content;
+    
+    if (contentSource && typeof contentSource === 'string') {
       try {
-        const parsed = JSON.parse(scene.content);
-        return { ...scene, content: parsed };
+        const parsed = JSON.parse(contentSource);
+        const textContent = extractTextFromTiptap(parsed);
+        const wordCount = textContent.trim() 
+          ? textContent.trim().split(/\s+/).filter(w => w.length > 0).length 
+          : 0;
+        return { ...scene, content: parsed, wordCount };
       } catch (e) {
-        // Silent fail - content might be plain text or already parsed
-        // Only log if it looks like it should be JSON (starts with { or [)
-        if (scene.content.trim().startsWith('{') || scene.content.trim().startsWith('[')) {
+        const textContent = typeof contentSource === 'string' ? contentSource : '';
+        const wordCount = textContent.trim() 
+          ? textContent.trim().split(/\s+/).filter(w => w.length > 0).length 
+          : 0;
+        if (contentSource.trim().startsWith('{') || contentSource.trim().startsWith('[')) {
           console.warn(`[BookDropdown] Could not parse JSON content for scene ${scene.id}`);
         }
-        return scene;
+        return { ...scene, wordCount };
       }
     }
-    return scene;
+    
+    // If no content, return scene with wordCount = 0
+    return { ...scene, wordCount: 0 };
   };
 
   const loadTimeline = async () => {
@@ -293,24 +430,66 @@ export function BookDropdown({
       
       // Load Acts (Level 1)
       const loadedActs = await TimelineAPI.getActs(projectId, token);
-      setActs(loadedActs);
 
       // Load all Sequences (Level 2) for this project
       const allSequences = await TimelineAPI.getAllSequencesByProject(projectId, token);
-      setSequences(allSequences);
 
       // Load all Scenes (Level 3) for this project
       const allScenes = await TimelineAPI.getAllScenesByProject(projectId, token);
       const parsedScenes = allScenes.map(parseSceneContent);
+      
+      // 📖 CALCULATE WORD COUNTS IMMEDIATELY AFTER LOADING
+      console.log('[BookDropdown] 📖 Using DB word counts (metadata->wordCount)...');
+      
+      // Use word counts from DB for sequences (metadata->wordCount)
+      const sequencesWithWordCounts = allSequences.map(seq => {
+        const dbWordCount = seq.metadata?.wordCount;
+        if (dbWordCount !== undefined && dbWordCount !== null) {
+          console.log(`[BookDropdown] ✅ Sequence "${seq.title}": ${dbWordCount} words (from DB)`);
+          return { ...seq, wordCount: dbWordCount };
+        }
+        // Fallback: Calculate from scenes
+        const sequenceScenes = parsedScenes.filter(sc => sc.sequenceId === seq.id);
+        const totalWords = sequenceScenes.reduce((sum, sc) => sum + (sc.wordCount || 0), 0);
+        console.log(`[BookDropdown] ⚠️ Sequence "${seq.title}": ${totalWords} words (calculated from ${sequenceScenes.length} scenes)`);
+        return { ...seq, wordCount: totalWords };
+      });
+      
+      // Use word counts from DB for acts (metadata->wordCount)
+      const actsWithWordCounts = loadedActs.map(act => {
+        const dbWordCount = act.metadata?.wordCount;
+        if (dbWordCount !== undefined && dbWordCount !== null) {
+          console.log(`[BookDropdown] ✅ Act "${act.title}": ${dbWordCount} words (from DB)`);
+          return { ...act, wordCount: dbWordCount };
+        }
+        // Fallback: Calculate from sequences
+        const actSequences = sequencesWithWordCounts.filter(s => s.actId === act.id);
+        const totalWords = actSequences.reduce((sum, s) => sum + (s.wordCount || 0), 0);
+        console.log(`[BookDropdown] ⚠️ Act "${act.title}": ${totalWords} words (calculated from ${actSequences.length} sequences)`);
+        return { ...act, wordCount: totalWords };
+      });
+      
+      setActs(actsWithWordCounts);
+      setSequences(sequencesWithWordCounts);
       setScenes(parsedScenes);
+      
+      // 📤 IMMEDIATELY notify parent with calculated word counts
+      if (onDataChange) {
+        console.log('[BookDropdown] 📤 Notifying parent with word counts');
+        onDataChange({ 
+          acts: actsWithWordCounts, 
+          sequences: sequencesWithWordCounts, 
+          scenes: parsedScenes 
+        });
+      }
 
       // 🔥 AUTO-EXPAND: Automatically expand first act and its sequences on initial load
-      if (loadedActs.length > 0 && expandedActs.size === 0) {
-        const firstActId = loadedActs[0].id;
+      if (actsWithWordCounts.length > 0 && expandedActs.size === 0) {
+        const firstActId = actsWithWordCounts[0].id;
         setExpandedActs(new Set([firstActId]));
         
         // Also expand all sequences of the first act
-        const firstActSequences = allSequences.filter(s => s.actId === firstActId);
+        const firstActSequences = sequencesWithWordCounts.filter(s => s.actId === firstActId);
         if (firstActSequences.length > 0) {
           setExpandedSequences(new Set(firstActSequences.map(s => s.id)));
         }
@@ -361,6 +540,7 @@ export function BookDropdown({
         actNumber: newActNumber,
         title: `Act ${newActNumber}`,
         orderIndex: freshActs.length,
+        wordCount: DEFAULT_WORD_COUNTS.ACT, // 📖 Set default word count
       }, token);
 
       setActs([...freshActs, newAct]);
@@ -437,6 +617,7 @@ export function BookDropdown({
         title: `${act.title} (Kopie)`,
         description: act.description,
         orderIndex: freshActs.length,
+        wordCount: act.wordCount || DEFAULT_WORD_COUNTS.ACT, // 📖 Copy word count
       }, token);
 
       setActs([...freshActs, duplicatedAct]);
@@ -476,6 +657,7 @@ export function BookDropdown({
         sequenceNumber: newSequenceNumber,
         title: `Kapitel ${newSequenceNumber}`,
         orderIndex: actSequences.length,
+        wordCount: DEFAULT_WORD_COUNTS.CHAPTER, // 📖 Set default word count
       }, token);
 
       setSequences([...freshSequences, newSequence]);
@@ -547,6 +729,7 @@ export function BookDropdown({
         title: `${sequence.title} (Kopie)`,
         description: sequence.description,
         orderIndex: actSequences.length,
+        wordCount: sequence.wordCount || DEFAULT_WORD_COUNTS.CHAPTER, // 📖 Copy word count
       }, token);
 
       setSequences([...freshSequences, duplicatedSequence]);
@@ -587,6 +770,7 @@ export function BookDropdown({
         sceneNumber: newSceneNumber,
         title: `Abschnitt ${newSceneNumber}`,
         orderIndex: sequenceScenes.length,
+        wordCount: DEFAULT_WORD_COUNTS.SECTION, // 📖 Set default word count
       }, token);
 
       setScenes([...freshScenes, newScene]);
@@ -602,9 +786,25 @@ export function BookDropdown({
       const token = await getAccessToken();
       if (!token) return;
 
-      setScenes(scenes => scenes.map(sc => sc.id === sceneId ? { ...sc, ...updates } : sc));
+      // 📊 CALCULATE WORD COUNT if content is being updated
+      let finalUpdates = { ...updates };
+      if (updates.content) {
+        try {
+          const parsed = JSON.parse(updates.content);
+          const textContent = extractTextFromTiptap(parsed);
+          const wordCount = textContent.trim() 
+            ? textContent.trim().split(/\s+/).filter(w => w.length > 0).length 
+            : 0;
+          finalUpdates = { ...updates, wordCount } as any;
+          console.log(`[BookDropdown] 💾 Updating scene with ${wordCount} words`);
+        } catch (e) {
+          console.warn('[BookDropdown] Could not parse content for word count:', e);
+        }
+      }
 
-      await TimelineAPI.updateScene(sceneId, updates, token);
+      setScenes(scenes => scenes.map(sc => sc.id === sceneId ? { ...sc, ...finalUpdates } : sc));
+
+      await TimelineAPI.updateScene(sceneId, finalUpdates, token);
       setEditingScene(null);
       setEditValues(prev => {
         const next = { ...prev };
@@ -628,8 +828,21 @@ export function BookDropdown({
       const currentScene = scenes.find(sc => sc.id === sceneId);
       if (!currentScene) return;
 
-      // Optimistic update
-      setScenes(scenes => scenes.map(sc => sc.id === sceneId ? { ...sc, content } : sc));
+      // 📊 CALCULATE WORD COUNT from content
+      let wordCount = 0;
+      try {
+        const parsed = JSON.parse(content);
+        const textContent = extractTextFromTiptap(parsed);
+        wordCount = textContent.trim() 
+          ? textContent.trim().split(/\s+/).filter(w => w.length > 0).length 
+          : 0;
+        console.log(`[BookDropdown] 💾 Auto-saving scene "${currentScene.title}": ${wordCount} words`);
+      } catch (e) {
+        console.warn('[BookDropdown] Could not parse content for word count:', e);
+      }
+
+      // Optimistic update with wordCount
+      setScenes(scenes => scenes.map(sc => sc.id === sceneId ? { ...sc, content, wordCount } : sc));
 
       // Save to backend directly WITHOUT extra GET request
       // This avoids the double API call that was closing the editor
@@ -639,6 +852,7 @@ export function BookDropdown({
           content,
           characters: currentScene.characters || [],
         },
+        wordCount, // 📊 SAVE WORD COUNT TO DATABASE
       }, token);
     } catch (error) {
       console.error('Error auto-saving scene:', error);
@@ -687,6 +901,7 @@ export function BookDropdown({
         description: scene.description,
         content: scene.content,
         orderIndex: sequenceScenes.length,
+        wordCount: scene.wordCount || DEFAULT_WORD_COUNTS.SECTION, // 📖 Copy word count
       }, token);
 
       setScenes([...freshScenes, duplicatedScene]);
@@ -694,6 +909,151 @@ export function BookDropdown({
     } catch (error) {
       console.error('Error duplicating scene:', error);
       toast.error('Fehler beim Duplizieren');
+    }
+  };
+
+  // =====================================================
+  // INLINE ADD HANDLERS
+  // =====================================================
+
+  const handleAddActAt = async (index: number) => {
+    try {
+      const token = await getAccessToken();
+      if (!token) return;
+
+      // 1. Create Act (at the end)
+      const freshActs = await TimelineAPI.getActs(projectId, token);
+      const maxActNumber = freshActs.length > 0 ? Math.max(...freshActs.map(a => a.actNumber || 0)) : 0;
+      const newActNumber = maxActNumber + 1;
+
+      const newAct = await TimelineAPI.createAct(projectId, {
+        actNumber: newActNumber,
+        title: `Act ${newActNumber}`,
+        orderIndex: freshActs.length,
+      }, token);
+
+      // 2. Reorder if needed
+      let updatedActs = [...freshActs, newAct];
+      
+      if (index < freshActs.length) {
+        // Remove from end
+        updatedActs.pop();
+        // Insert at index
+        updatedActs.splice(index, 0, newAct);
+        
+        // Recalculate order indices
+        updatedActs = updatedActs.map((a, i) => ({ ...a, orderIndex: i }));
+        
+        // Update state
+        setActs(updatedActs);
+        
+        // Persist reorder
+        const actIds = updatedActs.map(a => a.id);
+        await TimelineAPI.reorderActs(projectId, actIds, token);
+      } else {
+        setActs(updatedActs);
+      }
+      
+      toast.success('Act eingefügt');
+    } catch (error) {
+      console.error('Error adding act at index:', error);
+      toast.error('Fehler beim Einfügen');
+    }
+  };
+
+  const handleAddSequenceAt = async (actId: string, index: number) => {
+    try {
+      const token = await getAccessToken();
+      if (!token) return;
+
+      // 1. Create Sequence (at the end)
+      const freshSequences = await TimelineAPI.getAllSequencesByProject(projectId, token);
+      const actSequences = freshSequences.filter(s => s.actId === actId).sort((a, b) => a.orderIndex - b.orderIndex);
+      
+      const maxSequenceNumber = actSequences.length > 0 ? Math.max(...actSequences.map(s => s.sequenceNumber || 0)) : 0;
+      const newSequenceNumber = maxSequenceNumber + 1;
+
+      const newSequence = await TimelineAPI.createSequence(actId, {
+        sequenceNumber: newSequenceNumber,
+        title: `Kapitel ${newSequenceNumber}`,
+        orderIndex: actSequences.length,
+      }, token);
+
+      // 2. Reorder if needed
+      let updatedSequences = [...freshSequences, newSequence];
+      
+      if (index < actSequences.length) {
+         // We need to reorder ONLY the sequences in this act
+         const otherSequences = freshSequences.filter(s => s.actId !== actId);
+         const targetSequences = [...actSequences];
+         targetSequences.splice(index, 0, newSequence);
+         
+         // Recalculate order indices for this act
+         const finalActSequences = targetSequences.map((s, i) => ({ ...s, orderIndex: i }));
+         
+         // Combine
+         updatedSequences = [...otherSequences, ...finalActSequences];
+         setSequences(updatedSequences);
+         
+         // Persist reorder
+         const sequenceIds = finalActSequences.map(s => s.id);
+         await TimelineAPI.reorderSequences(actId, sequenceIds, token);
+      } else {
+         setSequences(updatedSequences);
+      }
+
+      toast.success('Kapitel eingefügt');
+    } catch (error) {
+      console.error('Error adding sequence at index:', error);
+      toast.error('Fehler beim Einfügen');
+    }
+  };
+
+  const handleAddSceneAt = async (sequenceId: string, index: number) => {
+    try {
+      const token = await getAccessToken();
+      if (!token) return;
+
+      // 1. Create Scene (at the end)
+      const freshScenes = await TimelineAPI.getAllScenesByProject(projectId, token);
+      const sequenceScenes = freshScenes.filter(s => s.sequenceId === sequenceId).sort((a, b) => a.orderIndex - b.orderIndex);
+      
+      const maxSceneNumber = sequenceScenes.length > 0 ? Math.max(...sequenceScenes.map(s => s.sceneNumber || 0)) : 0;
+      const newSceneNumber = maxSceneNumber + 1;
+
+      const newScene = await TimelineAPI.createScene(sequenceId, {
+        sceneNumber: newSceneNumber,
+        title: `Abschnitt ${newSceneNumber}`,
+        orderIndex: sequenceScenes.length,
+      }, token);
+
+      // 2. Reorder if needed
+      let updatedScenes = [...freshScenes, newScene];
+      
+      if (index < sequenceScenes.length) {
+         // Reorder scenes in this sequence
+         const otherScenes = freshScenes.filter(s => s.sequenceId !== sequenceId);
+         const targetScenes = [...sequenceScenes];
+         targetScenes.splice(index, 0, newScene);
+         
+         // Recalculate
+         const finalSequenceScenes = targetScenes.map((s, i) => ({ ...s, orderIndex: i }));
+         
+         // Combine
+         updatedScenes = [...otherScenes, ...finalSequenceScenes];
+         setScenes(updatedScenes);
+         
+         // Persist
+         const sceneIds = finalSequenceScenes.map(s => s.id);
+         await TimelineAPI.reorderScenes(sequenceId, sceneIds, token);
+      } else {
+         setScenes(updatedScenes);
+      }
+
+      toast.success('Abschnitt eingefügt');
+    } catch (error) {
+      console.error('Error adding scene at index:', error);
+      toast.error('Fehler beim Einfügen');
     }
   };
 
@@ -836,6 +1196,7 @@ export function BookDropdown({
                 onDrop={handleActDrop}
                 label={`Vor ${act.title}`}
                 height="act"
+                onAdd={() => handleAddActAt(actIndex)}
               />
 
               <DraggableAct
@@ -1093,6 +1454,7 @@ export function BookDropdown({
                                 onDrop={(id, idx) => handleSequenceDrop(id, idx, act.id)}
                                 label={`Vor ${sequence.title}`}
                                 height="sequence"
+                                onAdd={() => handleAddSequenceAt(act.id, sequenceIndex)}
                               />
 
                               <DraggableSequence
@@ -1310,6 +1672,7 @@ export function BookDropdown({
                                               onDrop={(id, idx) => handleSceneDrop(id, idx, sequence.id)}
                                               label={`Vor ${scene.title}`}
                                               height="scene"
+                                              onAdd={() => handleAddSceneAt(sequence.id, sceneIndex)}
                                             />
 
                                             <DraggableScene
@@ -1527,6 +1890,7 @@ export function BookDropdown({
                                           onDrop={(id, idx) => handleSceneDrop(id, idx, sequence.id)}
                                           label="Am Ende"
                                           height="scene"
+                                          onAdd={() => handleAddSceneAt(sequence.id, sequenceScenes.length)}
                                         />
                                       </div>
                                     </CollapsibleContent>
@@ -1544,6 +1908,7 @@ export function BookDropdown({
                           onDrop={(id, idx) => handleSequenceDrop(id, idx, act.id)}
                           label="Am Ende"
                           height="sequence"
+                          onAdd={() => handleAddSequenceAt(act.id, actSequences.length)}
                         />
                       </div>
                     </CollapsibleContent>

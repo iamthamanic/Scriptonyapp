@@ -453,6 +453,56 @@ app.get("/make-server-3b52693b/projects/:projectId/acts", async (c) => {
 // =====================================================
 // BOOK METRICS - Calculate Word Count
 // =====================================================
+
+// Import word count calculator
+import { recalculateWordCounts } from "./recalculate-word-counts.tsx";
+
+// 📊 NEW: Recalculate word counts for all scenes in a project
+app.post("/make-server-3b52693b/projects/:projectId/recalculate-word-counts", async (c) => {
+  try {
+    const userId = await getUserIdFromAuth(c.req.header("Authorization"));
+    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.param("projectId");
+
+    // Verify project belongs to user's organization
+    const { data: project } = await supabase
+      .from("projects")
+      .select("organization_id, type")
+      .eq("id", projectId)
+      .single();
+
+    if (!project) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    // Verify user has access to organization
+    const { data: membership } = await supabase
+      .from("organization_members")
+      .select("*")
+      .eq("organization_id", project.organization_id)
+      .eq("user_id", userId)
+      .single();
+
+    if (!membership) {
+      return c.json({ error: "Unauthorized - not member of organization" }, 403);
+    }
+
+    // Recalculate word counts
+    const result = await recalculateWordCounts(projectId);
+
+    return c.json({ 
+      success: true, 
+      ...result,
+      message: `Updated ${result.updated} scenes, skipped ${result.skipped}, errors: ${result.errors}`
+    });
+  } catch (error: any) {
+    console.error("Recalculate word counts error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// DEPRECATED: Old word count calculation (uses old tables)
 app.post("/make-server-3b52693b/projects/:projectId/calculate-words", async (c) => {
   try {
     const userId = await getUserIdFromAuth(c.req.header("Authorization"));

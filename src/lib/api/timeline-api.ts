@@ -40,7 +40,7 @@ export {
 /**
  * Convert TimelineNode (level 1) to Act
  */
-function nodeToAct(node: TimelineNode): Act {
+export function nodeToAct(node: TimelineNode): Act {
   return {
     id: node.id,
     projectId: node.projectId,
@@ -56,7 +56,7 @@ function nodeToAct(node: TimelineNode): Act {
 /**
  * Convert TimelineNode (level 2) to Sequence
  */
-function nodeToSequence(node: TimelineNode): Sequence {
+export function nodeToSequence(node: TimelineNode): Sequence {
   return {
     id: node.id,
     projectId: node.projectId,
@@ -74,7 +74,7 @@ function nodeToSequence(node: TimelineNode): Sequence {
 /**
  * Convert TimelineNode (level 3) to Scene
  */
-function nodeToScene(node: TimelineNode): Scene {
+export function nodeToScene(node: TimelineNode): Scene {
   return {
     id: node.id,
     projectId: node.projectId,
@@ -266,6 +266,7 @@ export async function updateScene(
     orderIndex: updates.orderIndex,
     parentId: updates.sequenceId, // Support moving to different Sequence
     metadata,
+    wordCount: updates.wordCount, // 📊 Pass word count to database
   });
   
   return nodeToScene(node);

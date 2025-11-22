@@ -53,6 +53,7 @@ export interface UpdateNodeRequest {
   color?: string;
   orderIndex?: number;
   metadata?: Record<string, any>;
+  wordCount?: number; // 📊 For books: calculated word count from content
 }
 
 export interface BulkCreateRequest {

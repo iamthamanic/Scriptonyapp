@@ -662,6 +662,235 @@ app.post("/nodes/bulk", async (c) => {
   }
 });
 
+/**
+ * GET /nodes/batch-load
+ * Load all timeline nodes for a project in ONE request
+ */
+app.get("/nodes/batch-load", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const projectId = c.req.query("project_id");
+    if (!projectId) {
+      return c.json({ error: "project_id is required" }, 400);
+    }
+
+    console.log("🚀 Batch loading timeline for project:", projectId);
+
+    // Fetch ALL nodes for project
+    const { data, error } = await supabase
+      .from("timeline_nodes")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("order_index", { ascending: true });
+
+    if (error) {
+      console.error("Error batch loading nodes:", error);
+      return c.json({ error: error.message }, 500);
+    }
+
+    const nodes = (data || []).map(toCamelCase);
+
+    // Group by level
+    const acts = nodes.filter((n: any) => n.level === 1);
+    const sequences = nodes.filter((n: any) => n.level === 2);
+    const scenes = nodes.filter((n: any) => n.level === 3);
+
+    return c.json({
+      acts,
+      sequences,
+      scenes,
+      stats: {
+        totalNodes: nodes.length,
+        acts: acts.length,
+        sequences: sequences.length,
+        scenes: scenes.length,
+      }
+    });
+  } catch (error: any) {
+    console.error("Batch load error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * GET /nodes/ultra-batch-load
+ * Load EVERYTHING (Timeline + Characters + Shots) in ONE request
+ */
+app.get("/nodes/ultra-batch-load", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const projectId = c.req.query("project_id");
+    if (!projectId) {
+      return c.json({ error: "project_id is required" }, 400);
+    }
+
+    console.log("🚀🚀🚀 ULTRA Batch loading project:", projectId);
+
+    // 1. Fetch Project Info (to get world_id for characters)
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("world_id, organization_id")
+      .eq("id", projectId)
+      .single();
+      
+    if (projectError) {
+      console.error("Error fetching project:", projectError);
+      return c.json({ error: projectError.message }, 500);
+    }
+
+    // PARALLEL QUERIES for maximum speed
+    const [nodesResult, shotsResult, charactersResult] = await Promise.all([
+      // 1. Timeline Nodes
+      supabase
+        .from("timeline_nodes")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("order_index", { ascending: true }),
+        
+      // 2. Shots (with Audio & Characters)
+      supabase
+        .from("shots")
+        .select(`
+          *,
+          shot_audio (
+            id, shot_id, type, file_url, file_name, label, 
+            file_size, start_time, end_time, fade_in, fade_out, 
+            waveform_data, audio_duration, created_at
+          ),
+          shot_characters (
+            character_id,
+            characters (
+              id, name, image_url, description
+            )
+          )
+        `)
+        .eq("project_id", projectId)
+        .order("order_index", { ascending: true }),
+        
+      // 3. Characters
+      supabase
+        .from("characters")
+        .select("*")
+        .or(
+          project?.world_id 
+            ? `project_id.eq.${projectId},and(world_id.eq.${project.world_id},organization_id.eq.${project.organization_id})`
+            : `project_id.eq.${projectId},organization_id.eq.${project.organization_id}`
+        )
+        .order("name", { ascending: true })
+    ]);
+
+    // Check for errors
+    if (nodesResult.error) throw new Error(`Nodes error: ${nodesResult.error.message}`);
+    if (shotsResult.error) throw new Error(`Shots error: ${shotsResult.error.message}`);
+    if (charactersResult.error) throw new Error(`Characters error: ${charactersResult.error.message}`);
+
+    // Process Nodes
+    const nodes = (nodesResult.data || []).map(toCamelCase);
+    const acts = nodes.filter((n: any) => n.level === 1);
+    const sequences = nodes.filter((n: any) => n.level === 2);
+    const scenes = nodes.filter((n: any) => n.level === 3);
+
+    // Process Characters
+    const characters = (charactersResult.data || []).map((char: any) => ({
+      id: char.id,
+      projectId: char.project_id || projectId,
+      worldId: char.world_id,
+      name: char.name,
+      description: char.description,
+      imageUrl: char.image_url,
+      color: char.color,
+      createdAt: char.created_at,
+      updatedAt: char.updated_at,
+    }));
+
+    // Process Shots
+    const shots = (shotsResult.data || []).map((shot: any) => ({
+      id: shot.id,
+      projectId: shot.project_id,
+      sceneId: shot.scene_id,
+      shotNumber: shot.shot_number,
+      description: shot.description,
+      cameraAngle: shot.camera_angle,
+      cameraMovement: shot.camera_movement,
+      framing: shot.framing,
+      lens: shot.lens,
+      duration: shot.duration,
+      shotlengthMinutes: shot.shotlength_minutes,
+      shotlengthSeconds: shot.shotlength_seconds,
+      composition: shot.composition,
+      lightingNotes: shot.lighting_notes,
+      imageUrl: shot.image_url,
+      soundNotes: shot.sound_notes,
+      storyboardUrl: shot.storyboard_url,
+      referenceImageUrl: shot.reference_image_url,
+      dialog: shot.dialog,
+      notes: shot.notes,
+      orderIndex: shot.order_index,
+      createdAt: shot.created_at,
+      updatedAt: shot.updated_at,
+      audioFiles: (shot.shot_audio || []).map((audio: any) => ({
+        id: audio.id,
+        shotId: audio.shot_id,
+        type: audio.type,
+        fileUrl: audio.file_url,
+        fileName: audio.file_name,
+        label: audio.label,
+        fileSize: audio.file_size,
+        startTime: audio.start_time,
+        endTime: audio.end_time,
+        fadeIn: audio.fade_in,
+        fadeOut: audio.fade_out,
+        waveformData: audio.waveform_data,
+        duration: audio.audio_duration,
+        createdAt: audio.created_at,
+      })),
+      characters: (shot.shot_characters || [])
+        .map((sc: any) => sc.characters)
+        .filter(Boolean)
+        .map((char: any) => ({
+          id: char.id,
+          name: char.name,
+          imageUrl: char.image_url,
+          description: char.description,
+        })),
+    }));
+
+    return c.json({
+      timeline: {
+        acts,
+        sequences,
+        scenes,
+      },
+      characters,
+      shots,
+      stats: {
+        totalNodes: nodes.length,
+        acts: acts.length,
+        sequences: sequences.length,
+        scenes: scenes.length,
+        characters: characters.length,
+        shots: shots.length,
+      }
+    });
+
+  } catch (error: any) {
+    console.error("ULTRA Batch load error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 // =============================================================================
 // PROJECT INITIALIZATION HELPER
 // =============================================================================

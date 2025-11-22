@@ -47,7 +47,7 @@ function AppContent() {
     const hash = window.location.hash.slice(1); // Remove leading #
     const pathParts = hash.split('/');
     const page = pathParts[0];
-    const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "present", "auth", "migration", "reset-password", "api-test", "layout-prototype"];
+    const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "layout-prototype"];
     return validPages.includes(page) ? page : "home";
   });
   
@@ -93,7 +93,7 @@ function AppContent() {
       
       console.log('🔗 hashchange detected:', { hash, page, id, categoryId });
       
-      const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "present", "auth", "migration", "reset-password", "api-test", "layout-prototype"];
+      const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "layout-prototype"];
       if (validPages.includes(page) || page === "") {
         setCurrentPage(page || "home");
         setSelectedId(id);
@@ -202,6 +202,8 @@ function AppContent() {
       case "admin":
         return <AdminPage />;
       case "einstellungen":
+        return <SettingsPage />;
+      case "settings":
         return <SettingsPage />;
       case "superadmin":
         return <SuperadminPage onNavigate={handleNavigate} />;

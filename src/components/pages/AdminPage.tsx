@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LineChart, Bug, Activity, Users, Calendar, Filter, Download, RefreshCw } from "lucide-react";
+import { LineChart, Bug, Activity, Users, Calendar, Filter, Download, RefreshCw, Database } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
@@ -10,6 +10,62 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 
 export function AdminPage() {
   const [selectedTab, setSelectedTab] = useState("overview");
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const [recalculateResult, setRecalculateResult] = useState<string | null>(null);
+
+  const handleRecalculateWordCounts = async () => {
+    setIsRecalculating(true);
+    setRecalculateResult(null);
+    
+    try {
+      const { projectId, publicAnonKey } = await import("../../utils/supabase/info");
+      
+      // Get all book projects
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b/projects`,
+        {
+          headers: {
+            'Authorization': `Bearer ${publicAnonKey}`,
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch projects');
+      }
+      
+      const projects = await response.json();
+      const bookProjects = projects.filter((p: any) => p.type === 'book');
+      
+      let totalUpdated = 0;
+      
+      // Recalculate word counts for each book project
+      for (const project of bookProjects) {
+        const recalcResponse = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b/projects/${project.id}/recalculate-word-counts`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${publicAnonKey}`,
+              'Content-Type': 'application/json'
+            },
+          }
+        );
+        
+        if (recalcResponse.ok) {
+          const result = await recalcResponse.json();
+          totalUpdated += result.updated || 0;
+        }
+      }
+      
+      setRecalculateResult(`✅ Erfolgreich! ${totalUpdated} Szenen in ${bookProjects.length} Buch-Projekt(en) aktualisiert.`);
+    } catch (error: any) {
+      console.error('❌ Word count recalculation error:', error);
+      setRecalculateResult(`❌ Fehler: ${error.message}`);
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
 
   return (
     <div className="min-h-screen pb-24">
@@ -270,6 +326,52 @@ export function AdminPage() {
                   <div>[INFO] 14:40:01 - User logged in: user@example.com</div>
                   <div className="text-red-400">[ERROR] 14:42:33 - Failed to upload file: size limit exceeded</div>
                   <div>[INFO] 14:45:12 - Project created: "My Script"</div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Recalculate Word Counts */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Database className="size-5 text-primary" />
+                  <CardTitle>Recalculate Word Counts</CardTitle>
+                </div>
+                <CardDescription className="mt-2">
+                  Berechnet die Wortzahl für alle existierenden Buch-Szenen neu und schreibt sie in die Datenbank.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <Button
+                    variant="outline"
+                    onClick={handleRecalculateWordCounts}
+                    disabled={isRecalculating}
+                    className="w-full"
+                  >
+                    {isRecalculating ? (
+                      <div className="flex items-center">
+                        <RefreshCw className="size-4 animate-spin mr-2" />
+                        Berechne Word Counts...
+                      </div>
+                    ) : (
+                      <div className="flex items-center">
+                        <Database className="size-4 mr-2" />
+                        Word Counts neu berechnen
+                      </div>
+                    )}
+                  </Button>
+                  {recalculateResult && (
+                    <div
+                      className={`p-3 rounded-lg ${
+                        recalculateResult.startsWith("✅") 
+                          ? "bg-green-500/10 text-green-600 dark:text-green-400" 
+                          : "bg-red-500/10 text-red-600 dark:text-red-400"
+                      }`}
+                    >
+                      {recalculateResult}
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

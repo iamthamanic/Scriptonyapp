@@ -1,23 +1,24 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Plus, Trash2, Edit2 } from 'lucide-react';
+import { Play, Pause, Plus } from 'lucide-react';
 import { Button } from './ui/button';
 import { cn } from './ui/utils';
 import * as BeatsAPI from '../lib/api/beats-api';
+import * as TimelineAPI from '../lib/api/timeline-api';
+import { useAuth } from '../hooks/useAuth';
 import type { TimelineData } from './FilmDropdown';
 import type { BookTimelineData } from './BookDropdown';
+import { RichTextEditorModal } from './RichTextEditorModal';
+import { ReadonlyTiptapView } from './ReadonlyTiptapView';
 
 /**
  * 🎬 VIDEO EDITOR TIMELINE (CapCut Style)
  * 
- * Features:
- * - Preview area with video player
- * - Multi-track timeline (Beats, Acts, Sequences, Scenes, Shots, Audio)
- * - Real data integration from FilmDropdown/BookDropdown
- * - CRUD operations for all hierarchy levels
- * - Pinch-to-zoom & pan gestures
- * - Draggable playhead
- * - Horizontal timeline ruler
- * - Full Dark Mode Support with App Design System
+ * NEW ARCHITECTURE:
+ * - Unit-based system (seconds or reading-seconds)
+ * - Dynamic ticks based on zoom level (no overlaps!)
+ * - Anchor-based zoom (zooms to cursor position)
+ * - Viewport culling (only render visible items)
+ * - Auto-fit initial zoom
  */
 
 interface VideoEditorTimelineProps {
@@ -25,7 +26,79 @@ interface VideoEditorTimelineProps {
   projectType?: string;
   initialData?: TimelineData | BookTimelineData | null;
   onDataChange?: (data: TimelineData | BookTimelineData) => void;
-  duration?: number; // Total duration in seconds (default: 300 = 5 minutes)
+  duration?: number; // Total duration in SECONDS (for both films and books)
+  beats?: any[];
+  totalWords?: number;
+  wordsPerPage?: number;
+  targetPages?: number;
+  readingSpeedWpm?: number; // Reading speed in words per minute for books
+}
+
+// 🎯 ZOOM CONFIGURATION
+const MIN_PX_PER_SEC = 2;    // Maximum zoom out
+const MAX_PX_PER_SEC = 200;  // Maximum zoom in
+
+// 🎯 TICK CONFIGURATION
+const MIN_LABEL_SPACING_PX = 80; // Minimum space between labels
+
+// Time steps for ruler markers (in seconds)
+const TIME_STEPS_SECONDS = [
+  1, 2, 5, 10, 15, 30,
+  60, 120, 300, 600, 900,
+  1800, 3600, 7200, 10800
+];
+
+// Convert zoom [0-1] to pixels per second (exponential for natural feel)
+function pxPerSecFromZoom(zoom: number): number {
+  const ratio = MAX_PX_PER_SEC / MIN_PX_PER_SEC;
+  return MIN_PX_PER_SEC * Math.pow(ratio, zoom);
+}
+
+// Convert pixels per second to zoom [0-1]
+function zoomFromPxPerSec(px: number): number {
+  const ratio = MAX_PX_PER_SEC / MIN_PX_PER_SEC;
+  return Math.log(px / MIN_PX_PER_SEC) / Math.log(ratio);
+}
+
+// Choose tick step based on current zoom to avoid overlaps
+function chooseTickStep(pxPerSecond: number): number {
+  const minSecondsBetweenTicks = MIN_LABEL_SPACING_PX / pxPerSecond;
+  return (
+    TIME_STEPS_SECONDS.find(step => step >= minSecondsBetweenTicks) ??
+    TIME_STEPS_SECONDS[TIME_STEPS_SECONDS.length - 1]
+  );
+}
+
+// Format time label (HH:MM:SS or MM:SS)
+function formatTimeLabel(totalSeconds: number): string {
+  const s = Math.floor(totalSeconds % 60);
+  const m = Math.floor((totalSeconds / 60) % 60);
+  const h = Math.floor(totalSeconds / 3600);
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+
+  if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+  return `${m}:${pad(s)}`;
+}
+
+// 📖 Calculate word count from TipTap content (same logic as BookDropdown)
+function calculateWordCountFromContent(content: any): number {
+  if (!content?.content || !Array.isArray(content.content)) {
+    return 0;
+  }
+  
+  let totalWords = 0;
+  for (const node of content.content) {
+    if (node.type === 'paragraph' && node.content) {
+      for (const child of node.content) {
+        if (child.type === 'text' && child.text) {
+          const words = child.text.trim().split(/\s+/).filter((w: string) => w.length > 0);
+          totalWords += words.length;
+        }
+      }
+    }
+  }
+  return totalWords;
 }
 
 export function VideoEditorTimeline({ 
@@ -33,201 +106,676 @@ export function VideoEditorTimeline({
   projectType = 'film',
   initialData, 
   onDataChange,
-  duration = 300 
+  duration = 300,
+  beats: parentBeats,
+  totalWords,
+  wordsPerPage = 250,
+  targetPages,
+  readingSpeedWpm = 150, // Default reading speed in words per minute
 }: VideoEditorTimelineProps) {
-  const timelineContainerRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const { getAccessToken } = useAuth();
+  
+  // 🎨 DESIGN SYSTEM: Beat Styling
+  const BEAT_STYLES = {
+    container: 'bg-purple-50 dark:bg-purple-950/40 border-2 border-purple-200 dark:border-purple-700',
+    text: 'text-purple-900 dark:text-purple-100',
+  };
+  
+  // 🎯 ZOOM & VIEWPORT STATE (MUST BE DECLARED FIRST!)
+  const [zoom, setZoom] = useState(0.5);
+  const [pxPerSec, setPxPerSec] = useState(() => pxPerSecFromZoom(0.5));
+  
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  
+  // Track if initial zoom has been set
+  const initialZoomSetRef = useRef(false);
   
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   
-  // Zoom & Pan state
-  const [zoom, setZoom] = useState(1.5); // Default zoom
-  const [isPanning, setIsPanning] = useState(false);
-  const [lastTouchDistance, setLastTouchDistance] = useState<number | null>(null);
-  const [touchStartX, setTouchStartX] = useState(0);
-  
   // Timeline data
   const [timelineData, setTimelineData] = useState<TimelineData | BookTimelineData | null>(initialData || null);
+  const [isLoadingData, setIsLoadingData] = useState(false);
   
-  // 🎬 Real beats from database
+  // Beats from database
   const [beats, setBeats] = useState<BeatsAPI.StoryBeat[]>([]);
   const [beatsLoading, setBeatsLoading] = useState(false);
   
-  // Determine if it's a book project
+  // 🎯 MODAL STATE: Scene Content Editor
+  const [editingSceneForModal, setEditingSceneForModal] = useState<any | null>(null);
+  const [showContentModal, setShowContentModal] = useState(false);
+  
+  // 🎯 DURATION & VIEWPORT (NOW SAFE TO USE timelineData!)
+  const totalDurationMin = duration / 60; // Total timeline duration in MINUTES (from prop)
+  const totalDurationSec = duration; // Convert to SECONDS for timeline calculations
+  
+  // 📖 BOOK METRICS: Default duration for empty acts
+  const DEFAULT_EMPTY_ACT_MIN = 5; // 5 minutes
   const isBookProject = projectType === 'book';
   
-  // Track configuration based on project type
-  const trackConfig = isBookProject ? [
-    { id: 'beat', label: 'Beat', height: 'h-8' },
-    { id: 'act', label: 'Act', height: 'h-12' },
-    { id: 'chapter', label: 'Kapitel', height: 'h-10' },
-    { id: 'section', label: 'Abschnitt', height: 'h-10' },
-  ] : [
-    { id: 'beat', label: 'Beat', height: 'h-8' },
-    { id: 'act', label: 'Act', height: 'h-12' },
-    { id: 'sequence', label: 'Seq', height: 'h-10' },
-    { id: 'scene', label: 'Scene', height: 'h-10' },
-    { id: 'shot', label: 'Shot', height: 'h-16' },
-    { id: 'audio', label: 'Audio', height: 'h-8' },
-  ];
+  console.log('[VideoEditorTimeline] 📖 Book Timeline:', {
+    durationMin: `${totalDurationMin.toFixed(1)} min`,
+    durationSec: `${totalDurationSec.toFixed(0)}s`,
+    totalWords: (totalWords ?? 0).toLocaleString(),
+    readingSpeedWpm,
+    acts: timelineData?.acts?.length || 0,
+    note: 'Timeline = sum of all acts (text-based + default for empty)'
+  });
   
-  // Sync with parent data changes
+  // 📏 MEASURE VIEWPORT WIDTH
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    
+    const resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setViewportWidth(entry.contentRect.width);
+      }
+    });
+    
+    resizeObserver.observe(el);
+    return () => resizeObserver.disconnect();
+  }, []);
+  
+  // 📏 TRACK SCROLL POSITION
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    
+    const onScroll = () => setScrollLeft(el.scrollLeft);
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+  
+  // 🎯 INITIAL ZOOM: Fit entire timeline to viewport (ONCE!)
+  useEffect(() => {
+    // Only run once when viewport and duration are first available
+    if (initialZoomSetRef.current || !viewportWidth || totalDurationSec <= 0) return;
+    
+    const pxFit = viewportWidth / totalDurationSec;
+    const clamped = Math.min(MAX_PX_PER_SEC, Math.max(MIN_PX_PER_SEC, pxFit));
+    const z = zoomFromPxPerSec(clamped);
+    
+    console.log('[VideoEditorTimeline] 🎯 Initial zoom:', {
+      viewportWidth,
+      durationSec: `${totalDurationSec.toFixed(0)}s`,
+      durationMin: `${(totalDurationSec/60).toFixed(1)}min`,
+      pxFit: pxFit.toFixed(2),
+      pxPerSec: clamped.toFixed(2),
+      zoom: z.toFixed(2)
+    });
+    
+    setZoom(z);
+    setPxPerSec(clamped);
+    initialZoomSetRef.current = true;
+  }, [viewportWidth, totalDurationSec]);
+  
+  // 🎯 CALCULATED VALUES
+  const totalWidthPx = totalDurationSec * pxPerSec;
+  const viewStartSec = scrollLeft / pxPerSec;
+  const viewEndSec = viewStartSec + (viewportWidth || 0) / pxPerSec;
+  
+  // 📏 DYNAMIC TICKS (no overlaps!)
+  const tickStep = chooseTickStep(pxPerSec);
+  const firstTick = Math.floor(viewStartSec / tickStep) * tickStep;
+  const lastTick = Math.ceil(viewEndSec / tickStep) * tickStep;
+  
+  const ticks: { x: number; label: string; sec: number }[] = [];
+  for (let t = firstTick; t <= lastTick; t += tickStep) {
+    const x = (t - viewStartSec) * pxPerSec;
+    ticks.push({ x, label: formatTimeLabel(t), sec: t });
+  }
+  
+  console.log('[VideoEditorTimeline] 📏 Ticks:', {
+    pxPerSec: pxPerSec.toFixed(2),
+    tickStep: `${tickStep}s`,
+    tickCount: ticks.length,
+    firstTick: formatTimeLabel(firstTick),
+    lastTick: formatTimeLabel(lastTick)
+  });
+  
+  // 🎯 ZOOM HANDLER (with anchor)
+  const setZoomAroundCursor = (newZoom: number, anchorX?: number) => {
+    const el = scrollRef.current;
+    if (!el || !viewportWidth) {
+      setZoom(newZoom);
+      setPxPerSec(pxPerSecFromZoom(newZoom));
+      return;
+    }
+    
+    const oldPx = pxPerSec;
+    const nextPx = pxPerSecFromZoom(newZoom);
+    const cursorX = anchorX ?? viewportWidth / 2;
+    const unitUnderCursor = (el.scrollLeft + cursorX) / oldPx;
+    const newScrollLeft = unitUnderCursor * nextPx - cursorX;
+    
+    setZoom(newZoom);
+    setPxPerSec(nextPx);
+    
+    requestAnimationFrame(() => {
+      el.scrollLeft = newScrollLeft;
+    });
+  };
+  
+  const handleZoomSlider = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newZoom = Number(e.target.value);
+    setZoomAroundCursor(newZoom);
+  };
+  
+  // 🎯 TRACKPAD ZOOM (Ctrl+Wheel)
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const zoomDelta = -e.deltaY * 0.001; // Negative because wheel down = zoom out
+      const newZoom = Math.max(0, Math.min(1, zoom + zoomDelta));
+      
+      // Get cursor position relative to viewport
+      const rect = viewportRef.current?.getBoundingClientRect();
+      const cursorX = rect ? e.clientX - rect.left : viewportWidth / 2;
+      
+      setZoomAroundCursor(newZoom, cursorX);
+    }
+  };
+  
+  // 📊 LOAD TIMELINE DATA
   useEffect(() => {
     if (initialData) {
       setTimelineData(initialData);
     }
   }, [initialData]);
   
-  // 🎬 Load beats from database
   useEffect(() => {
-    const loadBeats = async () => {
+    const loadTimelineData = async () => {
+      if (timelineData || isLoadingData) return;
+      
       try {
-        setBeatsLoading(true);
-        const fetchedBeats = await BeatsAPI.getBeats(projectId);
-        setBeats(fetchedBeats);
+        setIsLoadingData(true);
+        const token = await getAccessToken();
+        if (!token) return;
+        
+        console.log('[VideoEditorTimeline] 📥 Loading timeline data...');
+        
+        const loadedActs = await TimelineAPI.getActs(projectId, token);
+        const allSequences = await TimelineAPI.getAllSequencesByProject(projectId, token);
+        const allScenes = await TimelineAPI.getAllScenesByProject(projectId, token);
+        
+        if (isBookProject) {
+          // Helper to extract text from Tiptap JSON
+          const extractTextFromTiptap = (node: any): string => {
+            if (!node) return '';
+            let text = '';
+            if (node.text) {
+              text += node.text;
+            }
+            if (node.content && Array.isArray(node.content)) {
+              node.content.forEach((child: any) => {
+                text += extractTextFromTiptap(child);
+                if (child.type === 'paragraph' || child.type === 'heading') {
+                  text += ' ';
+                }
+              });
+            }
+            return text;
+          };
+          
+          const parsedScenes = allScenes.map(scene => {
+            // 🚀 PRIORITY: Use wordCount from database (metadata->wordCount) if available
+            if (scene.metadata?.wordCount !== undefined && scene.metadata?.wordCount !== null) {
+              return { ...scene, wordCount: scene.metadata.wordCount };
+            }
+            
+            // 🔄 FALLBACK: Calculate from TipTap content if DB value is missing
+            const contentSource = scene.content || scene.metadata?.content;
+            
+            if (contentSource && typeof contentSource === 'string') {
+              try {
+                const parsed = JSON.parse(contentSource);
+                const textContent = extractTextFromTiptap(parsed);
+                const wordCount = textContent.trim() 
+                  ? textContent.trim().split(/\s+/).filter(w => w.length > 0).length 
+                  : 0;
+                return { ...scene, content: parsed, wordCount };
+              } catch (e) {
+                const textContent = typeof contentSource === 'string' ? contentSource : '';
+                const wordCount = textContent.trim() 
+                  ? textContent.trim().split(/\s+/).filter(w => w.length > 0).length 
+                  : 0;
+                return { ...scene, wordCount };
+              }
+            }
+            
+            return { ...scene, wordCount: 0 };
+          });
+          
+          const sequencesWithWordCounts = allSequences.map(seq => {
+            // 🚀 Use DB wordCount if available
+            const dbWordCount = seq.metadata?.wordCount;
+            if (dbWordCount !== undefined && dbWordCount !== null) {
+              return { ...seq, wordCount: dbWordCount };
+            }
+            // Fallback: Calculate from scenes
+            const sequenceScenes = parsedScenes.filter(sc => sc.sequenceId === seq.id);
+            const totalWords = sequenceScenes.reduce((sum, sc) => sum + (sc.wordCount || 0), 0);
+            return { ...seq, wordCount: totalWords };
+          });
+          
+          const actsWithWordCounts = loadedActs.map(act => {
+            // 🚀 Use DB wordCount if available
+            const dbWordCount = act.metadata?.wordCount;
+            if (dbWordCount !== undefined && dbWordCount !== null) {
+              return { ...act, wordCount: dbWordCount };
+            }
+            // Fallback: Calculate from sequences
+            const actSequences = sequencesWithWordCounts.filter(s => s.actId === act.id);
+            const totalWords = actSequences.reduce((sum, s) => sum + (s.wordCount || 0), 0);
+            return { ...act, wordCount: totalWords };
+          });
+          
+          const data: BookTimelineData = {
+            acts: actsWithWordCounts,
+            sequences: sequencesWithWordCounts,
+            scenes: parsedScenes,
+          };
+          
+          setTimelineData(data);
+          onDataChange?.(data);
+        } else {
+          const data: TimelineData = {
+            acts: loadedActs,
+            sequences: allSequences,
+            scenes: allScenes,
+            shots: [],
+          };
+          
+          setTimelineData(data);
+          onDataChange?.(data);
+        }
       } catch (error) {
-        console.error('[VideoEditorTimeline] Failed to load beats:', error);
+        console.error('[VideoEditorTimeline] Error loading timeline data:', error);
       } finally {
-        setBeatsLoading(false);
+        setIsLoadingData(false);
       }
     };
     
-    loadBeats();
-  }, [projectId]);
+    loadTimelineData();
+  }, [projectId, timelineData, isLoadingData, isBookProject, getAccessToken, onDataChange]);
   
-  // Calculate timeline width based on zoom level
-  const pixelsPerSecond = 10 * zoom;
-  const timelineWidth = duration * pixelsPerSecond;
+  // 🎬 LOAD BEATS
+  useEffect(() => {
+    if (parentBeats && parentBeats.length > 0) {
+      const convertedBeats: BeatsAPI.StoryBeat[] = parentBeats.map(beat => ({
+        id: beat.id || '',
+        project_id: projectId,
+        user_id: '',
+        label: beat.label || '',
+        template_abbr: beat.templateAbbr,
+        description: beat.description,
+        from_container_id: '',
+        to_container_id: '',
+        pct_from: beat.pctFrom || 0,
+        pct_to: beat.pctTo || 0,
+        color: beat.color,
+        notes: beat.notes,
+        order_index: 0,
+        created_at: '',
+        updated_at: '',
+      }));
+      setBeats(convertedBeats);
+    } else {
+      const loadBeats = async () => {
+        try {
+          setBeatsLoading(true);
+          const fetchedBeats = await BeatsAPI.getBeats(projectId);
+          setBeats(fetchedBeats);
+        } catch (error) {
+          console.error('[VideoEditorTimeline] Failed to load beats:', error);
+        } finally {
+          setBeatsLoading(false);
+        }
+      };
+      
+      loadBeats();
+    }
+  }, [projectId, parentBeats]);
   
-  // Convert time to pixel position
-  const timeToPixels = (time: number) => time * pixelsPerSecond;
+  // 🎯 MAP BEATS TO PIXELS
+  const beatBlocks = beats.map(beat => {
+    const startSec = (beat.pct_from / 100) * duration;
+    const endSec = (beat.pct_to / 100) * duration;
+    const x = (startSec - viewStartSec) * pxPerSec;
+    const width = (endSec - startSec) * pxPerSec;
+    
+    return {
+      ...beat,
+      startSec,
+      endSec,
+      x,
+      width,
+      visible: endSec >= viewStartSec && startSec <= viewEndSec,
+    };
+  });
   
-  // Convert pixel position to time
-  const pixelsToTime = (pixels: number) => pixels / pixelsPerSecond;
+  // 🎯 CALCULATE ACT POSITIONS (based on cumulative duration for books)
+  const actBlocks = (timelineData?.acts || []).map((act, actIndex) => {
+    if (isBookProject && readingSpeedWpm) {
+      // 📖 BOOK: Position based on cumulative duration
+      // Acts with text: duration = (wordCount / wpm) * 60
+      // Empty acts: duration = DEFAULT_EMPTY_ACT_SECONDS
+      const acts = timelineData?.acts || [];
+      const sequences = timelineData?.sequences || [];
+      const scenes = timelineData?.scenes || [];
+      
+      // 🚀 CALCULATE: Act word count from scenes (since acts are containers)
+      const getActWordCount = (actId: string): number => {
+        const actSequences = sequences.filter(s => s.actId === actId);
+        const actScenes = scenes.filter(sc => actSequences.some(seq => seq.id === sc.sequenceId));
+        
+        return actScenes.reduce((sum, sc) => {
+          // Try DB wordCount first
+          const dbWordCount = sc.metadata?.wordCount || sc.wordCount || 0;
+          if (dbWordCount > 0) return sum + dbWordCount;
+          
+          // Fallback: Calculate from content
+          const contentWordCount = calculateWordCountFromContent(sc.content);
+          return sum + contentWordCount;
+        }, 0);
+      };
+      
+      // Calculate start time (cumulative duration of all previous acts)
+      let startSec = 0;
+      for (let i = 0; i < actIndex; i++) {
+        const prevAct = acts[i];
+        const prevActWordCount = getActWordCount(prevAct.id);
+        
+        if (prevActWordCount > 0) {
+          startSec += (prevActWordCount / readingSpeedWpm) * 60; // Seconds
+        } else {
+          startSec += DEFAULT_EMPTY_ACT_MIN * 60; // 300 seconds
+        }
+      }
+      
+      // Calculate this act's duration
+      const actWordCount = getActWordCount(act.id);
+      const actDuration = (actWordCount > 0)
+        ? (actWordCount / readingSpeedWpm) * 60
+        : DEFAULT_EMPTY_ACT_MIN * 60;
+      
+      const endSec = startSec + actDuration;
+      const x = (startSec - viewStartSec) * pxPerSec;
+      const width = (endSec - startSec) * pxPerSec;
+      
+      console.log(`[VideoEditorTimeline] 📊 Act "${act.title}": ${actWordCount} words → ${(actDuration / 60).toFixed(2)} min (${startSec.toFixed(0)}s - ${endSec.toFixed(0)}s)`);
+      
+      return {
+        ...act,
+        wordCount: actWordCount, // Include calculated word count
+        startSec,
+        endSec,
+        x,
+        width,
+        visible: endSec >= viewStartSec && startSec <= viewEndSec,
+      };
+    } else {
+      // 🎬 FILM: Equal distribution
+      const totalActs = timelineData?.acts?.length || 1;
+      const actDuration = duration / totalActs;
+      const startSec = actIndex * actDuration;
+      const endSec = (actIndex + 1) * actDuration;
+      const x = (startSec - viewStartSec) * pxPerSec;
+      const width = (endSec - startSec) * pxPerSec;
+      
+      return {
+        ...act,
+        startSec,
+        endSec,
+        x,
+        width,
+        visible: endSec >= viewStartSec && startSec <= viewEndSec,
+      };
+    }
+  });
   
-  // Timeline ruler markers (every 30 seconds)
-  const rulerMarkers = [];
-  for (let t = 0; t <= duration; t += 30) {
-    rulerMarkers.push(t);
+  // 🎯 CALCULATE SEQUENCE/CHAPTER POSITIONS
+  const sequenceBlocks: any[] = [];
+  
+  if (isBookProject && totalWords && readingSpeedWpm) {
+    // 📖 BOOK: Position based on ACTUAL word count from scenes
+    const acts = timelineData?.acts || [];
+    const sequences = timelineData?.sequences || [];
+    const scenes = timelineData?.scenes || [];
+    const secondsPerWord = 60 / readingSpeedWpm;
+    
+    // 🚀 HELPER: Calculate sequence word count from scenes
+    const getSequenceWordCount = (sequenceId: string): number => {
+      const seqScenes = scenes.filter(sc => sc.sequenceId === sequenceId);
+      return seqScenes.reduce((sum, sc) => {
+        // Try DB wordCount first
+        const dbWordCount = sc.metadata?.wordCount || sc.wordCount || 0;
+        if (dbWordCount > 0) return sum + dbWordCount;
+        
+        // Fallback: Calculate from content
+        return sum + calculateWordCountFromContent(sc.content);
+      }, 0);
+    };
+    
+    let wordsSoFar = 0;
+    
+    acts.forEach((act) => {
+      const actSequences = sequences.filter(s => s.actId === act.id);
+      
+      actSequences.forEach((sequence) => {
+        const seqWords = getSequenceWordCount(sequence.id);
+        
+        if (seqWords > 0) {
+          const startSec = wordsSoFar * secondsPerWord;
+          const endSec = (wordsSoFar + seqWords) * secondsPerWord;
+          const x = (startSec - viewStartSec) * pxPerSec;
+          const width = (endSec - startSec) * pxPerSec;
+          
+          console.log(`[VideoEditorTimeline] 📗 Seq "${sequence.title}": ${seqWords} words → ${startSec.toFixed(0)}s - ${endSec.toFixed(0)}s`);
+          
+          sequenceBlocks.push({
+            ...sequence,
+            wordCount: seqWords,
+            startSec,
+            endSec,
+            x,
+            width,
+            visible: endSec >= viewStartSec && startSec <= viewEndSec,
+          });
+          
+          wordsSoFar += seqWords;
+        }
+      });
+      
+      // Add empty act padding if act had no sequences with text
+      const actSequenceWords = actSequences.reduce((sum, seq) => sum + getSequenceWordCount(seq.id), 0);
+      if (actSequenceWords === 0) {
+        // Empty act: add default duration
+        wordsSoFar += (DEFAULT_EMPTY_ACT_MIN * 60) / secondsPerWord; // Convert 5 min to words
+      }
+    });
+  } else {
+    // 🎬 FILM: Equal distribution within acts
+    (timelineData?.acts || []).forEach((act, actIndex) => {
+      const sequences = (timelineData?.sequences || []).filter(s => s.actId === act.id);
+      const totalActs = timelineData?.acts?.length || 1;
+      const actDuration = duration / totalActs;
+      const actStartSec = actIndex * actDuration;
+      const sequenceDuration = sequences.length > 0 ? actDuration / sequences.length : actDuration;
+      
+      sequences.forEach((sequence, seqIndex) => {
+        const startSec = actStartSec + seqIndex * sequenceDuration;
+        const endSec = startSec + sequenceDuration;
+        const x = (startSec - viewStartSec) * pxPerSec;
+        const width = (endSec - startSec) * pxPerSec;
+        
+        sequenceBlocks.push({
+          ...sequence,
+          startSec,
+          endSec,
+          x,
+          width,
+          visible: endSec >= viewStartSec && startSec <= viewEndSec,
+        });
+      });
+    });
   }
   
-  // Format time for display (MM:SS)
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  // 🎯 CALCULATE SCENE/SECTION POSITIONS
+  const sceneBlocks: any[] = [];
+  
+  if (isBookProject && readingSpeedWpm) {
+    // 📖 BOOK: Position based on word count from content
+    const scenes = timelineData?.scenes || [];
+    const sequences = timelineData?.sequences || [];
+    const acts = timelineData?.acts || [];
+    const secondsPerWord = 60 / readingSpeedWpm;
+    
+    let wordsSoFar = 0;
+    
+    acts.forEach((act) => {
+      const actSequences = sequences.filter(s => s.actId === act.id);
+      
+      actSequences.forEach((sequence) => {
+        const seqScenes = scenes.filter(sc => sc.sequenceId === sequence.id);
+        
+        seqScenes.forEach((scene) => {
+          // Calculate scene word count from content
+          const dbWordCount = scene.metadata?.wordCount || scene.wordCount || 0;
+          const sceneWords = dbWordCount > 0
+            ? dbWordCount
+            : calculateWordCountFromContent(scene.content);
+          
+          if (sceneWords > 0) {
+            const startSec = wordsSoFar * secondsPerWord;
+            const endSec = (wordsSoFar + sceneWords) * secondsPerWord;
+            const x = (startSec - viewStartSec) * pxPerSec;
+            const width = (endSec - startSec) * pxPerSec;
+            
+            console.log(`[VideoEditorTimeline] 📕 Scene "${scene.title}": ${sceneWords} words → ${startSec.toFixed(0)}s - ${endSec.toFixed(0)}s`);
+            
+            sceneBlocks.push({
+              ...scene,
+              wordCount: sceneWords,
+              startSec,
+              endSec,
+              x,
+              width,
+              visible: endSec >= viewStartSec && startSec <= viewEndSec,
+            });
+            
+            wordsSoFar += sceneWords;
+          }
+        });
+      });
+      
+      // Add empty act padding if act had no scenes with text
+      const actScenes = scenes.filter(sc => actSequences.some(seq => seq.id === sc.sequenceId));
+      const actSceneWords = actScenes.reduce((sum, sc) => {
+        const dbWordCount = sc.metadata?.wordCount || sc.wordCount || 0;
+        return sum + (dbWordCount > 0 ? dbWordCount : calculateWordCountFromContent(sc.content));
+      }, 0);
+      
+      if (actSceneWords === 0) {
+        // Empty act: add default duration
+        wordsSoFar += (DEFAULT_EMPTY_ACT_MIN * 60) / secondsPerWord; // Convert 5 min to words
+      }
+    });
+  } else {
+    // 🎬 FILM: Equal distribution within sequences
+    (timelineData?.acts || []).forEach((act, actIndex) => {
+      const sequences = (timelineData?.sequences || []).filter(s => s.actId === act.id);
+      const totalActs = timelineData?.acts?.length || 1;
+      const actDuration = duration / totalActs;
+      const actStartSec = actIndex * actDuration;
+      const sequenceDuration = sequences.length > 0 ? actDuration / sequences.length : actDuration;
+      
+      sequences.forEach((sequence, seqIndex) => {
+        const scenes = (timelineData?.scenes || []).filter(sc => sc.sequenceId === sequence.id);
+        const seqStartSec = actStartSec + seqIndex * sequenceDuration;
+        const sceneDuration = scenes.length > 0 ? sequenceDuration / scenes.length : sequenceDuration;
+        
+        scenes.forEach((scene, sceneIndex) => {
+          const startSec = seqStartSec + sceneIndex * sceneDuration;
+          const endSec = startSec + sceneDuration;
+          const x = (startSec - viewStartSec) * pxPerSec;
+          const width = (endSec - startSec) * pxPerSec;
+          
+          sceneBlocks.push({
+            ...scene,
+            startSec,
+            endSec,
+            x,
+            width,
+            visible: endSec >= viewStartSec && startSec <= viewEndSec,
+          });
+        });
+      });
+    });
+  }
+  
+  // 📖 PAGE MARKERS FOR BOOKS (based on word count, not time!)
+  const pageMarkers: { x: number; page: number }[] = [];
+  
+  if (isBookProject && wordsPerPage && readingSpeedWpm) {
+    // Calculate page positions based on WORD COUNT
+    // Page N = N × wordsPerPage words
+    // Position = (words / readingSpeedWpm) × 60 seconds
+    
+    // Choose page increment based on zoom
+    let pageIncrement = 1;
+    const estimatedTotalPages = (totalWords || 0) / wordsPerPage;
+    const pagesPerViewport = (viewportWidth || 0) / pxPerSec / 60 * readingSpeedWpm / wordsPerPage;
+    
+    if (pagesPerViewport > 100) {
+      pageIncrement = 10; // Zoomed out: every 10 pages
+    } else if (pagesPerViewport > 50) {
+      pageIncrement = 5; // Medium: every 5 pages
+    } else if (pagesPerViewport < 10) {
+      pageIncrement = 0.1; // Zoomed in: every 0.1 pages
+    }
+    
+    const maxPages = targetPages || estimatedTotalPages;
+    const firstPage = Math.floor(viewStartSec / 60 * readingSpeedWpm / wordsPerPage / pageIncrement) * pageIncrement;
+    const lastPage = Math.ceil(viewEndSec / 60 * readingSpeedWpm / wordsPerPage / pageIncrement) * pageIncrement;
+    
+    for (let page = firstPage; page <= lastPage && page <= maxPages; page += pageIncrement) {
+      // Position based on word count: page N is at (N × wordsPerPage) words
+      const wordsAtPage = page * wordsPerPage;
+      const pageSec = (wordsAtPage / readingSpeedWpm) * 60; // Convert to seconds
+      const x = (pageSec - viewStartSec) * pxPerSec;
+      pageMarkers.push({ x, page });
+    }
+    
+    console.log('[VideoEditorTimeline] 📄 Page Markers:', {
+      wordsPerPage,
+      readingSpeedWpm,
+      totalWords,
+      estimatedPages: estimatedTotalPages.toFixed(1),
+      markerCount: pageMarkers.length,
+      firstPage: firstPage.toFixed(1),
+      lastPage: lastPage.toFixed(1),
+      example: pageMarkers.length > 0 
+        ? `Page ${pageMarkers[0].page}: ${(pageMarkers[0].page * wordsPerPage)} words = ${((pageMarkers[0].page * wordsPerPage / readingSpeedWpm) * 60).toFixed(1)}s`
+        : 'none'
+    });
+  }
   
   // Handle playhead click
   const handlePlayheadClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!timelineContainerRef.current) return;
+    if (!viewportRef.current) return;
     
-    const rect = timelineContainerRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left + (scrollContainerRef.current?.scrollLeft || 0);
-    const newTime = pixelsToTime(clickX);
+    const rect = viewportRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const newTime = viewStartSec + clickX / pxPerSec;
     
     setCurrentTime(Math.max(0, Math.min(duration, newTime)));
-  };
-  
-  // Handle zoom (mouse wheel)
-  const handleWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const zoomDelta = -e.deltaY * 0.001;
-      setZoom(prev => Math.max(0.5, Math.min(5, prev + zoomDelta)));
-    }
-  };
-  
-  // Handle touch gestures (pinch-to-zoom & pan)
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 2) {
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const distance = Math.hypot(
-        touch2.clientX - touch1.clientX,
-        touch2.clientY - touch1.clientY
-      );
-      setLastTouchDistance(distance);
-    } else if (e.touches.length === 1) {
-      setIsPanning(true);
-      setTouchStartX(e.touches[0].clientX);
-    }
-  };
-  
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 2 && lastTouchDistance !== null) {
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const distance = Math.hypot(
-        touch2.clientX - touch1.clientX,
-        touch2.clientY - touch1.clientY
-      );
-      
-      const zoomDelta = (distance - lastTouchDistance) * 0.005;
-      setZoom(prev => Math.max(0.5, Math.min(5, prev + zoomDelta)));
-      setLastTouchDistance(distance);
-    } else if (e.touches.length === 1 && isPanning && scrollContainerRef.current) {
-      const deltaX = touchStartX - e.touches[0].clientX;
-      scrollContainerRef.current.scrollLeft += deltaX;
-      setTouchStartX(e.touches[0].clientX);
-    }
-  };
-  
-  const handleTouchEnd = () => {
-    setIsPanning(false);
-    setLastTouchDistance(null);
-  };
-  
-  // Map duration to timeline position (0-100%)
-  const getDurationPercentage = (duration: number | undefined): number => {
-    if (!duration) return 5; // Default 5% if no duration
-    return (duration / this.duration) * 100;
-  };
-  
-  // Calculate item positions based on hierarchical data
-  const calculateItemPosition = (
-    actIndex: number, 
-    sequenceIndex?: number, 
-    sceneIndex?: number
-  ) => {
-    if (!timelineData?.acts) return { start: 0, end: 100 };
-    
-    const totalActs = timelineData.acts.length;
-    const actDuration = 100 / totalActs;
-    
-    if (sequenceIndex === undefined) {
-      // Act level
-      return {
-        start: actIndex * actDuration,
-        end: (actIndex + 1) * actDuration,
-      };
-    }
-    
-    const act = timelineData.acts[actIndex];
-    const sequences = timelineData.sequences?.filter(s => s.actId === act.id) || [];
-    const totalSequences = sequences.length || 1;
-    const sequenceDuration = actDuration / totalSequences;
-    
-    if (sceneIndex === undefined) {
-      // Sequence level
-      return {
-        start: actIndex * actDuration + sequenceIndex * sequenceDuration,
-        end: actIndex * actDuration + (sequenceIndex + 1) * sequenceDuration,
-      };
-    }
-    
-    const sequence = sequences[sequenceIndex];
-    const scenes = timelineData.scenes?.filter(s => s.sequenceId === sequence.id) || [];
-    const totalScenes = scenes.length || 1;
-    const sceneDuration = sequenceDuration / totalScenes;
-    
-    // Scene level
-    return {
-      start: actIndex * actDuration + sequenceIndex * sequenceDuration + sceneIndex * sceneDuration,
-      end: actIndex * actDuration + sequenceIndex * sequenceDuration + (sceneIndex + 1) * sceneDuration,
-    };
   };
   
   return (
@@ -236,7 +784,6 @@ export function VideoEditorTimeline({
       <div className="flex-shrink-0 bg-card p-6 border-b border-border">
         <div className="text-sm text-muted-foreground mb-2">Videoplayer Ansicht</div>
         <div className="max-w-xs mx-auto">
-          {/* Video Player */}
           <div className="relative aspect-video bg-muted rounded overflow-hidden border-2 border-border">
             <img 
               src="https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&h=225&fit=crop"
@@ -244,7 +791,6 @@ export function VideoEditorTimeline({
               className="w-full h-full object-cover"
             />
             
-            {/* Play Button Overlay */}
             <div className="absolute inset-0 flex items-center justify-center">
               <Button
                 variant="default"
@@ -256,281 +802,245 @@ export function VideoEditorTimeline({
               </Button>
             </div>
             
-            {/* Timecode */}
             <div className="absolute bottom-2 left-2 bg-primary text-primary-foreground px-2 py-0.5 rounded text-xs font-mono">
-              {formatTime(currentTime)}
+              {formatTimeLabel(currentTime)}
             </div>
           </div>
         </div>
       </div>
       
-      {/* Timeline Ruler (Top) */}
-      <div className="flex-shrink-0 bg-card border-b border-border">
-        <div className="flex">
-          {/* Track Labels Spacer */}
-          <div className="w-20 flex-shrink-0 bg-card" />
-          
-          {/* Ruler */}
-          <div 
-            ref={scrollContainerRef}
-            className="flex-1 overflow-x-auto overflow-y-hidden scrollbar-thin scrollbar-thumb-primary scrollbar-track-muted"
-            style={{ scrollbarWidth: 'thin' }}
-          >
+      {/* Timeline Controls */}
+      <div className="flex-shrink-0 bg-card border-b border-border px-4 py-2 flex items-center justify-between">
+        <div className="text-xs text-muted-foreground font-mono">
+          Duration: {formatTimeLabel(duration)}
+          {isBookProject && targetPages && (
+            <span className="ml-4">Target: {targetPages} pages</span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">Zoom</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={zoom}
+            onChange={handleZoomSlider}
+            className="w-32"
+          />
+          <span className="text-xs text-muted-foreground font-mono">
+            {pxPerSec.toFixed(1)} px/s
+          </span>
+        </div>
+      </div>
+      
+      {/* Timeline Container */}
+      <div className="flex-1 flex">
+        {/* Track Labels - Sticky Left */}
+        <div className="w-20 flex-shrink-0 bg-card border-r border-border">
+          <div className="h-12 border-b border-border px-2 flex items-center bg-card">
+            <span className="text-[9px] text-foreground font-medium">Zeit</span>
+          </div>
+          <div className="h-16 border-b border-border px-2 flex items-center bg-card">
+            <span className="text-[9px] text-foreground font-medium">Beat</span>
+          </div>
+          <div className="h-12 border-b border-border px-2 flex items-center bg-card">
+            <span className="text-[9px] text-foreground font-medium">
+              {isBookProject ? 'Akt' : 'Act'}
+            </span>
+          </div>
+          <div className="h-10 border-b border-border px-2 flex items-center bg-card">
+            <span className="text-[9px] text-foreground font-medium">
+              {isBookProject ? 'Kapitel' : 'Seq'}
+            </span>
+          </div>
+          <div className="h-30 border-b border-border px-2 flex items-center bg-card">
+            <span className="text-[9px] text-foreground font-medium">
+              {isBookProject ? 'Abschnitt' : 'Scene'}
+            </span>
+          </div>
+        </div>
+        
+        {/* Timeline Content - Scrollable */}
+        <div 
+          ref={scrollRef}
+          className="flex-1 overflow-x-auto scrollbar-thin scrollbar-thumb-primary scrollbar-track-muted"
+          onWheel={handleWheel}
+        >
+          <div ref={viewportRef} style={{ width: `${totalWidthPx}px` }}>
+            {/* Time Ruler */}
             <div 
-              ref={timelineContainerRef}
-              className="relative h-8 bg-card"
-              style={{ width: `${timelineWidth}px` }}
+              className="relative h-12 bg-card border-b border-border"
               onClick={handlePlayheadClick}
             >
-              {/* Time Markers */}
-              {rulerMarkers.map(time => (
+              {/* Time markers */}
+              {ticks.map((tick, index) => (
                 <div
-                  key={time}
-                  className="absolute top-0 bottom-0"
-                  style={{ left: `${timeToPixels(time)}px` }}
+                  key={`${tick.sec}-${index}`}
+                  className="absolute top-0 flex flex-col items-center"
+                  style={{ left: `${tick.x}px` }}
                 >
-                  <div className="w-px h-2 bg-border" />
-                  <span className="absolute top-3 -translate-x-1/2 text-[9px] text-muted-foreground font-mono">
-                    {formatTime(time)}
+                  <div className="w-px h-3 bg-border" />
+                  <span className="text-[9px] text-muted-foreground font-mono mt-0.5 whitespace-nowrap">
+                    {tick.label}
                   </span>
                 </div>
               ))}
               
+              {/* Page markers for books (second row) */}
+              {isBookProject && pageMarkers.map((marker, index) => {
+                const isWholePage = marker.page % 1 === 0;
+                return (
+                  <div
+                    key={`page-${marker.page}-${index}`}
+                    className="absolute bottom-0 flex flex-col items-center"
+                    style={{ left: `${marker.x}px` }}
+                  >
+                    <span className={cn(
+                      'text-[9px] font-mono mb-0.5 whitespace-nowrap',
+                      isWholePage ? 'text-primary font-bold' : 'text-muted-foreground'
+                    )}>
+                      S.{marker.page % 1 === 0 ? marker.page.toFixed(0) : marker.page.toFixed(1)}
+                    </span>
+                    <div className="w-px h-3 bg-border" />
+                  </div>
+                );
+              })}
+              
               {/* Playhead */}
               <div
                 className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-30"
-                style={{ left: `${timeToPixels(currentTime)}px` }}
+                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
               >
                 <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-primary rounded-sm" />
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-      
-      {/* Timeline Tracks */}
-      <div 
-        className="flex-1 overflow-auto scrollbar-thin scrollbar-thumb-primary scrollbar-track-muted"
-        onWheel={handleWheel}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-      >
-        <div className="flex">
-          {/* Track Labels Column */}
-          <div className="w-20 flex-shrink-0 bg-card border-r border-border">
-            {trackConfig.map(track => (
-              <div key={track.id} className={cn(track.height, "border-b border-border px-2 flex items-center")}>
-                <span className="text-[9px] text-foreground font-medium">{track.label}</span>
-              </div>
-            ))}
-          </div>
-          
-          {/* Track Content Area */}
-          <div 
-            className="flex-1 overflow-x-auto overflow-y-hidden"
-            style={{ width: `${timelineWidth}px` }}
-          >
-            <div style={{ width: `${timelineWidth}px` }}>
-              {/* Beat Track */}
-              <div className="relative h-8 border-b border-border bg-muted/30">
-                {beats.map(beat => {
-                  const left = timeToPixels((beat.pct_from / 100) * duration);
-                  const width = timeToPixels(((beat.pct_to - beat.pct_from) / 100) * duration);
-                  
-                  return (
-                    <div
-                      key={beat.id}
-                      className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity"
-                      style={{
-                        left: `${left}px`,
-                        width: `${width}px`,
-                        backgroundColor: beat.color || 'hsl(var(--primary) / 0.6)',
-                      }}
-                    >
-                      <div className="h-full flex items-center px-2">
-                        <span className="text-[9px] text-primary-foreground font-medium truncate">
-                          {beat.label}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-                
-                {/* Playhead */}
-                <div
-                  className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                  style={{ left: `${timeToPixels(currentTime)}px` }}
-                />
-              </div>
-              
-              {/* Act Track */}
-              <div className="relative h-12 border-b border-border bg-muted/30">
-                {timelineData?.acts?.map((act, actIndex) => {
-                  const position = calculateItemPosition(actIndex);
-                  const left = timeToPixels((position.start / 100) * duration);
-                  const width = timeToPixels(((position.end - position.start) / 100) * duration);
-                  
-                  return (
-                    <div
-                      key={act.id}
-                      className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-blue-500/70 dark:bg-blue-400/70"
-                      style={{
-                        left: `${left}px`,
-                        width: `${width}px`,
-                      }}
-                    >
-                      <div className="h-full flex items-center px-2 overflow-hidden">
-                        <span className="text-[10px] text-white dark:text-black font-medium truncate">
-                          {act.title}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-                
-                {/* Playhead */}
-                <div
-                  className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                  style={{ left: `${timeToPixels(currentTime)}px` }}
-                />
-              </div>
-              
-              {/* Sequence/Chapter Track */}
-              <div className="relative h-10 border-b border-border bg-muted/30">
-                {timelineData?.acts?.map((act, actIndex) => {
-                  const sequences = timelineData.sequences?.filter(s => s.actId === act.id) || [];
-                  
-                  return sequences.map((sequence, seqIndex) => {
-                    const position = calculateItemPosition(actIndex, seqIndex);
-                    const left = timeToPixels((position.start / 100) * duration);
-                    const width = timeToPixels(((position.end - position.start) / 100) * duration);
-                    
-                    return (
-                      <div
-                        key={sequence.id}
-                        className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-emerald-400/70 dark:bg-emerald-500/70"
-                        style={{
-                          left: `${left}px`,
-                          width: `${width}px`,
-                        }}
-                      >
-                        <div className="h-full flex items-center px-2 overflow-hidden">
-                          <span className="text-[9px] text-black dark:text-white font-medium truncate">
-                            {sequence.title}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  });
-                })}
-                
-                {/* Playhead */}
-                <div
-                  className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                  style={{ left: `${timeToPixels(currentTime)}px` }}
-                />
-              </div>
-              
-              {/* Scene/Section Track */}
-              <div className="relative h-10 border-b border-border bg-muted/30">
-                {timelineData?.acts?.map((act, actIndex) => {
-                  const sequences = timelineData.sequences?.filter(s => s.actId === act.id) || [];
-                  
-                  return sequences.map((sequence, seqIndex) => {
-                    const scenes = timelineData.scenes?.filter(s => s.sequenceId === sequence.id) || [];
-                    
-                    return scenes.map((scene, sceneIndex) => {
-                      const position = calculateItemPosition(actIndex, seqIndex, sceneIndex);
-                      const left = timeToPixels((position.start / 100) * duration);
-                      const width = timeToPixels(((position.end - position.start) / 100) * duration);
-                      
-                      return (
-                        <div
-                          key={scene.id}
-                          className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-muted-foreground/50"
-                          style={{
-                            left: `${left}px`,
-                            width: `${width}px`,
-                          }}
-                        >
-                          <div className="h-full flex items-center px-2 overflow-hidden">
-                            <span className="text-[9px] text-foreground font-medium truncate">
-                              {scene.title}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    });
-                  });
-                })}
-                
-                {/* Playhead */}
-                <div
-                  className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                  style={{ left: `${timeToPixels(currentTime)}px` }}
-                />
-              </div>
-              
-              {/* Shot Track (Film only) */}
-              {!isBookProject && (
-                <div className="relative h-16 border-b border-border bg-muted/30">
-                  {(timelineData as TimelineData)?.shots?.slice(0, 1).map((shot, index) => {
-                    // Show first shot as example (will need proper positioning logic)
-                    const left = timeToPixels(0);
-                    const width = timeToPixels(30);
-                    
-                    return (
-                      <div
-                        key={shot.id}
-                        className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity overflow-hidden bg-muted border border-border"
-                        style={{
-                          left: `${left}px`,
-                          width: `${width}px`,
-                        }}
-                      >
-                        <img 
-                          src="https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=100&h=60&fit=crop"
-                          alt="Shot thumbnail"
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    );
-                  })}
-                  
-                  {/* Playhead */}
+            
+            {/* Beat Track */}
+            <div className="relative h-16 border-b border-border bg-muted/30">
+              {beatBlocks
+                .filter(beat => beat.visible)
+                .map(beat => (
                   <div
-                    className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                    style={{ left: `${timeToPixels(currentTime)}px` }}
-                  />
-                </div>
-              )}
-              
-              {/* Audio/Dialog Track (Film only) */}
-              {!isBookProject && (
-                <div className="relative h-8 border-b border-border bg-muted/30">
-                  {/* Example audio clip */}
-                  <div
-                    className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-yellow-500/70 dark:bg-yellow-400/70"
+                    key={beat.id}
+                    className={cn(
+                      'absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity',
+                      BEAT_STYLES.container
+                    )}
                     style={{
-                      left: `${timeToPixels(0)}px`,
-                      width: `${timeToPixels(25)}px`,
+                      left: `${beat.x}px`,
+                      width: `${beat.width}px`,
                     }}
                   >
-                    <div className="h-full flex items-center px-2">
-                      <span className="text-[9px] text-black dark:text-black font-medium truncate">
-                        Dialog
+                    <div className="h-full flex items-center px-2 overflow-hidden">
+                      <span className={cn('text-[10px] font-medium truncate', BEAT_STYLES.text)}>
+                        {beat.label}
                       </span>
                     </div>
                   </div>
-                  
-                  {/* Playhead */}
+                ))}
+              
+              {/* Playhead */}
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
+                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+              />
+            </div>
+            
+            {/* Act Track */}
+            <div className="relative h-12 border-b border-border bg-muted/30">
+              {actBlocks
+                .filter(act => act.visible)
+                .map(act => (
                   <div
-                    className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                    style={{ left: `${timeToPixels(currentTime)}px` }}
-                  />
-                </div>
-              )}
+                    key={act.id}
+                    className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-blue-50 dark:bg-blue-950/40 border-2 border-blue-200 dark:border-blue-700"
+                    style={{
+                      left: `${act.x}px`,
+                      width: `${act.width}px`,
+                    }}
+                  >
+                    <div className="h-full flex items-center px-2 overflow-hidden">
+                      <span className="text-[10px] text-blue-900 dark:text-blue-100 font-medium truncate">
+                        {act.title}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              
+              {/* Playhead */}
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
+                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+              />
+            </div>
+            
+            {/* Sequence/Chapter Track */}
+            <div className="relative h-10 border-b border-border bg-muted/30">
+              {sequenceBlocks
+                .filter(seq => seq.visible)
+                .map(seq => (
+                  <div
+                    key={seq.id}
+                    className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-green-50 dark:bg-green-950/40 border-2 border-green-200 dark:border-green-700"
+                    style={{
+                      left: `${seq.x}px`,
+                      width: `${seq.width}px`,
+                    }}
+                  >
+                    <div className="h-full flex items-center px-2 overflow-hidden">
+                      <span className="text-[10px] text-green-900 dark:text-green-100 font-medium truncate">
+                        {seq.title}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              
+              {/* Playhead */}
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
+                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+              />
+            </div>
+            
+            {/* Scene/Section Track */}
+            <div className="relative h-30 border-b border-border bg-muted/30">
+              {sceneBlocks
+                .filter(scene => scene.visible)
+                .map(scene => (
+                  <div
+                    key={scene.id}
+                    className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-90 transition-opacity bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-200 dark:border-amber-700"
+                    style={{
+                      left: `${scene.x}px`,
+                      width: `${scene.width}px`,
+                    }}
+                    onClick={() => {
+                      console.log('[VideoEditorTimeline] 🚀 Opening Content Modal for scene:', scene.id);
+                      setEditingSceneForModal(scene);
+                      setShowContentModal(true);
+                    }}
+                  >
+                    <div className="h-full flex flex-col px-2 py-1 overflow-hidden">
+                      <span className="text-[9px] text-amber-900 dark:text-amber-100 font-medium mb-0.5">
+                        {scene.title}
+                      </span>
+                      <div className="flex-1 overflow-hidden text-[8px] text-amber-700 dark:text-amber-300">
+                        {scene.content && typeof scene.content === 'object' ? (
+                          <ReadonlyTiptapView content={scene.content} />
+                        ) : (
+                          <em className="text-muted-foreground/50">Leer...</em>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              
+              {/* Playhead */}
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
+                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+              />
             </div>
           </div>
         </div>
@@ -538,15 +1048,100 @@ export function VideoEditorTimeline({
       
       {/* Bottom Controls */}
       <div className="flex-shrink-0 bg-card border-t border-border p-3">
-        <Button
-          variant="outline"
-          size="sm"
-          className="border-2 border-primary"
-        >
+        <Button variant="outline" size="sm" className="border-2 border-primary">
           <Plus className="w-4 h-4 mr-1" />
           Add Item
         </Button>
       </div>
+      
+      {/* 📝 Rich Text Content Editor Modal */}
+      {editingSceneForModal && (
+        <RichTextEditorModal
+          isOpen={showContentModal}
+          onClose={() => {
+            setShowContentModal(false);
+            setEditingSceneForModal(null);
+          }}
+          value={editingSceneForModal.content}
+          onChange={async (jsonDoc) => {
+            // Save as JSON object directly
+            const now = new Date().toISOString();
+            console.log('[VideoEditorTimeline] 💾 Saving content as JSON object:', jsonDoc);
+            
+            try {
+              const token = await getAccessToken();
+              if (!token) {
+                console.error('[VideoEditorTimeline] No auth token available');
+                return;
+              }
+              
+              // Calculate word count from content
+              const calculateWordCount = (content: any): number => {
+                if (!content?.content || !Array.isArray(content.content)) return 0;
+                
+                let totalWords = 0;
+                for (const node of content.content) {
+                  if (node.type === 'paragraph' && node.content) {
+                    for (const child of node.content) {
+                      if (child.type === 'text' && child.text) {
+                        const words = child.text.trim().split(/\s+/).filter((w: string) => w.length > 0);
+                        totalWords += words.length;
+                      }
+                    }
+                  }
+                }
+                return totalWords;
+              };
+              
+              const wordCount = calculateWordCount(jsonDoc);
+              
+              // Update scene via API
+              const updatedScene = await TimelineAPI.updateScene(
+                editingSceneForModal.id,
+                {
+                  content: jsonDoc, // Save as JSON object
+                  metadata: {
+                    ...editingSceneForModal.metadata,
+                    wordCount, // Save word count to metadata
+                    lastEditedAt: now,
+                  },
+                },
+                token
+              );
+              
+              console.log('[VideoEditorTimeline] ✅ Scene updated successfully:', updatedScene);
+              
+              // Update local state
+              if (timelineData) {
+                const newScenes = (timelineData.scenes || []).map(s =>
+                  s.id === editingSceneForModal.id
+                    ? { ...s, content: jsonDoc, wordCount, metadata: { ...s.metadata, wordCount, lastEditedAt: now } }
+                    : s
+                );
+                
+                const newData = {
+                  ...timelineData,
+                  scenes: newScenes,
+                };
+                
+                setTimelineData(newData);
+                onDataChange?.(newData);
+                
+                // Update the editing scene to reflect changes immediately in the modal
+                setEditingSceneForModal({
+                  ...editingSceneForModal,
+                  content: jsonDoc,
+                  wordCount,
+                  metadata: { ...editingSceneForModal.metadata, wordCount, lastEditedAt: now },
+                });
+              }
+            } catch (error) {
+              console.error('[VideoEditorTimeline] ❌ Error saving scene content:', error);
+            }
+          }}
+          title={editingSceneForModal.title}
+        />
+      )}
     </div>
   );
 }

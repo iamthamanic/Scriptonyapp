@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Plus, ChevronUp, ChevronDown } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
@@ -36,6 +36,11 @@ interface StructureBeatsSectionProps {
   className?: string;
   initialData?: TimelineData; // Pre-loaded timeline data from parent
   onDataChange?: (data: TimelineData) => void; // Callback when timeline changes
+  // 📖 Book Metrics for Timeline Duration
+  totalWords?: number;
+  wordsPerPage?: number;
+  readingSpeedWpm?: number;
+  targetPages?: number; // 🎯 NEW: Zielumfang (e.g., 600 pages)
 }
 
 // LITE-7 Story Beat Preset (minimales Template für schnelles Prototyping)
@@ -48,7 +53,7 @@ const TEST_BEAT_HOOK: BeatCardData = {
   pctTo: 8,   // Ende bei 8% (6% hoch = ca. 60px bei 1000px Höhe)
 };
 
-export function StructureBeatsSection({ projectId, projectType, beatTemplate, initialData, onDataChange, className = '' }: StructureBeatsSectionProps) {
+export function StructureBeatsSection({ projectId, projectType, beatTemplate, initialData, onDataChange, className = '', totalWords, wordsPerPage, readingSpeedWpm, targetPages }: StructureBeatsSectionProps) {
   const containerStackRef = useRef<HTMLDivElement>(null);
   const [isOpen, setIsOpen] = useState(true); // DEFAULT: OPEN
   const [structureView, setStructureView] = useState<'dropdown' | 'timeline' | 'native'>('dropdown');
@@ -62,13 +67,104 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
     }))
   );
   
-  const [timelineData, setTimelineData] = useState<TimelineData | null>(null);
+  const [timelineData, setTimelineData] = useState<TimelineData | null>(initialData || null);
   
-  // 🎯 Collapse States for dynamic alignment
-  const [expandedActs, setExpandedActs] = useState<Set<string>>(new Set());
-  const [expandedSequences, setExpandedSequences] = useState<Set<string>>(new Set());
-  const [expandedScenes, setExpandedScenes] = useState<Set<string>>(new Set());
+  // 🔄 UPDATE: Sync timelineData when initialData changes
+  useEffect(() => {
+    if (initialData) {
+      console.log('[StructureBeatsSection] 🔄 Updating timelineData from initialData:', initialData);
+      setTimelineData(initialData);
+    }
+  }, [initialData]);
   
+  // 📖 CALCULATE: Book timeline duration from timelineData (reactive!)
+  const bookTimelineDuration = useMemo(() => {
+    console.log('[StructureBeatsSection] 🔍 useMemo - Calculating duration:', {
+      projectType,
+      readingSpeedWpm,
+      hasTimelineData: !!timelineData,
+      hasActs: !!timelineData?.acts,
+      hasSequences: !!timelineData?.sequences,
+      hasScenes: !!timelineData?.scenes,
+      scenesCount: timelineData?.scenes?.length || 0,
+    });
+    
+    if (projectType === 'book' && readingSpeedWpm && timelineData?.acts && timelineData?.sequences && timelineData?.scenes) {
+      const DEFAULT_EMPTY_ACT_SECONDS = 300; // 5 minutes = 300 seconds
+      
+      console.log('[StructureBeatsSection] 🧮 Calculating book timeline duration from SCENES:', {
+        readingSpeedWpm,
+        actsCount: timelineData.acts.length,
+        sequencesCount: timelineData.sequences.length,
+        scenesCount: timelineData.scenes.length,
+      });
+      
+      const actDurations = timelineData.acts.map(act => {
+        // 🔥 CALCULATE word count from sequences/scenes
+        const actSequences = timelineData.sequences.filter(seq => seq.actId === act.id);
+        const actScenes = timelineData.scenes.filter(scene => 
+          actSequences.some(seq => seq.id === scene.sequenceId)
+        );
+        
+        console.log(`  🔍 Act "${act.title}": Found ${actSequences.length} sequences, ${actScenes.length} scenes`);
+        
+        // 🚀 FIX: Calculate word count from content if wordCount is 0 or missing
+        const actualWordCount = actScenes.reduce((sum, scene) => {
+          const dbWordCount = scene.metadata?.wordCount || scene.wordCount || 0;
+          if (dbWordCount > 0) {
+            console.log(`    ✅ Scene "${scene.title}": Using DB wordCount = ${dbWordCount}`);
+            return sum + dbWordCount;
+          }
+          
+          // Calculate from content (like BookDropdown does)
+          const content = scene.content as any;
+          if (!content?.content || !Array.isArray(content.content)) {
+            console.log(`    ⚠️ Scene "${scene.title}": No valid content structure`);
+            return sum;
+          }
+          
+          let sceneWords = 0;
+          for (const node of content.content) {
+            if (node.type === 'paragraph' && node.content) {
+              for (const child of node.content) {
+                if (child.type === 'text' && child.text) {
+                  const words = child.text.trim().split(/\s+/).filter((w: string) => w.length > 0);
+                  sceneWords += words.length;
+                }
+              }
+            }
+          }
+          console.log(`    📝 Scene "${scene.title}": Calculated ${sceneWords} words from content`);
+          return sum + sceneWords;
+        }, 0);
+        
+        if (actualWordCount > 0) {
+          const durationSec = (actualWordCount / readingSpeedWpm) * 60; // Convert minutes to seconds
+          console.log(`  📊 Act "${act.title}": ${actualWordCount} words (from ${actScenes.length} scenes) / ${readingSpeedWpm} WPM = ${(actualWordCount / readingSpeedWpm).toFixed(2)} min = ${durationSec.toFixed(0)}s`);
+          return durationSec;
+        } else {
+          console.log(`  📊 Act "${act.title}": Empty (0 scenes with text) → ${DEFAULT_EMPTY_ACT_SECONDS}s (5 min default)`);
+          return DEFAULT_EMPTY_ACT_SECONDS; // 300 seconds
+        }
+      });
+      
+      const totalDuration = actDurations.reduce((sum, dur) => sum + dur, 0);
+      console.log(`[StructureBeatsSection] ✅ Total duration: ${totalDuration}s (${(totalDuration/60).toFixed(1)} min)`);
+      
+      return totalDuration;
+    } else {
+      console.log('[StructureBeatsSection] ⚠️ Using default 300s (5 min) - Book condition not met');
+      return 300; // Default: 300 seconds (5 minutes) for films
+    }
+  }, [projectType, readingSpeedWpm, timelineData]);
+  
+  // 🧪 TEST: Hook bei 5% positionieren (oben sichtbar)
+  const TEST_BEAT_HOOK: BeatCardData = {
+    ...MOCK_BEATS[0], // Hook (0-1%)
+    pctFrom: 2, // Start bei 2%
+    pctTo: 8,   // Ende bei 8% (6% hoch = ca. 60px bei 1000px Höhe)
+  };
+
   const handleUpdateBeat = (beatId: string, updates: Partial<BeatCardData>) => {
     setBeats(prev => prev.map(beat => 
       beat.id === beatId ? { ...beat, ...updates } : beat
@@ -138,6 +234,8 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
         // Check if beats already exist
         const existingBeats = await BeatsAPI.getBeats(projectId);
         
+        console.log('[StructureBeatsSection] 📊 Loaded beats from API:', existingBeats);
+        
         if (existingBeats.length === 0 && beatTemplate) {
           console.log(`[StructureBeatsSection] 🎬 No beats found, auto-generating ${beatTemplate} template...`);
           
@@ -196,16 +294,38 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
               });
               createdBeats.push(newBeat);
             } catch (error) {
-              console.error(`[StructureBeatsSection] ❌ Failed to create beat "${beat.label}":`, error);
+              console.error(`[StructureBeatsSection] ❌ Failed to create beat \"${beat.label}\":`, error);
             }
           }
           
           console.log(`[StructureBeatsSection] ✅ Successfully created ${createdBeats.length} beats`);
-          setBeats(createdBeats);
+          // Convert created beats to BeatCardData format
+          const convertedCreatedBeats: BeatCardData[] = createdBeats.map((beat) => ({
+            id: beat.id,
+            label: beat.label,
+            pctFrom: beat.pct_from,
+            pctTo: beat.pct_to,
+            color: beat.color,
+            description: beat.description,
+            notes: beat.notes,
+            templateAbbr: beat.template_abbr,
+          }));
+          setBeats(convertedCreatedBeats);
           toast.success(`${createdBeats.length} Story Beats automatisch generiert`);
         } else if (existingBeats.length > 0) {
           console.log(`[StructureBeatsSection] ℹ️ Found ${existingBeats.length} existing beats`);
-          setBeats(existingBeats);
+          // Convert API beats to BeatCardData format
+          const convertedBeats: BeatCardData[] = existingBeats.map((beat) => ({
+            id: beat.id,
+            label: beat.label,
+            pctFrom: beat.pct_from,
+            pctTo: beat.pct_to,
+            color: beat.color,
+            description: beat.description,
+            notes: beat.notes,
+            templateAbbr: beat.template_abbr,
+          }));
+          setBeats(convertedBeats);
         }
       } catch (error) {
         console.error('[StructureBeatsSection] ❌ Error in auto-generate:', error);
@@ -262,10 +382,6 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
                   initialData={initialData}
                   onDataChange={handleTimelineChange}
                   containerRef={containerStackRef}
-                  expandedActs={expandedActs}
-                  expandedSequences={expandedSequences}
-                  onExpandedActsChange={setExpandedActs}
-                  onExpandedSequencesChange={setExpandedSequences}
                 />
               ) : (
                 <FilmDropdown
@@ -274,12 +390,6 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
                   initialData={initialData}
                   onDataChange={handleTimelineChange}
                   containerRef={containerStackRef}
-                  expandedActs={expandedActs}
-                  expandedSequences={expandedSequences}
-                  expandedScenes={expandedScenes}
-                  onExpandedActsChange={setExpandedActs}
-                  onExpandedSequencesChange={setExpandedSequences}
-                  onExpandedScenesChange={setExpandedScenes}
                 />
               )
             ) : structureView === 'timeline' ? (
@@ -288,7 +398,13 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
                 projectType={projectType}
                 initialData={timelineData}
                 onDataChange={handleTimelineChange}
-                duration={300}
+                duration={bookTimelineDuration}
+                beats={beats}
+                // 📖 Book Metrics for timeline markers
+                totalWords={totalWords} // Actually written words
+                wordsPerPage={wordsPerPage}
+                targetPages={targetPages}
+                readingSpeedWpm={readingSpeedWpm}
               />
             ) : structureView === 'native' ? (
               projectType === 'book' ? (

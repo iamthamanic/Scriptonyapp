@@ -36,6 +36,7 @@ import { getAuthToken } from "../../lib/auth/getAuthToken";
 import { projectId } from "../../utils/supabase/info";
 import { uploadProjectImage, validateImageFile } from "../../lib/api/image-upload-api";
 import * as TimelineAPI from "../../lib/api/timeline-api";
+import { nodeToAct, nodeToSequence, nodeToScene } from "../../lib/api/timeline-api"; // 🔥 Import converters
 import * as TimelineAPIV2 from "../../lib/api/timeline-api-v2";
 import * as ShotsAPI from "../../lib/api/shots-api";
 import * as InspirationsAPI from "../../lib/api/inspirations-api";
@@ -243,9 +244,10 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         console.timeEnd(`⏱️ [PERF] Timeline API - All Nodes: ${projectId}`);
         console.log(`[ProjectsPage] 🚀🚀🚀 ULTRA batch load completed: ${ultraData.stats.totalNodes} nodes, ${ultraData.stats.characters} characters, ${ultraData.stats.shots} shots in 1 request!`);
         
-        loadedActs = ultraData.timeline.acts;
-        allSequences = ultraData.timeline.sequences;
-        allScenes = ultraData.timeline.scenes;
+        // 🔥 CONVERT: TimelineNode[] → Act[], Sequence[], Scene[] (with actId/sequenceId)
+        loadedActs = (ultraData.timeline.acts || []).map(nodeToAct);
+        allSequences = (ultraData.timeline.sequences || []).map(nodeToSequence);
+        allScenes = (ultraData.timeline.scenes || []).map(nodeToScene);
         allShots = ultraData.shots;
         loadedCharacters = ultraData.characters;
         
@@ -269,9 +271,10 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         console.timeEnd(`⏱️ [PERF] Timeline API - All Nodes: ${projectId}`);
         console.log(`[ProjectsPage] 🚀 Batch load completed: ${batchData.stats.totalNodes} nodes in 1 request!`);
         
-        loadedActs = batchData.acts;
-        allSequences = batchData.sequences;
-        allScenes = batchData.scenes;
+        // 🔥 CONVERT: TimelineNode[] → Act[], Sequence[], Scene[] (with actId/sequenceId)
+        loadedActs = (batchData.acts || []).map(nodeToAct);
+        allSequences = (batchData.sequences || []).map(nodeToSequence);
+        allScenes = (batchData.scenes || []).map(nodeToScene);
         allShots = allShotsData;
       }
       
@@ -284,10 +287,11 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         try {
           const reloadedUltra = await TimelineAPIV2.ultraBatchLoadProject(projectId, token);
           
+          // 🔥 CONVERT: TimelineNode[] → Act[], Sequence[], Scene[] (with actId/sequenceId)
           const timelineData: TimelineData = {
-            acts: reloadedUltra.timeline.acts || [],
-            sequences: reloadedUltra.timeline.sequences || [],
-            scenes: reloadedUltra.timeline.scenes || [],
+            acts: (reloadedUltra.timeline.acts || []).map(nodeToAct),
+            sequences: (reloadedUltra.timeline.sequences || []).map(nodeToSequence),
+            scenes: (reloadedUltra.timeline.scenes || []).map(nodeToScene),
             shots: reloadedUltra.shots || [],
           };
 
@@ -304,10 +308,11 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
             ShotsAPI.getAllShotsByProject(projectId, token)
           ]);
           
+          // 🔥 CONVERT: TimelineNode[] → Act[], Sequence[], Scene[] (with actId/sequenceId)
           const timelineData: TimelineData = {
-            acts: reloadedBatch.acts || [],
-            sequences: reloadedBatch.sequences || [],
-            scenes: reloadedBatch.scenes || [],
+            acts: (reloadedBatch.acts || []).map(nodeToAct),
+            sequences: (reloadedBatch.sequences || []).map(nodeToSequence),
+            scenes: (reloadedBatch.scenes || []).map(nodeToScene),
             shots: reloadedShots || [],
           };
 
@@ -4359,6 +4364,11 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
           beatTemplate={project.beat_template}
           initialData={timelineCache[project.id]}
           onDataChange={(data) => onTimelineDataChange(project.id, data)}
+          // 📖 Book Metrics for Timeline Duration
+          totalWords={calculatedWords}
+          wordsPerPage={project.words_per_page || 250}
+          readingSpeedWpm={project.reading_speed_wpm || 230}
+          targetPages={project.target_pages}
         />
       </section>
 

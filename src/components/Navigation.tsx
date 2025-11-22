@@ -1,6 +1,9 @@
-import { Home, Film, Globe, Dumbbell, Upload, ShieldCheck, Settings, Moon, Sun, User, Presentation, Layers } from "lucide-react";
+import { Home, Film, Globe, Dumbbell, Upload, ShieldCheck, Settings, Moon, Sun, User, Presentation, Layers, Database } from "lucide-react";
 import { Button } from "./ui/button";
 import scriptonyLogo from 'figma:asset/762fa3b0c4bc468cb3c0661e6181aee92a01370d.png';
+import { useState } from "react";
+import { toast } from "sonner@2.0.3";
+import { getAuthToken } from "../lib/auth/getAuthToken";
 
 interface NavigationProps {
   currentPage: string;
@@ -11,6 +14,106 @@ interface NavigationProps {
 }
 
 export function Navigation({ currentPage, onNavigate, theme, onToggleTheme, userRole }: NavigationProps) {
+  const [isRecalculating, setIsRecalculating] = useState(false);
+
+  const handleRecalculateWordCounts = async () => {
+    console.log('🚨🚨🚨 NEUER CODE LÄUFT! WC Button geklickt! 🚨🚨🚨');
+    console.log('🔥 WC Button clicked! Starting word count recalculation...');
+    setIsRecalculating(true);
+    
+    try {
+      console.log('📦 Importing projectId...');
+      const { projectId } = await import("../utils/supabase/info");
+      console.log('🔑 Getting auth token...');
+      const token = await getAuthToken();
+      console.log('✅ Auth token:', token ? 'EXISTS' : 'NULL');
+      
+      if (!token) {
+        console.log('❌ No auth token!');
+        toast.error("Nicht authentifiziert", {
+          description: "Bitte melde dich an, um diese Aktion auszuführen."
+        });
+        setIsRecalculating(false);
+        return;
+      }
+      
+      console.log('📞 Fetching projects...');
+      // Get all book projects
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b/projects`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        }
+      );
+      
+      console.log('📊 Response status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log('❌ Response error:', errorText);
+        throw new Error(`Failed to fetch projects: ${response.status} ${errorText}`);
+      }
+      
+      const projects = await response.json();
+      console.log('📚 Total projects:', projects.length);
+      console.log('🔍 All project types:', projects.map((p: any) => ({ title: p.title, type: p.type })));
+      const bookProjects = projects.filter((p: any) => p.type === 'book');
+      console.log('📖 Book projects:', bookProjects.length, bookProjects.map((p: any) => p.title));
+      
+      if (bookProjects.length === 0) {
+        console.log('⚠️ No book projects found');
+        toast.info("Keine Buch-Projekte gefunden", {
+          description: "Es gibt keine Buch-Projekte zum Aktualisieren."
+        });
+        setIsRecalculating(false);
+        return;
+      }
+      
+      let totalUpdated = 0;
+      
+      // Recalculate word counts for each book project
+      for (const project of bookProjects) {
+        console.log(`🔄 Recalculating for project: ${project.title} (${project.id})`);
+        const recalcResponse = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b/projects/${project.id}/recalculate-word-counts`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+          }
+        );
+        
+        console.log(`📊 Recalc response status for ${project.title}:`, recalcResponse.status);
+        
+        if (recalcResponse.ok) {
+          const result = await recalcResponse.json();
+          console.log(`✅ Result for ${project.title}:`, result);
+          totalUpdated += result.updated || 0;
+        } else {
+          const errorText = await recalcResponse.text();
+          console.log(`❌ Recalc error for ${project.title}:`, errorText);
+        }
+      }
+      
+      console.log('🎉 Total updated:', totalUpdated);
+      toast.success("Word Counts aktualisiert!", {
+        description: `${totalUpdated} Szenen in ${bookProjects.length} Buch-Projekt(en) aktualisiert.`
+      });
+    } catch (error: any) {
+      console.error('❌ Word count recalculation error:', error);
+      toast.error("Fehler beim Aktualisieren", {
+        description: error.message
+      });
+    } finally {
+      console.log('🏁 Finished, setting isRecalculating to false');
+      setIsRecalculating(false);
+    }
+  };
+
   const baseNavItems = [
     { id: "home", label: "Home", icon: Home },
     { id: "projekte", label: "Projekte", icon: Layers },
@@ -59,6 +162,22 @@ export function Navigation({ currentPage, onNavigate, theme, onToggleTheme, user
           
           {/* Right Actions */}
           <div className="flex items-center gap-1">
+            {/* Word Count Recalculate Button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRecalculateWordCounts}
+              disabled={isRecalculating}
+              className="text-xs h-8 px-2 bg-green-500/10 hover:bg-green-500/20"
+              title="Word Counts neu berechnen"
+            >
+              {isRecalculating ? (
+                <>📊 ...</>
+              ) : (
+                <>📊 WC</>
+              )}
+            </Button>
+            
             {/* TEMP: Layout Prototype Button */}
             <Button
               variant="ghost"
