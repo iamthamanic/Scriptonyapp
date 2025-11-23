@@ -13,13 +13,13 @@ import { AuthPage } from "./components/pages/AuthPage";
 import { MigrationPage } from "./components/pages/MigrationPage";
 import { ResetPasswordPage } from "./components/pages/ResetPasswordPage";
 import { ApiTestPage } from "./components/pages/ApiTestPage";
-import LayoutPrototypePage from "./components/pages/LayoutPrototypePage";
 import { ProjectRecoveryPage } from "./components/pages/ProjectRecoveryPage";
 // FilmTimelinePage removed - use ProjectsPage with FilmDropdown instead
 import { Toaster } from "./components/ui/sonner";
 import { ScriptonyAssistant } from "./components/ScriptonyAssistant";
 import { ServerStatusBanner } from "./components/ServerStatusBanner";
 import { ConnectionStatusIndicator } from "./components/ConnectionStatusIndicator";
+import { PerformanceDashboard } from "./components/PerformanceDashboard";
 import {
   seedInitialData,
   seedTestUser,
@@ -47,7 +47,7 @@ function AppContent() {
     const hash = window.location.hash.slice(1); // Remove leading #
     const pathParts = hash.split('/');
     const page = pathParts[0];
-    const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "layout-prototype"];
+    const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "project-recovery"];
     return validPages.includes(page) ? page : "home";
   });
   
@@ -93,7 +93,7 @@ function AppContent() {
       
       console.log('🔗 hashchange detected:', { hash, page, id, categoryId });
       
-      const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "layout-prototype"];
+      const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "project-recovery"];
       if (validPages.includes(page) || page === "") {
         setCurrentPage(page || "home");
         setSelectedId(id);
@@ -217,8 +217,8 @@ function AppContent() {
         );
       case "api-test":
         return <ApiTestPage />;
-      case "layout-prototype":
-        return <LayoutPrototypePage />;
+      case "project-recovery":
+        return <ProjectRecoveryPage />;
       // film-timeline route removed - navigate to 'projects' instead
       default:
         return <HomePage onNavigate={handleNavigate} />;
@@ -239,6 +239,7 @@ function AppContent() {
       <Toaster position="top-center" />
       <ScriptonyAssistant />
       <ConnectionStatusIndicator />
+      <PerformanceDashboard />
     </div>
   );
 }

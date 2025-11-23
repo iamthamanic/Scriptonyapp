@@ -162,15 +162,8 @@ export function Navigation({ currentPage, onNavigate, theme, onToggleTheme, user
           
           {/* Right Actions */}
           <div className="flex items-center gap-1">
-            {/* TEMP: Layout Prototype Button */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onNavigate("layout-prototype")}
-              className="text-xs h-8 px-2 bg-primary/10 hover:bg-primary/20"
-            >
-              🎨 Proto
-            </Button>
+
+            {/* Removed 🎨 Proto button */}
             
             <Button
               variant="ghost"

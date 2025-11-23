@@ -40,6 +40,8 @@ import * as TimelineAPI from '../lib/api/timeline-api';
 import * as CharactersAPI from '../lib/api/characters-api';
 import type { Act, Sequence, Scene, Shot, Character } from '../lib/types';
 import { toast } from 'sonner';
+import { perfMonitor } from '../lib/performance-monitor';
+import { cacheManager } from '../lib/cache-manager';
 
 // Timeline Cache Data Structure
 export interface TimelineData {
@@ -463,6 +465,9 @@ export function FilmDropdown({
   }, [acts, sequences, scenes, shots, loading]);
 
   const loadTimelineData = async () => {
+    const cacheKey = `timeline:${projectId}`;
+    const perfId = `timeline-load-${projectId}`;
+
     try {
       setLoading(true);
       const token = await getAccessToken();
@@ -470,6 +475,27 @@ export function FilmDropdown({
         toast.error('Nicht angemeldet');
         return;
       }
+
+      // 🚀 CACHE: Try to load from cache first (Stale-While-Revalidate)
+      const cached = cacheManager.get<TimelineData>(cacheKey);
+      if (cached.data) {
+        console.log(`[FilmDropdown] 💾 Loading from cache (${cached.isStale ? 'stale' : 'fresh'})`);
+        setActs(cached.data.acts);
+        setSequences(cached.data.sequences);
+        setScenes(cached.data.scenes);
+        setShots(cached.data.shots);
+        
+        // If fresh, we're done!
+        if (!cached.isStale) {
+          setLoading(false);
+          perfMonitor.end(perfId, 'CACHE_READ', `Timeline Load (cached): ${projectId}`);
+          return;
+        }
+        // If stale, continue loading in background
+        console.log('[FilmDropdown] 🔄 Revalidating stale cache in background...');
+      }
+
+      perfMonitor.start(perfId);
 
       // Load Acts (Level 1)
       let loadedActs = await TimelineAPI.getActs(projectId, token);
@@ -524,12 +550,29 @@ export function FilmDropdown({
         console.log('[FilmDropdown] Using characters from parent:', externalCharacters.length);
       }
 
-      console.timeEnd(`⏱️ [PERF] FilmDropdown Full Load: ${projectId}`);
+      // 🚀 CACHE: Save to cache
+      const timelineData: TimelineData = {
+        acts: loadedActs || [],
+        sequences: allSequences || [],
+        scenes: allScenes || [],
+        shots: allShots || [],
+      };
+      cacheManager.set(cacheKey, timelineData, {
+        ttl: 5 * 60 * 1000,      // 5 minutes
+        staleTime: 30 * 1000,    // 30 seconds
+      });
+
+      perfMonitor.end(perfId, 'TIMELINE_LOAD', `Timeline Load (API): ${projectId}`, {
+        acts: loadedActs.length,
+        sequences: allSequences.length,
+        scenes: allScenes.length,
+        shots: allShots.length,
+      });
 
     } catch (error) {
       console.error('Error loading timeline data:', error);
       toast.error('Fehler beim Laden der Timeline-Daten');
-      console.timeEnd(`⏱️ [PERF] FilmDropdown Full Load: ${projectId}`);
+      perfMonitor.end(perfId, 'TIMELINE_LOAD', `Timeline Load (ERROR): ${projectId}`);
     } finally {
       setLoading(false);
     }
@@ -588,6 +631,10 @@ export function FilmDropdown({
         next.delete(tempId);
         return next;
       });
+      
+      // 🚀 CACHE: Invalidate timeline cache
+      cacheManager.invalidate(`timeline:${projectId}`);
+      
       // Success toast removed for instant feel - user sees the node appear!
     } catch (error) {
       console.error('Error creating act:', error);
@@ -1399,6 +1446,10 @@ export function FilmDropdown({
       if (!token) return;
 
       await TimelineAPI.deleteSequence(sequenceId, token);
+      
+      // 🚀 CACHE: Invalidate timeline cache
+      cacheManager.invalidate(`timeline:${projectId}`);
+      
       toast.success('Sequenz gelöscht');
     } catch (error) {
       console.error('Error deleting sequence:', error);
@@ -1419,6 +1470,10 @@ export function FilmDropdown({
       if (!token) return;
 
       await TimelineAPI.deleteScene(sceneId, token);
+      
+      // 🚀 CACHE: Invalidate timeline cache
+      cacheManager.invalidate(`timeline:${projectId}`);
+      
       toast.success('Scene gelöscht');
     } catch (error) {
       console.error('Error deleting scene:', error);

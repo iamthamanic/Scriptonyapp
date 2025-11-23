@@ -1483,7 +1483,7 @@ export function VideoEditorTimeline({
                 className="absolute top-0 bottom-0 w-0.5 bg-red-500 cursor-ew-resize z-30 hover:w-1 transition-[width]"
                 onMouseDown={handleCursorDragStart}
               >
-                <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-2 h-2 bg-red-500 rounded-full shadow-md" />
+                <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-4 h-4 bg-red-500 rounded-full shadow-md cursor-grab active:cursor-grabbing" />
               </div>
             </div>
             

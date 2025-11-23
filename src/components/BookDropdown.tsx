@@ -38,6 +38,8 @@ import * as TimelineAPIV2 from '../lib/api/timeline-api-v2';
 import * as CharactersAPI from '../lib/api/characters-api';
 import type { Act, Sequence, Scene, Character } from '../lib/types';
 import { toast } from 'sonner';
+import { perfMonitor } from '../lib/performance-monitor';
+import { cacheManager } from '../lib/cache-manager';
 
 // Timeline Cache Data Structure (no shots for books)
 export interface BookTimelineData {

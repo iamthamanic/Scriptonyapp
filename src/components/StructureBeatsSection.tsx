@@ -18,6 +18,7 @@ import { generateBeatsFromTemplate, LITE_7_TEMPLATE, SAVE_THE_CAT_TEMPLATE } fro
 import * as BeatsAPI from '../lib/api/beats-api';
 import * as TimelineAPI from '../lib/api/timeline-api';
 import { toast } from 'sonner';
+import { useTimelineCache } from '../hooks/useTimelineCache';
 
 /**
  * 🎬 STRUCTURE & BEATS SECTION
@@ -58,6 +59,12 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
   const [isOpen, setIsOpen] = useState(true); // DEFAULT: OPEN
   const [structureView, setStructureView] = useState<'dropdown' | 'timeline' | 'native'>('dropdown');
   
+  // 🚀 PERFORMANCE: Prefetch hooks
+  const { prefetchTimeline, prefetchBeats } = useTimelineCache(projectId);
+  const dropdownTabRef = useRef<HTMLButtonElement>(null);
+  const timelineTabRef = useRef<HTMLButtonElement>(null);
+  const nativeTabRef = useRef<HTMLButtonElement>(null);
+  
   // 🎬 Initialize with Save the Cat 15 Beats
   const [beats, setBeats] = useState<BeatCardData[]>(() => 
     generateBeatsFromTemplate(SAVE_THE_CAT_TEMPLATE).map((beat, index) => ({
@@ -68,6 +75,19 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
   );
   
   const [timelineData, setTimelineData] = useState<TimelineData | null>(initialData || null);
+  
+  // 🚀 PERFORMANCE: Setup hover prefetch for tabs
+  useEffect(() => {
+    const cleanupDropdown = prefetchTimeline(dropdownTabRef.current);
+    const cleanupTimeline = prefetchTimeline(timelineTabRef.current);
+    const cleanupNative = prefetchTimeline(nativeTabRef.current);
+    
+    return () => {
+      cleanupDropdown();
+      cleanupTimeline();
+      cleanupNative();
+    };
+  }, [prefetchTimeline]);
   
   // 🔄 UPDATE: Sync timelineData when initialData changes
   useEffect(() => {
@@ -361,9 +381,9 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
           {/* View Toggle */}
           <Tabs value={structureView} onValueChange={(v) => setStructureView(v as any)}>
             <TabsList className="h-9">
-              <TabsTrigger value="dropdown" className="text-xs md:text-sm px-2 md:px-3">Dropdown</TabsTrigger>
-              <TabsTrigger value="timeline" className="text-xs md:text-sm px-2 md:px-3">Timeline</TabsTrigger>
-              <TabsTrigger value="native" className="text-xs md:text-sm px-2 md:px-3">Native</TabsTrigger>
+              <TabsTrigger ref={dropdownTabRef} value="dropdown" className="text-xs md:text-sm px-2 md:px-3">Dropdown</TabsTrigger>
+              <TabsTrigger ref={timelineTabRef} value="timeline" className="text-xs md:text-sm px-2 md:px-3">Timeline</TabsTrigger>
+              <TabsTrigger ref={nativeTabRef} value="native" className="text-xs md:text-sm px-2 md:px-3">Native</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
