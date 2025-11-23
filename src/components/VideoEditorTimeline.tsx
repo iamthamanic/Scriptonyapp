@@ -164,8 +164,10 @@ export function VideoEditorTimeline({
   const [currentSceneId, setCurrentSceneId] = useState<string | null>(null);
   const [wordsArray, setWordsArray] = useState<string[]>([]);
   const playbackStartTimeRef = useRef<number>(0);
+  const playbackSceneStartTimeRef = useRef<number>(0); // Timeline position where current scene started
   const playbackAnimationRef = useRef<number | null>(null);
   const sceneBlocksRef = useRef<any[]>([]);
+  const lastStateUpdateTimeRef = useRef<number>(0); // Throttle State updates to avoid re-render spam
   
   // 🎯 CURSOR DRAG STATE
   const [isDraggingCursor, setIsDraggingCursor] = useState(false);
@@ -174,6 +176,23 @@ export function VideoEditorTimeline({
   
   // 🎯 FULLSCREEN STATE
   const [isFullscreen, setIsFullscreen] = useState(false);
+  
+  // 🚀 SMOOTH PLAYHEAD REFS (60fps animation via RAF)
+  const playheadRulerRef = useRef<HTMLDivElement>(null);
+  const playheadBeatRef = useRef<HTMLDivElement>(null);
+  const playheadActRef = useRef<HTMLDivElement>(null);
+  const playheadSequenceRef = useRef<HTMLDivElement>(null);
+  const playheadSceneRef = useRef<HTMLDivElement>(null);
+  const smoothPlayheadRAF = useRef<number | null>(null);
+  
+  // 🚀 DELTA TIME INTERPOLATION (for smooth 60fps independent of React renders!)
+  // NOTE: playbackStartTimeRef (line 166) is used by Book Playback - we need separate refs for RAF!
+  const rafPlaybackStartTimeRef = useRef<number>(0); // performance.now() for RAF
+  const rafPlaybackStartCurrentTimeRef = useRef<number>(0); // currentTime at RAF playback start
+  const isPlayingRef = useRef<boolean>(false);
+  const isBookProjectRef = useRef<boolean>(isBookProject);
+  const viewStartSecRef = useRef<number>(0);
+  const pxPerSecRef = useRef<number>(0);
   
   // 🎯 TRACK HEIGHTS (CapCut-Style with localStorage)
   const TRACK_CONSTRAINTS = {
@@ -307,10 +326,16 @@ export function VideoEditorTimeline({
         // Still within current scene
         setCurrentWordIndex(wordsElapsed);
         
-        // Update timeline cursor
+        // Update timeline cursor via REF (NOT State!) to avoid re-renders
         const secondsPerWord = 60 / readingSpeedWpm;
-        const newTime = currentTime + (wordsElapsed * secondsPerWord);
-        setCurrentTime(newTime);
+        const newTime = playbackSceneStartTimeRef.current + (wordsElapsed * secondsPerWord);
+        currentTimeRef.current = newTime; // ✅ Update Ref directly, NOT State!
+        
+        // Throttle State updates (only for UI display, NOT for animation!)
+        if (timestamp - lastStateUpdateTimeRef.current > 100) { // Update State max 10x per second
+          setCurrentTime(newTime);
+          lastStateUpdateTimeRef.current = timestamp;
+        }
         
         playbackAnimationRef.current = requestAnimationFrame(animate);
       } else {
@@ -328,11 +353,11 @@ export function VideoEditorTimeline({
         playbackAnimationRef.current = null;
       }
     };
-  }, [isPlaying, wordsArray.length, currentTime, readingSpeedWpm, isBookProject]);
+  }, [isPlaying, wordsArray.length, readingSpeedWpm, isBookProject]); // ⚠️ REMOVED currentTime to prevent loop restart!
   
   // 🚀 ADVANCE TO NEXT SCENE
   const advanceToNextScene = () => {
-    const scenes = sceneBlocksRef.current.filter(s => s.startSec >= currentTime);
+    const scenes = sceneBlocksRef.current.filter(s => s.startSec >= currentTimeRef.current);
     
     if (scenes.length > 0) {
       const nextScene = scenes[0];
@@ -347,6 +372,7 @@ export function VideoEditorTimeline({
         setCurrentWordIndex(0);
         setCurrentTime(nextScene.startSec);
         playbackStartTimeRef.current = 0; // Reset timer
+        playbackSceneStartTimeRef.current = nextScene.startSec; // 🎯 Store scene start time
       } else {
         // Empty scene - skip to next
         setCurrentTime(nextScene.endSec);
@@ -395,11 +421,19 @@ export function VideoEditorTimeline({
       
       console.log(`[Playback] 📖 Loaded ${words.length} words from "${currentScene.title}"`);
       
+      // Calculate which word we're at based on CURRENT position
+      const secondsPerWord = 60 / readingSpeedWpm;
+      const elapsedInScene = currentTime - currentScene.startSec;
+      const startWordIndex = Math.floor(elapsedInScene / secondsPerWord);
+      
+      console.log('[Playback] 🎯 Resuming from word:', startWordIndex, '/', words.length);
+      
       setCurrentSceneId(currentScene.id);
       setWordsArray(words);
-      setCurrentWordIndex(0);
-      setCurrentTime(currentScene.startSec);
+      setCurrentWordIndex(startWordIndex); // ✅ Start from CURRENT position, not 0!
+      // ✅ DO NOT change currentTime - keep current position!
       playbackStartTimeRef.current = 0;
+      playbackSceneStartTimeRef.current = currentScene.startSec; // 🎯 Store scene start time
       setIsPlaying(true);
     } else {
       // PAUSE PLAYBACK
@@ -461,6 +495,91 @@ export function VideoEditorTimeline({
   const totalWidthPx = totalDurationSec * pxPerSec;
   const viewStartSec = scrollLeft / pxPerSec;
   const viewEndSec = viewStartSec + (viewportWidth || 0) / pxPerSec;
+  
+  // 🔄 UPDATE REFS (for RAF loop access without waiting for React render!)
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+  viewStartSecRef.current = viewStartSec;
+  pxPerSecRef.current = pxPerSec;
+  isPlayingRef.current = isPlaying;
+  isBookProjectRef.current = isBookProject;
+  
+  // 🚀 START/STOP PLAYBACK: Capture timestamp for delta time interpolation
+  useEffect(() => {
+    if (isPlaying) {
+      rafPlaybackStartTimeRef.current = performance.now();
+      rafPlaybackStartCurrentTimeRef.current = currentTimeRef.current; // ✅ Use Ref to get CURRENT position!
+      console.log('[RAF] ▶️ Playback started at:', currentTimeRef.current);
+    } else {
+      console.log('[RAF] ⏸️ Playback paused at:', currentTimeRef.current);
+    }
+  }, [isPlaying]); // ⚠️ CRITICAL: Only trigger on isPlaying change, NOT currentTime!
+  
+  // 🚀 SMOOTH PLAYHEAD ANIMATION (60fps via RAF with DELTA TIME INTERPOLATION!)
+  useEffect(() => {
+    const updatePlayheadPositions = () => {
+      let displayTime: number;
+      
+      if (isPlayingRef.current) {
+        // 🎯 BOOK PROJECTS: Use currentTimeRef directly (set by Book Playback Loop)
+        // 🎯 FILM PROJECTS: INTERPOLATE time based on elapsed milliseconds (SMOOTH 60fps!)
+        if (isBookProjectRef.current) {
+          // Book projects: Just read the time from the Book Playback Loop
+          displayTime = currentTimeRef.current;
+        } else {
+          // Film projects: Smooth interpolation
+          const elapsed = (performance.now() - rafPlaybackStartTimeRef.current) / 1000; // convert to seconds
+          displayTime = rafPlaybackStartCurrentTimeRef.current + elapsed;
+          
+          // 🔄 AUTO-SYNC: Only re-anchor on LARGE jumps (e.g. scene change), ignore normal State stuttering
+          const drift = Math.abs(displayTime - currentTimeRef.current);
+          if (drift > 3.0) { // ONLY sync if drift > 3 seconds (= real scene jump, not State stutter!)
+            console.log('[RAF] 🔄 Large drift detected, re-syncing:', drift.toFixed(2), 's');
+            rafPlaybackStartTimeRef.current = performance.now();
+            rafPlaybackStartCurrentTimeRef.current = currentTimeRef.current;
+            displayTime = currentTimeRef.current;
+          }
+          // Otherwise: Use smooth interpolated time, IGNORE stuttering State!
+        }
+      } else {
+        // 🎯 PAUSED: Use ref (updated by scrubbing)
+        displayTime = currentTimeRef.current;
+      }
+      
+      // Calculate pixel position (independent of React render cycle!)
+      const pixelPosition = (displayTime - viewStartSecRef.current) * pxPerSecRef.current;
+      
+      // Update all playhead positions via direct DOM manipulation (GPU-accelerated)
+      if (playheadRulerRef.current) {
+        playheadRulerRef.current.style.transform = `translateX(${pixelPosition}px)`;
+      }
+      if (playheadBeatRef.current) {
+        playheadBeatRef.current.style.transform = `translateX(${pixelPosition}px)`;
+      }
+      if (playheadActRef.current) {
+        playheadActRef.current.style.transform = `translateX(${pixelPosition}px)`;
+      }
+      if (playheadSequenceRef.current) {
+        playheadSequenceRef.current.style.transform = `translateX(${pixelPosition}px)`;
+      }
+      if (playheadSceneRef.current) {
+        playheadSceneRef.current.style.transform = `translateX(${pixelPosition}px)`;
+      }
+      
+      // Continue animation loop (always running!)
+      smoothPlayheadRAF.current = requestAnimationFrame(updatePlayheadPositions);
+    };
+    
+    // Start smooth animation loop (runs continuously at 60fps!)
+    smoothPlayheadRAF.current = requestAnimationFrame(updatePlayheadPositions);
+    
+    return () => {
+      if (smoothPlayheadRAF.current) {
+        cancelAnimationFrame(smoothPlayheadRAF.current);
+        smoothPlayheadRAF.current = null;
+      }
+    };
+  }, []); // Only run once on mount!
   
   // 📏 DYNAMIC TICKS (no overlaps!)
   const tickStep = chooseTickStep(pxPerSec);
@@ -1035,13 +1154,15 @@ export function VideoEditorTimeline({
     const rect = viewportRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const newTime = viewStartSec + clickX / pxPerSec;
+    const clampedTime = Math.max(0, Math.min(duration, newTime));
     
-    setCurrentTime(Math.max(0, Math.min(duration, newTime)));
+    setCurrentTime(clampedTime);
+    currentTimeRef.current = clampedTime; // ✅ Also update Ref for RAF loop!
     
     // 📖 LOAD TEXT AT CURSOR POSITION (for book projects)
     if (isBookProject && sceneBlocksRef.current.length > 0) {
       const sceneAtTime = sceneBlocksRef.current.find(s => 
-        newTime >= s.startSec && newTime <= s.endSec
+        clampedTime >= s.startSec && clampedTime <= s.endSec
       );
       
       if (sceneAtTime) {
@@ -1049,7 +1170,7 @@ export function VideoEditorTimeline({
         
         if (words.length > 0) {
           // Calculate word index based on time within scene
-          const timeIntoScene = newTime - sceneAtTime.startSec;
+          const timeIntoScene = clampedTime - sceneAtTime.startSec;
           const secondsPerWord = 60 / readingSpeedWpm;
           const wordIndex = Math.floor(timeIntoScene / secondsPerWord);
           
@@ -1091,6 +1212,7 @@ export function VideoEditorTimeline({
     const newTime = dragStartTime + dragDeltaSec;
     const clampedTime = Math.max(0, Math.min(duration, newTime));
     setCurrentTime(clampedTime);
+    currentTimeRef.current = clampedTime; // ✅ Also update Ref for RAF loop!
     
     // 📖 UPDATE TEXT AT DRAG POSITION (for book projects)
     if (isBookProject && sceneBlocksRef.current.length > 0) {
@@ -1349,11 +1471,11 @@ export function VideoEditorTimeline({
               
               {/* Playhead - Draggable */}
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-primary cursor-ew-resize z-30 hover:w-1 transition-all"
-                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+                ref={playheadRulerRef}
+                className="absolute top-0 bottom-0 w-0.5 bg-red-500 cursor-ew-resize z-30 hover:w-1 transition-[width]"
                 onMouseDown={handleCursorDragStart}
               >
-                <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-2 h-2 bg-primary rounded-full shadow-md" />
+                <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-2 h-2 bg-red-500 rounded-full shadow-md" />
               </div>
             </div>
             
@@ -1386,8 +1508,8 @@ export function VideoEditorTimeline({
               
               {/* Playhead */}
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+                ref={playheadBeatRef}
+                className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none z-20"
               />
             </div>
             
@@ -1417,8 +1539,8 @@ export function VideoEditorTimeline({
               
               {/* Playhead */}
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+                ref={playheadActRef}
+                className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none z-20"
               />
             </div>
             
@@ -1448,8 +1570,8 @@ export function VideoEditorTimeline({
               
               {/* Playhead */}
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+                ref={playheadSequenceRef}
+                className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none z-20"
               />
             </div>
             
@@ -1491,8 +1613,8 @@ export function VideoEditorTimeline({
               
               {/* Playhead */}
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-primary pointer-events-none z-20"
-                style={{ left: `${(currentTime - viewStartSec) * pxPerSec}px` }}
+                ref={playheadSceneRef}
+                className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none z-20"
               />
             </div>
           </div>
