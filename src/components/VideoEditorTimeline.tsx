@@ -163,7 +163,6 @@ export function VideoEditorTimeline({
   const [currentWordIndex, setCurrentWordIndex] = useState(0);
   const [currentSceneId, setCurrentSceneId] = useState<string | null>(null);
   const [wordsArray, setWordsArray] = useState<string[]>([]);
-  const playbackStartTimeRef = useRef<number>(0);
   const playbackSceneStartTimeRef = useRef<number>(0); // Timeline position where current scene started
   const playbackAnimationRef = useRef<number | null>(null);
   const sceneBlocksRef = useRef<any[]>([]);
@@ -312,36 +311,24 @@ export function VideoEditorTimeline({
   useEffect(() => {
     if (!isPlaying || !isBookProject) return;
     
-    const msPerWord = 60000 / readingSpeedWpm; // Convert WPM to ms per word
-    
-    const animate = (timestamp: number) => {
-      if (!playbackStartTimeRef.current) {
-        playbackStartTimeRef.current = timestamp;
-      }
+    const animate = () => {
       
-      const elapsed = timestamp - playbackStartTimeRef.current;
-      const wordsElapsed = Math.floor(elapsed / msPerWord);
+      // Read the SMOOTH interpolated time from RAF (currentTimeRef is updated by RAF loop!)
+      const timeIntoScene = currentTimeRef.current - playbackSceneStartTimeRef.current;
+      const secondsPerWord = 60 / readingSpeedWpm;
+      const wordsElapsed = Math.floor(timeIntoScene / secondsPerWord);
       
-      if (wordsElapsed < wordsArray.length) {
-        // Still within current scene
+      if (wordsElapsed < wordsArray.length && wordsElapsed >= 0) {
+        // Still within current scene - update word index only
         setCurrentWordIndex(wordsElapsed);
-        
-        // Update timeline cursor via REF (NOT State!) to avoid re-renders
-        const secondsPerWord = 60 / readingSpeedWpm;
-        const newTime = playbackSceneStartTimeRef.current + (wordsElapsed * secondsPerWord);
-        currentTimeRef.current = newTime; // ✅ Update Ref directly, NOT State!
-        
-        // Throttle State updates (only for UI display, NOT for animation!)
-        if (timestamp - lastStateUpdateTimeRef.current > 100) { // Update State max 10x per second
-          setCurrentTime(newTime);
-          lastStateUpdateTimeRef.current = timestamp;
-        }
-        
         playbackAnimationRef.current = requestAnimationFrame(animate);
-      } else {
+      } else if (wordsElapsed >= wordsArray.length) {
         // Scene complete - advance to next scene
         console.log('[Playback] 🎬 Scene complete, advancing to next...');
         advanceToNextScene();
+      } else {
+        // Negative index - shouldn't happen, but continue anyway
+        playbackAnimationRef.current = requestAnimationFrame(animate);
       }
     };
     
@@ -371,11 +358,21 @@ export function VideoEditorTimeline({
         setWordsArray(words);
         setCurrentWordIndex(0);
         setCurrentTime(nextScene.startSec);
-        playbackStartTimeRef.current = 0; // Reset timer
+        currentTimeRef.current = nextScene.startSec; // ✅ Update Ref!
         playbackSceneStartTimeRef.current = nextScene.startSec; // 🎯 Store scene start time
+        
+        // Re-sync RAF loop to start smooth interpolation from new position
+        rafPlaybackStartTimeRef.current = performance.now();
+        rafPlaybackStartCurrentTimeRef.current = nextScene.startSec;
       } else {
         // Empty scene - skip to next
         setCurrentTime(nextScene.endSec);
+        currentTimeRef.current = nextScene.endSec; // ✅ Update Ref!
+        
+        // Re-sync RAF loop
+        rafPlaybackStartTimeRef.current = performance.now();
+        rafPlaybackStartCurrentTimeRef.current = nextScene.endSec;
+        
         advanceToNextScene();
       }
     } else {
@@ -383,6 +380,7 @@ export function VideoEditorTimeline({
       console.log('[Playback] 🛑 End of timeline');
       setIsPlaying(false);
       setCurrentTime(0);
+      currentTimeRef.current = 0; // ✅ Reset Ref!
       setCurrentWordIndex(0);
       setWordsArray([]);
       setCurrentSceneId(null);
@@ -401,10 +399,20 @@ export function VideoEditorTimeline({
       // START PLAYBACK
       console.log('[Playback] ▶️ Starting playback...');
       
-      // Find scene at current time or start from beginning
-      const currentScene = sceneBlocksRef.current.find(s => 
+      // Find scene at current time OR next scene after current position
+      let currentScene = sceneBlocksRef.current.find(s => 
         currentTime >= s.startSec && currentTime <= s.endSec
-      ) || sceneBlocksRef.current[0];
+      );
+      
+      // If not in a scene, find the NEXT scene (not the first one!)
+      if (!currentScene) {
+        currentScene = sceneBlocksRef.current.find(s => s.startSec >= currentTime);
+      }
+      
+      // If no next scene, use the last scene
+      if (!currentScene && sceneBlocksRef.current.length > 0) {
+        currentScene = sceneBlocksRef.current[sceneBlocksRef.current.length - 1];
+      }
       
       if (!currentScene) {
         console.error('[Playback] ❌ No scenes found');
@@ -432,14 +440,12 @@ export function VideoEditorTimeline({
       setWordsArray(words);
       setCurrentWordIndex(startWordIndex); // ✅ Start from CURRENT position, not 0!
       // ✅ DO NOT change currentTime - keep current position!
-      playbackStartTimeRef.current = 0;
       playbackSceneStartTimeRef.current = currentScene.startSec; // 🎯 Store scene start time
       setIsPlaying(true);
     } else {
       // PAUSE PLAYBACK
       console.log('[Playback] ⏸️ Pausing playback...');
       setIsPlaying(false);
-      playbackStartTimeRef.current = 0;
     }
   };
   
@@ -521,25 +527,27 @@ export function VideoEditorTimeline({
       let displayTime: number;
       
       if (isPlayingRef.current) {
-        // 🎯 BOOK PROJECTS: Use currentTimeRef directly (set by Book Playback Loop)
-        // 🎯 FILM PROJECTS: INTERPOLATE time based on elapsed milliseconds (SMOOTH 60fps!)
-        if (isBookProjectRef.current) {
-          // Book projects: Just read the time from the Book Playback Loop
+        // 🎯 ALL PROJECTS: INTERPOLATE time based on elapsed milliseconds (SMOOTH 60fps!)
+        const elapsed = (performance.now() - rafPlaybackStartTimeRef.current) / 1000; // convert to seconds
+        displayTime = rafPlaybackStartCurrentTimeRef.current + elapsed;
+        
+        // 🔄 AUTO-SYNC: Only re-anchor on LARGE jumps (e.g. scene change), ignore normal State stuttering
+        const drift = Math.abs(displayTime - currentTimeRef.current);
+        if (drift > 3.0) { // ONLY sync if drift > 3 seconds (= real scene jump, not State stutter!)
+          console.log('[RAF] 🔄 Large drift detected, re-syncing:', drift.toFixed(2), 's');
+          rafPlaybackStartTimeRef.current = performance.now();
+          rafPlaybackStartCurrentTimeRef.current = currentTimeRef.current;
           displayTime = currentTimeRef.current;
-        } else {
-          // Film projects: Smooth interpolation
-          const elapsed = (performance.now() - rafPlaybackStartTimeRef.current) / 1000; // convert to seconds
-          displayTime = rafPlaybackStartCurrentTimeRef.current + elapsed;
-          
-          // 🔄 AUTO-SYNC: Only re-anchor on LARGE jumps (e.g. scene change), ignore normal State stuttering
-          const drift = Math.abs(displayTime - currentTimeRef.current);
-          if (drift > 3.0) { // ONLY sync if drift > 3 seconds (= real scene jump, not State stutter!)
-            console.log('[RAF] 🔄 Large drift detected, re-syncing:', drift.toFixed(2), 's');
-            rafPlaybackStartTimeRef.current = performance.now();
-            rafPlaybackStartCurrentTimeRef.current = currentTimeRef.current;
-            displayTime = currentTimeRef.current;
-          }
-          // Otherwise: Use smooth interpolated time, IGNORE stuttering State!
+        }
+        // Otherwise: Use smooth interpolated time, IGNORE stuttering State!
+        
+        // Update currentTimeRef so Book Playback Loop can read it
+        currentTimeRef.current = displayTime;
+        
+        // Throttle State updates for UI display (max 10x/sec)
+        if (performance.now() - lastStateUpdateTimeRef.current > 100) {
+          setCurrentTime(displayTime);
+          lastStateUpdateTimeRef.current = performance.now();
         }
       } else {
         // 🎯 PAUSED: Use ref (updated by scrubbing)
