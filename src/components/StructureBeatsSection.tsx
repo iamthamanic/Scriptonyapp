@@ -18,7 +18,6 @@ import { generateBeatsFromTemplate, LITE_7_TEMPLATE, SAVE_THE_CAT_TEMPLATE } fro
 import * as BeatsAPI from '../lib/api/beats-api';
 import * as TimelineAPI from '../lib/api/timeline-api';
 import { toast } from 'sonner';
-import { useTimelineCache } from '../hooks/useTimelineCache';
 
 /**
  * 🎬 STRUCTURE & BEATS SECTION
@@ -59,35 +58,10 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
   const [isOpen, setIsOpen] = useState(true); // DEFAULT: OPEN
   const [structureView, setStructureView] = useState<'dropdown' | 'timeline' | 'native'>('dropdown');
   
-  // 🚀 PERFORMANCE: Prefetch hooks
-  const { prefetchTimeline, prefetchBeats } = useTimelineCache(projectId);
-  const dropdownTabRef = useRef<HTMLButtonElement>(null);
-  const timelineTabRef = useRef<HTMLButtonElement>(null);
-  const nativeTabRef = useRef<HTMLButtonElement>(null);
-  
   // 🎬 Initialize with Save the Cat 15 Beats
-  const [beats, setBeats] = useState<BeatCardData[]>(() => 
-    generateBeatsFromTemplate(SAVE_THE_CAT_TEMPLATE).map((beat, index) => ({
-      ...beat,
-      // Ensure beats have minimum height for visibility
-      pctTo: beat.pctFrom === beat.pctTo ? beat.pctFrom + 2 : Math.max(beat.pctTo, beat.pctFrom + 2),
-    }))
-  );
+  const [beats, setBeats] = useState<BeatCardData[]>([]);
   
   const [timelineData, setTimelineData] = useState<TimelineData | null>(initialData || null);
-  
-  // 🚀 PERFORMANCE: Setup hover prefetch for tabs
-  useEffect(() => {
-    const cleanupDropdown = prefetchTimeline(dropdownTabRef.current);
-    const cleanupTimeline = prefetchTimeline(timelineTabRef.current);
-    const cleanupNative = prefetchTimeline(nativeTabRef.current);
-    
-    return () => {
-      cleanupDropdown();
-      cleanupTimeline();
-      cleanupNative();
-    };
-  }, [prefetchTimeline]);
   
   // 🔄 UPDATE: Sync timelineData when initialData changes
   useEffect(() => {
@@ -260,22 +234,23 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
           console.log(`[StructureBeatsSection] 🎬 No beats found, auto-generating ${beatTemplate} template...`);
           
           // Get first act to use as container
-          const acts = await TimelineAPI.getActs(projectId);
+          let firstActId = 'placeholder-act-1';
+          let lastActId = 'placeholder-act-3';
           
-          if (acts.length === 0) {
-            console.log('[StructureBeatsSection] ⚠️ No acts found, creating default acts first...');
-            // Create 3 default acts if none exist
-            for (let i = 1; i <= 3; i++) {
-              await TimelineAPI.createAct({
-                projectId,
-                actNumber: i,
-                title: `Akt ${i}`,
-                description: '',
-              });
+          try {
+            const acts = await TimelineAPI.getActs(projectId);
+            
+            if (acts.length === 0) {
+              console.log('[StructureBeatsSection] ⚠️ No acts found, will use placeholder IDs for beats');
+              // Don't create acts automatically - let the user do it in the structure view
+            } else {
+              firstActId = acts[0].id;
+              lastActId = acts[acts.length - 1].id;
+              console.log('[StructureBeatsSection] ✅ Using existing acts:', { firstActId, lastActId });
             }
-            // Reload acts after creation
-            const newActs = await TimelineAPI.getActs(projectId);
-            console.log('[StructureBeatsSection] ✅ Created 3 default acts:', newActs);
+          } catch (error) {
+            console.warn('[StructureBeatsSection] ⚠️ Could not load acts (may not exist yet), using placeholder IDs:', error);
+            // Continue with placeholder IDs
           }
           
           // 🎯 Select template based on project's beat_template
@@ -287,11 +262,6 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
           
           const selectedTemplate = templateMap[beatTemplate] || SAVE_THE_CAT_TEMPLATE;
           const generatedBeats = generateBeatsFromTemplate(selectedTemplate);
-          
-          // Get acts again (in case we just created them)
-          const finalActs = await TimelineAPI.getActs(projectId);
-          const firstActId = finalActs[0]?.id || 'placeholder-act';
-          const lastActId = finalActs[finalActs.length - 1]?.id || firstActId;
           
           console.log(`[StructureBeatsSection] 🎯 Creating ${generatedBeats.length} beats from ${beatTemplate} template...`);
           
@@ -381,9 +351,9 @@ export function StructureBeatsSection({ projectId, projectType, beatTemplate, in
           {/* View Toggle */}
           <Tabs value={structureView} onValueChange={(v) => setStructureView(v as any)}>
             <TabsList className="h-9">
-              <TabsTrigger ref={dropdownTabRef} value="dropdown" className="text-xs md:text-sm px-2 md:px-3">Dropdown</TabsTrigger>
-              <TabsTrigger ref={timelineTabRef} value="timeline" className="text-xs md:text-sm px-2 md:px-3">Timeline</TabsTrigger>
-              <TabsTrigger ref={nativeTabRef} value="native" className="text-xs md:text-sm px-2 md:px-3">Native</TabsTrigger>
+              <TabsTrigger value="dropdown" className="text-xs md:text-sm px-2 md:px-3">Dropdown</TabsTrigger>
+              <TabsTrigger value="timeline" className="text-xs md:text-sm px-2 md:px-3">Timeline</TabsTrigger>
+              <TabsTrigger value="native" className="text-xs md:text-sm px-2 md:px-3">Native</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>

@@ -97,7 +97,7 @@ export function nodeToScene(node: TimelineNode): Scene {
 // ACTS - Backward Compatible Wrapper Functions
 // =============================================================================
 
-export async function getActs(projectId: string, token: string): Promise<Act[]> {
+export async function getActs(projectId: string, token?: string): Promise<Act[]> {
   const nodes = await NodesAPI.getActs(projectId);
   return nodes.map(nodeToAct);
 }
@@ -105,7 +105,7 @@ export async function getActs(projectId: string, token: string): Promise<Act[]> 
 export async function createAct(
   projectId: string,
   actData: Partial<Act>,
-  token: string
+  token?: string
 ): Promise<Act> {
   const node = await NodesAPI.createNode({
     projectId,

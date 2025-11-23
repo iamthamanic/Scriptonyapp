@@ -14,10 +14,14 @@ import {
   Heading1, 
   Heading2, 
   Heading3,
-  X 
+  X,
+  Check,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Underline from '@tiptap/extension-underline';
+import { useDebouncedSave, type SaveStatus } from '../hooks/useDebouncedSave';
 
 // Custom CharacterMention Node Extension to render @mentions
 const CharacterMention = Mention.extend({

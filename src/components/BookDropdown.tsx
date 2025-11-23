@@ -30,8 +30,9 @@ import {
   CollapsibleTrigger,
 } from './ui/collapsible';
 import { TimelineNodeStatsDialog } from './TimelineNodeStatsDialog';
-import { RichTextEditorModal } from './RichTextEditorModal';
+import { DebouncedRichTextEditor } from './DebouncedRichTextEditor';
 import { ReadonlyTiptapView } from './ReadonlyTiptapView';
+import { ContentSkeleton, ContentSkeletonInline } from './ContentSkeleton';
 import { useAuth } from '../hooks/useAuth';
 import * as TimelineAPI from '../lib/api/timeline-api';
 import * as TimelineAPIV2 from '../lib/api/timeline-api-v2';
@@ -277,11 +278,11 @@ export function BookDropdown({
   const [showContentModal, setShowContentModal] = useState(false);
   const [editingSceneForModal, setEditingSceneForModal] = useState<Scene | null>(null);
 
+  // 🚀 NEW: Content loading state for lazy loading
+  const [loadingContent, setLoadingContent] = useState<Set<string>>(new Set());
+
   // 🔥 FIX: Use ref to track previous data and prevent infinite loops
   const previousDataRef = useRef<string>('');
-  
-  // 🔥 FIX: Debounced save for scene content
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 📖 AUTO-CALCULATE WORD COUNTS: Update parent items based on children
   useEffect(() => {
@@ -1943,53 +1944,37 @@ export function BookDropdown({
         />
       )}
 
-      {/* Rich Text Content Editor Modal */}
+      {/* 🚀 Rich Text Content Editor Modal with Debounced Save */}
       {editingSceneForModal && (
-        <RichTextEditorModal
+        <DebouncedRichTextEditor
           isOpen={showContentModal}
           onClose={() => {
             setShowContentModal(false);
             setEditingSceneForModal(null);
           }}
           value={editingSceneForModal.content}
-          onChange={async (jsonDoc) => {
-            // Save as JSON object directly
-            const now = new Date().toISOString();
-            console.log('[BookDropdown] 💾 Saving content as JSON object:', jsonDoc);
-            
-            try {
-              const token = await getAccessToken();
-              if (!token) return;
-
-              // Optimistic update
-              setScenes(scenes => scenes.map(sc => 
-                sc.id === editingSceneForModal.id 
-                  ? { ...sc, content: jsonDoc, updatedAt: now } 
-                  : sc
-              ));
-
-              // Update in backend
-              await TimelineAPIV2.updateNode(editingSceneForModal.id, {
-                title: editingSceneForModal.title,
-                metadata: {
-                  content: jsonDoc,
-                  characters: editingSceneForModal.characters || [],
-                },
-              }, token);
-
-              toast.success('Abschnitt gespeichert');
-            } catch (error) {
-              console.error('Error saving scene content:', error);
-              toast.error('Fehler beim Speichern');
-              loadTimeline();
-            }
-          }}
           title={`Abschnitt: ${editingSceneForModal.title}`}
           characters={characters}
           lastModified={editingSceneForModal.updatedAt ? {
             timestamp: editingSceneForModal.updatedAt,
-            userName: undefined // TODO: Backend should track updatedBy user ID
+            userName: undefined
           } : undefined}
+          // 🚀 Save props
+          sceneId={editingSceneForModal.id}
+          sceneTitle={editingSceneForModal.title}
+          getAccessToken={getAccessToken}
+          updateAPI={TimelineAPIV2.updateNode}
+          onOptimisticUpdate={(sceneId, content) => {
+            const now = new Date().toISOString();
+            setScenes(scenes => scenes.map(sc => 
+              sc.id === sceneId 
+                ? { ...sc, content, updatedAt: now } 
+                : sc
+            ));
+          }}
+          onError={() => {
+            loadTimeline();
+          }}
         />
       )}
     </DndProvider>

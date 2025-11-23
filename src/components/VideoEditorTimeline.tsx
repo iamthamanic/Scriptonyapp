@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Play, Pause, Plus, Maximize2, Minimize2 } from 'lucide-react';
+import { Play, Pause, Plus, Minus, Maximize2, Minimize2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { cn } from './ui/utils';
 import * as BeatsAPI from '../lib/api/beats-api';
@@ -19,7 +19,8 @@ import { TimelineTextPreview } from './TimelineTextPreview';
  * - Dynamic ticks based on zoom level (no overlaps!)
  * - Anchor-based zoom (zooms to cursor position)
  * - Viewport culling (only render visible items)
- * - Auto-fit initial zoom
+ * - Dynamic zoom range: zoom=0 always shows ENTIRE timeline (like CapCut!)
+ * - Exponential zoom mapping from fitPxPerSec (dynamic) to MAX_PX_PER_SEC (200)
  */
 
 interface VideoEditorTimelineProps {
@@ -36,8 +37,8 @@ interface VideoEditorTimelineProps {
 }
 
 // 🎯 ZOOM CONFIGURATION
-const MIN_PX_PER_SEC = 2;    // Maximum zoom out
 const MAX_PX_PER_SEC = 200;  // Maximum zoom in
+const FALLBACK_MIN_PX_PER_SEC = 2; // Fallback minimum (only used if calculation fails)
 
 // 🎯 TICK CONFIGURATION
 const MIN_LABEL_SPACING_PX = 80; // Minimum space between labels
@@ -49,16 +50,31 @@ const TIME_STEPS_SECONDS = [
   1800, 3600, 7200, 10800
 ];
 
+// Page steps for page markers (in pages)
+const PAGE_STEPS = [
+  1, 2, 5, 10, 20, 50, 100, 200, 500
+];
+
+// 🎯 Calculate the minimum pxPerSec to fit entire timeline in viewport
+function getFitPxPerSec(totalDurationSec: number, viewportWidthPx: number): number {
+  if (totalDurationSec <= 0 || viewportWidthPx <= 0) return FALLBACK_MIN_PX_PER_SEC; // Fallback
+  return viewportWidthPx / totalDurationSec; // Entire timeline fits in viewport
+}
+
 // Convert zoom [0-1] to pixels per second (exponential for natural feel)
-function pxPerSecFromZoom(zoom: number): number {
-  const ratio = MAX_PX_PER_SEC / MIN_PX_PER_SEC;
-  return MIN_PX_PER_SEC * Math.pow(ratio, zoom);
+// zoom = 0 → fitPxPerSec (entire timeline visible)
+// zoom = 1 → MAX_PX_PER_SEC (maximum zoom in)
+function pxPerSecFromZoom(zoom: number, fitPxPerSec: number): number {
+  const minPx = fitPxPerSec; // Dynamic minimum based on project duration
+  const ratio = MAX_PX_PER_SEC / minPx;
+  return minPx * Math.pow(ratio, zoom);
 }
 
 // Convert pixels per second to zoom [0-1]
-function zoomFromPxPerSec(px: number): number {
-  const ratio = MAX_PX_PER_SEC / MIN_PX_PER_SEC;
-  return Math.log(px / MIN_PX_PER_SEC) / Math.log(ratio);
+function zoomFromPxPerSec(px: number, fitPxPerSec: number): number {
+  const minPx = fitPxPerSec; // Dynamic minimum based on project duration
+  const ratio = MAX_PX_PER_SEC / minPx;
+  return Math.log(px / minPx) / Math.log(ratio);
 }
 
 // Choose tick step based on current zoom to avoid overlaps
@@ -80,6 +96,68 @@ function formatTimeLabel(totalSeconds: number): string {
 
   if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
   return `${m}:${pad(s)}`;
+}
+
+// 🎯 ADAPTIVE TEXT RENDERING: Choose text display based on block width
+type BlockType = 'beat' | 'act' | 'chapter' | 'scene';
+
+function getBlockText(
+  fullText: string, 
+  widthPx: number, 
+  type: BlockType,
+  index: number
+): string {
+  // Define thresholds for each track type
+  const thresholds = {
+    beat: { full: 60, abbreviated: 30 },
+    act: { full: 80, abbreviated: 40 },
+    chapter: { full: 100, abbreviated: 50 },
+    scene: { full: 120, abbreviated: 60 }
+  };
+  
+  const { full, abbreviated } = thresholds[type];
+  
+  // 3 levels: Full, Abbreviated, Minimal
+  if (widthPx >= full) {
+    // Full text
+    return fullText;
+  } else if (widthPx >= abbreviated) {
+    // Abbreviated text with "..."
+    const maxChars = Math.floor(widthPx / 7); // Rough estimate: 7px per char
+    if (fullText.length <= maxChars) return fullText;
+    return fullText.substring(0, maxChars - 3) + '...';
+  } else {
+    // Minimal text: B1, A1, K1, S1
+    const prefix = type === 'beat' ? 'B' : 
+                   type === 'act' ? 'A' : 
+                   type === 'chapter' ? 'K' : 'S';
+    return `${prefix}${index + 1}`;
+  }
+}
+
+// 🎯 ADAPTIVE TIME MARKERS: Choose interval based on pxPerSec to prevent overlaps
+function getTimeMarkerInterval(pxPerSec: number): number {
+  const minSecondsBetweenTicks = MIN_LABEL_SPACING_PX / pxPerSec;
+  return (
+    TIME_STEPS_SECONDS.find(step => step >= minSecondsBetweenTicks) ??
+    TIME_STEPS_SECONDS[TIME_STEPS_SECONDS.length - 1]
+  );
+}
+
+// 🎯 ADAPTIVE PAGE MARKERS: Choose interval based on available space (intelligent like time markers!)
+function getPageMarkerInterval(pxPerSec: number, wordsPerPage: number, readingSpeedWpm: number): number {
+  // Calculate how many pixels one page occupies
+  const secondsPerPage = (wordsPerPage / readingSpeedWpm) * 60;
+  const pxPerPage = pxPerSec * secondsPerPage;
+  
+  // Calculate minimum pages between ticks to maintain MIN_LABEL_SPACING_PX
+  const minPagesBetweenTicks = MIN_LABEL_SPACING_PX / pxPerPage;
+  
+  // Find the smallest page step that satisfies the spacing requirement
+  return (
+    PAGE_STEPS.find(step => step >= minPagesBetweenTicks) ??
+    PAGE_STEPS[PAGE_STEPS.length - 1]
+  );
 }
 
 // 📖 Calculate word count from TipTap content (same logic as BookDropdown)
@@ -123,17 +201,20 @@ export function VideoEditorTimeline({
   };
   
   // 🎯 ZOOM & VIEWPORT STATE (MUST BE DECLARED FIRST!)
-  const [zoom, setZoom] = useState(0.5);
-  const [pxPerSec, setPxPerSec] = useState(() => pxPerSecFromZoom(0.5));
+  const [zoom, setZoom] = useState(0); // Start at zoom = 0 (entire timeline visible)
+  const [pxPerSec, setPxPerSec] = useState(FALLBACK_MIN_PX_PER_SEC); // Will be recalculated
+  const [fitPxPerSec, setFitPxPerSec] = useState(FALLBACK_MIN_PX_PER_SEC); // Dynamic minimum
   
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
   
   const [viewportWidth, setViewportWidth] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
   
   // Track if initial zoom has been set
   const initialZoomSetRef = useRef(false);
+  
+  // Track previous fitPxPerSec to detect changes
+  const prevFitPxPerSecRef = useRef(FALLBACK_MIN_PX_PER_SEC);
   
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -146,6 +227,14 @@ export function VideoEditorTimeline({
   // Beats from database
   const [beats, setBeats] = useState<BeatsAPI.StoryBeat[]>([]);
   const [beatsLoading, setBeatsLoading] = useState(false);
+  
+  // 🧲 BEAT MAGNET (Ripple Editing)
+  const [beatMagnetEnabled, setBeatMagnetEnabled] = useState(true);
+  
+  // 🎯 BEAT TRIM STATE
+  const [trimingBeat, setTrimingBeat] = useState<{ id: string; handle: 'left' | 'right' } | null>(null);
+  const trimStartXRef = useRef(0);
+  const trimStartSecRef = useRef(0);
   
   // 🎯 MODAL STATE: Scene Content Editor
   const [editingSceneForModal, setEditingSceneForModal] = useState<any | null>(null);
@@ -266,7 +355,127 @@ export function VideoEditorTimeline({
     setResizingTrack(null);
   };
   
-  // 🎯 GLOBAL RESIZE LISTENERS
+  // 🎯 BEAT TRIM HANDLERS (Mouse Events)
+  const handleTrimStart = (beatId: string, handle: 'left' | 'right', e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTrimingBeat({ id: beatId, handle });
+    trimStartXRef.current = e.clientX;
+    
+    const beat = beats.find(b => b.id === beatId);
+    if (beat) {
+      if (handle === 'left') {
+        trimStartSecRef.current = (beat.pct_from / 100) * duration;
+      } else {
+        trimStartSecRef.current = (beat.pct_to / 100) * duration;
+      }
+    }
+    
+    console.log(`[Beat Trim] 🎯 Start trimming ${handle} handle of ${beatId}`);
+  };
+  
+  // 🧲 BEAT RIPPLE FUNCTIONS (CapCut-Style Magnetic Timeline)
+  const MIN_BEAT_DURATION_SEC = 1; // Minimum beat duration (like CapCut's 0.1s, but 1s for beats)
+  
+  const handleTrimMove = (e: MouseEvent) => {
+    if (!trimingBeat) return;
+    
+    const deltaX = e.clientX - trimStartXRef.current;
+    const deltaSec = deltaX / pxPerSec;
+    const newSec = trimStartSecRef.current + deltaSec;
+    
+    // Only update local state during drag (no DB updates!)
+    const beat = beats.find(b => b.id === trimingBeat.id);
+    if (!beat) return;
+    
+    if (trimingBeat.handle === 'left') {
+      const oldEndSec = (beat.pct_to / 100) * duration;
+      const clampedStartSec = Math.max(0, Math.min(oldEndSec - MIN_BEAT_DURATION_SEC, newSec));
+      const newPctFrom = (clampedStartSec / duration) * 100;
+      
+      setBeats(prev => prev.map(b =>
+        b.id === trimingBeat.id ? { ...b, pct_from: newPctFrom } : b
+      ));
+    } else {
+      const oldStartSec = (beat.pct_from / 100) * duration;
+      const clampedEndSec = Math.max(oldStartSec + MIN_BEAT_DURATION_SEC, Math.min(duration, newSec));
+      const newPctTo = (clampedEndSec / duration) * 100;
+      
+      setBeats(prev => prev.map(b =>
+        b.id === trimingBeat.id ? { ...b, pct_to: newPctTo } : b
+      ));
+    }
+  };
+  
+  const handleTrimEnd = async () => {
+    if (!trimingBeat) return;
+    
+    console.log(`[Beat Trim] ✅ Finished trimming ${trimingBeat.handle} handle`);
+    
+    // Store original beats for comparison
+    const originalBeats = [...beats];
+    
+    // NOW apply ripple and update DB
+    const beat = beats.find(b => b.id === trimingBeat.id);
+    if (!beat) {
+      setTrimingBeat(null);
+      return;
+    }
+    
+    const startSec = (beat.pct_from / 100) * duration;
+    const endSec = (beat.pct_to / 100) * duration;
+    
+    try {
+      if (trimingBeat.handle === 'right') {
+        // Apply ripple for right handle
+        const oldEndSec = trimStartSecRef.current;
+        const withRipple = applyBeatRipple(beats, trimingBeat.id, oldEndSec, endSec, beatMagnetEnabled);
+        
+        // Update the trimmed beat first
+        await BeatsAPI.updateBeat(trimingBeat.id, { pct_to: beat.pct_to });
+        
+        // Update rippled beats if magnet is enabled
+        if (beatMagnetEnabled) {
+          const rippleUpdates = withRipple
+            .filter(b => {
+              const original = originalBeats.find(ob => ob.id === b.id);
+              return b.id !== trimingBeat.id && 
+                     original && 
+                     (b.pct_from !== original.pct_from || b.pct_to !== original.pct_to);
+            });
+          
+          // Update all rippled beats sequentially
+          for (const b of rippleUpdates) {
+            await BeatsAPI.updateBeat(b.id, { pct_from: b.pct_from, pct_to: b.pct_to });
+          }
+        }
+        
+        // Apply to local state
+        setBeats(withRipple);
+        
+      } else {
+        // Left handle - just update DB
+        await BeatsAPI.updateBeat(trimingBeat.id, { pct_from: beat.pct_from });
+      }
+      
+      console.log('[Beat Trim] ✅ DB updated successfully');
+    } catch (error) {
+      console.error('[Beat Trim] ❌ Error updating beat:', error);
+      console.error('[Beat Trim] ❌ Error details:', {
+        beatId: trimingBeat.id,
+        handle: trimingBeat.handle,
+        pct_from: beat.pct_from,
+        pct_to: beat.pct_to,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      // Revert to original state on error
+      setBeats(originalBeats);
+    }
+    
+    setTrimingBeat(null);
+  };
+  
+  // 🎯 GLOBAL RESIZE + TRIM LISTENERS
   useEffect(() => {
     if (resizingTrack) {
       window.addEventListener('mousemove', handleResizeMove);
@@ -277,6 +486,17 @@ export function VideoEditorTimeline({
       };
     }
   }, [resizingTrack, trackHeights]);
+  
+  useEffect(() => {
+    if (trimingBeat) {
+      window.addEventListener('mousemove', handleTrimMove);
+      window.addEventListener('mouseup', handleTrimEnd);
+      return () => {
+        window.removeEventListener('mousemove', handleTrimMove);
+        window.removeEventListener('mouseup', handleTrimEnd);
+      };
+    }
+  }, [trimingBeat, beats, pxPerSec, duration, beatMagnetEnabled]);
   
   console.log('[VideoEditorTimeline] 📖 Book Timeline:', {
     isBookProject,
@@ -451,7 +671,7 @@ export function VideoEditorTimeline({
   
   // 📏 MEASURE VIEWPORT WIDTH
   useEffect(() => {
-    const el = viewportRef.current;
+    const el = scrollRef.current; // Measure the SCROLL CONTAINER, not the inner content!
     if (!el) return;
     
     const resizeObserver = new ResizeObserver(entries => {
@@ -474,27 +694,41 @@ export function VideoEditorTimeline({
     return () => el.removeEventListener('scroll', onScroll);
   }, []);
   
-  // 🎯 INITIAL ZOOM: Fit entire timeline to viewport (ONCE!)
+  // 🎯 UPDATE FIT PX PER SEC: Recalculate when viewport or duration changes
   useEffect(() => {
-    // Only run once when viewport and duration are first available
-    if (initialZoomSetRef.current || !viewportWidth || totalDurationSec <= 0) return;
+    if (!viewportWidth || totalDurationSec <= 0) return;
     
-    const pxFit = viewportWidth / totalDurationSec;
-    const clamped = Math.min(MAX_PX_PER_SEC, Math.max(MIN_PX_PER_SEC, pxFit));
-    const z = zoomFromPxPerSec(clamped);
+    // Calculate dynamic minimum (entire timeline fits in viewport)
+    const dynamicFitPx = getFitPxPerSec(totalDurationSec, viewportWidth);
+    const prevFitPx = prevFitPxPerSecRef.current;
     
-    console.log('[VideoEditorTimeline] 🎯 Initial zoom:', {
-      viewportWidth,
-      durationSec: `${totalDurationSec.toFixed(0)}s`,
-      durationMin: `${(totalDurationSec/60).toFixed(1)}min`,
-      pxFit: pxFit.toFixed(2),
-      pxPerSec: clamped.toFixed(2),
-      zoom: z.toFixed(2)
-    });
-    
-    setZoom(z);
-    setPxPerSec(clamped);
-    initialZoomSetRef.current = true;
+    // Only update if fitPxPerSec actually changed (or initial setup)
+    if (!initialZoomSetRef.current || Math.abs(prevFitPx - dynamicFitPx) > 0.0001) {
+      setFitPxPerSec(dynamicFitPx);
+      prevFitPxPerSecRef.current = dynamicFitPx;
+      
+      // Calculate pxPerSec based on current zoom
+      const newPxPerSec = pxPerSecFromZoom(zoom, dynamicFitPx);
+      setPxPerSec(newPxPerSec);
+      
+      // Log initial setup
+      if (!initialZoomSetRef.current) {
+        console.log('[VideoEditorTimeline] 🎯 Initial zoom (CapCut-style):', {
+          viewportWidth,
+          durationSec: `${totalDurationSec.toFixed(0)}s`,
+          durationMin: `${(totalDurationSec/60).toFixed(1)}min`,
+          fitPxPerSec: dynamicFitPx.toFixed(4),
+          maxPxPerSec: MAX_PX_PER_SEC,
+          zoomRange: `${dynamicFitPx.toFixed(2)} - ${MAX_PX_PER_SEC}`,
+          zoom: zoom,
+          pxPerSec: newPxPerSec.toFixed(4),
+          timelineWidthPx: (totalDurationSec * newPxPerSec).toFixed(0)
+        });
+        initialZoomSetRef.current = true;
+      }
+    }
+    // ⚠️ DO NOT ADD zoom to dependencies! It would cause infinite loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewportWidth, totalDurationSec]);
   
   // 🎯 CALCULATED VALUES
@@ -589,8 +823,8 @@ export function VideoEditorTimeline({
     };
   }, []); // Only run once on mount!
   
-  // 📏 DYNAMIC TICKS (no overlaps!)
-  const tickStep = chooseTickStep(pxPerSec);
+  // 📏 DYNAMIC TICKS (adaptive intervals based on zoom!)
+  const tickStep = getTimeMarkerInterval(pxPerSec);
   const firstTick = Math.floor(viewStartSec / tickStep) * tickStep;
   const lastTick = Math.ceil(viewEndSec / tickStep) * tickStep;
   
@@ -600,7 +834,7 @@ export function VideoEditorTimeline({
     ticks.push({ x, label: formatTimeLabel(t), sec: t });
   }
   
-  console.log('[VideoEditorTimeline] 📏 Ticks:', {
+  console.log('[VideoEditorTimeline] 📏 Ticks (adaptive):', {
     pxPerSec: pxPerSec.toFixed(2),
     tickStep: `${tickStep}s`,
     tickCount: ticks.length,
@@ -611,21 +845,27 @@ export function VideoEditorTimeline({
   // 🎯 ZOOM HANDLER (with anchor)
   const setZoomAroundCursor = (newZoom: number, anchorX?: number) => {
     const el = scrollRef.current;
+    
+    // Calculate new pxPerSec with current fitPxPerSec
+    const nextPx = pxPerSecFromZoom(newZoom, fitPxPerSec);
+    
     if (!el || !viewportWidth) {
       setZoom(newZoom);
-      setPxPerSec(pxPerSecFromZoom(newZoom));
+      setPxPerSec(nextPx);
       return;
     }
     
+    // Calculate anchor-based scroll position
     const oldPx = pxPerSec;
-    const nextPx = pxPerSecFromZoom(newZoom);
     const cursorX = anchorX ?? viewportWidth / 2;
     const unitUnderCursor = (el.scrollLeft + cursorX) / oldPx;
     const newScrollLeft = unitUnderCursor * nextPx - cursorX;
     
+    // Update state
     setZoom(newZoom);
     setPxPerSec(nextPx);
     
+    // Update scroll position after render
     requestAnimationFrame(() => {
       el.scrollLeft = newScrollLeft;
     });
@@ -644,7 +884,7 @@ export function VideoEditorTimeline({
       const newZoom = Math.max(0, Math.min(1, zoom + zoomDelta));
       
       // Get cursor position relative to viewport
-      const rect = viewportRef.current?.getBoundingClientRect();
+      const rect = scrollRef.current?.getBoundingClientRect();
       const cursorX = rect ? e.clientX - rect.left : viewportWidth / 2;
       
       setZoomAroundCursor(newZoom, cursorX);
@@ -776,7 +1016,15 @@ export function VideoEditorTimeline({
   
   // 🎬 LOAD BEATS
   useEffect(() => {
-    if (parentBeats && parentBeats.length > 0) {
+    console.log('[VideoEditorTimeline] 🎬 Beat loading effect triggered:', {
+      hasParentBeats: !!parentBeats,
+      parentBeatsLength: parentBeats?.length || 0,
+      parentBeatsType: Array.isArray(parentBeats) ? 'array' : typeof parentBeats,
+      parentBeats: parentBeats
+    });
+    
+    if (parentBeats && Array.isArray(parentBeats) && parentBeats.length > 0) {
+      console.log('[VideoEditorTimeline] ✅ Using parentBeats:', parentBeats.length, 'beats');
       const convertedBeats: BeatsAPI.StoryBeat[] = parentBeats.map(beat => ({
         id: beat.id || '',
         project_id: projectId,
@@ -796,10 +1044,12 @@ export function VideoEditorTimeline({
       }));
       setBeats(convertedBeats);
     } else {
+      console.log('[VideoEditorTimeline] 📥 Loading beats from API...');
       const loadBeats = async () => {
         try {
           setBeatsLoading(true);
           const fetchedBeats = await BeatsAPI.getBeats(projectId);
+          console.log('[VideoEditorTimeline] ✅ Loaded', fetchedBeats.length, 'beats from API');
           setBeats(fetchedBeats);
         } catch (error) {
           console.error('[VideoEditorTimeline] Failed to load beats:', error);
@@ -828,6 +1078,233 @@ export function VideoEditorTimeline({
       visible: endSec >= viewStartSec && startSec <= viewEndSec,
     };
   });
+  
+  /**
+   * Apply ripple effect to beats after a beat's end time changes
+   * @param beatsArray - Current beats array
+   * @param changedBeatId - ID of the beat that changed
+   * @param oldEndSec - Old end time in seconds
+   * @param newEndSec - New end time in seconds
+   * @param magnetEnabled - Whether magnet is enabled
+   * @returns Updated beats array with ripple applied
+   */
+  const applyBeatRipple = (
+    beatsArray: BeatsAPI.StoryBeat[],
+    changedBeatId: string,
+    oldEndSec: number,
+    newEndSec: number,
+    magnetEnabled: boolean
+  ): BeatsAPI.StoryBeat[] => {
+    if (!magnetEnabled) return beatsArray;
+    
+    const delta = newEndSec - oldEndSec;
+    if (delta === 0) return beatsArray;
+    
+    // Sort beats by start time
+    const sortedBeats = [...beatsArray].sort((a, b) => a.pct_from - b.pct_from);
+    
+    return sortedBeats.map(beat => {
+      // Skip the changed beat itself
+      if (beat.id === changedBeatId) return beat;
+      
+      const beatStartSec = (beat.pct_from / 100) * duration;
+      const beatEndSec = (beat.pct_to / 100) * duration;
+      
+      // Only shift beats that start at or after the old end position
+      if (beatStartSec >= oldEndSec) {
+        const newStartSec = beatStartSec + delta;
+        const newEndSec = beatEndSec + delta;
+        
+        // Convert back to percentage
+        const newPctFrom = Math.max(0, Math.min(100, (newStartSec / duration) * 100));
+        const newPctTo = Math.max(0, Math.min(100, (newEndSec / duration) * 100));
+        
+        return {
+          ...beat,
+          pct_from: newPctFrom,
+          pct_to: newPctTo,
+        };
+      }
+      
+      return beat;
+    });
+  };
+  
+  /**
+   * Delete a beat and apply ripple effect
+   * @param beatId - ID of beat to delete
+   */
+  const handleDeleteBeat = async (beatId: string) => {
+    const beatToDelete = beats.find(b => b.id === beatId);
+    if (!beatToDelete) return;
+    
+    const originalBeats = [...beats];
+    
+    try {
+      // Delete from database
+      await BeatsAPI.deleteBeat(beatId);
+      
+      // Calculate duration for ripple
+      const startSec = (beatToDelete.pct_from / 100) * duration;
+      const endSec = (beatToDelete.pct_to / 100) * duration;
+      const deletedDuration = endSec - startSec;
+      
+      // Remove from local state
+      const remainingBeats = beats.filter(b => b.id !== beatId);
+      
+      if (!beatMagnetEnabled) {
+        setBeats(remainingBeats);
+        console.log('[Beat Delete] ✅ Beat deleted (no ripple)');
+        return;
+      }
+      
+      // Apply ripple: shift all beats after deleted beat to the left
+      const beatsToUpdate: BeatsAPI.StoryBeat[] = [];
+      const withRipple = remainingBeats.map(beat => {
+        const beatStartSec = (beat.pct_from / 100) * duration;
+        const beatEndSec = (beat.pct_to / 100) * duration;
+        
+        if (beatStartSec >= endSec) {
+          const newStartSec = beatStartSec - deletedDuration;
+          const newEndSec = beatEndSec - deletedDuration;
+          
+          const newPctFrom = Math.max(0, Math.min(100, (newStartSec / duration) * 100));
+          const newPctTo = Math.max(0, Math.min(100, (newEndSec / duration) * 100));
+          
+          const updatedBeat = {
+            ...beat,
+            pct_from: newPctFrom,
+            pct_to: newPctTo,
+          };
+          
+          beatsToUpdate.push(updatedBeat);
+          return updatedBeat;
+        }
+        
+        return beat;
+      });
+      
+      // Update all rippled beats in database sequentially
+      for (const beat of beatsToUpdate) {
+        await BeatsAPI.updateBeat(beat.id, { pct_from: beat.pct_from, pct_to: beat.pct_to });
+      }
+      
+      setBeats(withRipple);
+      console.log('[Beat Delete] 🧲 Ripple applied:', { beatId, deletedDuration, updatedCount: beatsToUpdate.length });
+    } catch (error) {
+      console.error('[Beat Delete] ❌ Error:', error);
+      // Revert to original state on error
+      setBeats(originalBeats);
+    }
+  };
+  
+  /**
+   * Trim beat from right handle
+   */
+  const handleBeatTrimRight = async (beatId: string, newEndSec: number) => {
+    const beat = beats.find(b => b.id === beatId);
+    if (!beat) return;
+    
+    const oldStartSec = (beat.pct_from / 100) * duration;
+    const oldEndSec = (beat.pct_to / 100) * duration;
+    
+    // Clamp to minimum duration
+    const clampedEndSec = Math.max(oldStartSec + MIN_BEAT_DURATION_SEC, Math.min(duration, newEndSec));
+    
+    // Convert to percentage
+    const newPctTo = (clampedEndSec / duration) * 100;
+    
+    // Update beat
+    const updatedBeats = beats.map(b =>
+      b.id === beatId ? { ...b, pct_to: newPctTo } : b
+    );
+    
+    // Apply ripple
+    const withRipple = applyBeatRipple(
+      updatedBeats,
+      beatId,
+      oldEndSec,
+      clampedEndSec,
+      beatMagnetEnabled
+    );
+    
+    setBeats(withRipple);
+    
+    // Update database
+    try {
+      await BeatsAPI.updateBeat(beatId, { pct_to: newPctTo });
+      
+      // Update rippled beats in database
+      if (beatMagnetEnabled) {
+        withRipple.forEach(b => {
+          if (b.id !== beatId && (b.pct_from !== beats.find(ob => ob.id === b.id)?.pct_from)) {
+            BeatsAPI.updateBeat(b.id, { pct_from: b.pct_from, pct_to: b.pct_to });
+          }
+        });
+      }
+    } catch (error) {
+      console.error('[Beat Trim Right] Error updating beat:', error);
+    }
+  };
+  
+  /**
+   * Trim beat from left handle
+   */
+  const handleBeatTrimLeft = async (beatId: string, newStartSec: number) => {
+    const beat = beats.find(b => b.id === beatId);
+    if (!beat) return;
+    
+    const oldEndSec = (beat.pct_to / 100) * duration;
+    
+    // Clamp to minimum duration and bounds
+    const clampedStartSec = Math.max(0, Math.min(oldEndSec - MIN_BEAT_DURATION_SEC, newStartSec));
+    
+    // Check for collision with previous beat
+    const beatStartSec = (beat.pct_from / 100) * duration;
+    const sortedBeats = [...beats].sort((a, b) => a.pct_from - b.pct_from);
+    const beatIndex = sortedBeats.findIndex(b => b.id === beatId);
+    
+    if (beatIndex > 0 && beatMagnetEnabled) {
+      const prevBeat = sortedBeats[beatIndex - 1];
+      const prevEndSec = (prevBeat.pct_to / 100) * duration;
+      
+      // If extending left would overlap previous beat, push previous beat left
+      if (clampedStartSec < prevEndSec) {
+        const pushDelta = prevEndSec - clampedStartSec;
+        const newPrevEndSec = prevEndSec - pushDelta;
+        const newPrevStartSec = (prevBeat.pct_from / 100) * duration - pushDelta;
+        
+        // Clamp previous beat
+        const finalPrevStartSec = Math.max(0, newPrevStartSec);
+        const finalPrevEndSec = Math.max(finalPrevStartSec + MIN_BEAT_DURATION_SEC, newPrevEndSec);
+        
+        // Update previous beat
+        const newPrevPctFrom = (finalPrevStartSec / duration) * 100;
+        const newPrevPctTo = (finalPrevEndSec / duration) * 100;
+        
+        await BeatsAPI.updateBeat(prevBeat.id, { pct_from: newPrevPctFrom, pct_to: newPrevPctTo });
+        
+        setBeats(prev => prev.map(b =>
+          b.id === prevBeat.id ? { ...b, pct_from: newPrevPctFrom, pct_to: newPrevPctTo } : b
+        ));
+      }
+    }
+    
+    // Convert to percentage
+    const newPctFrom = (clampedStartSec / duration) * 100;
+    
+    // Update beat
+    setBeats(prev => prev.map(b =>
+      b.id === beatId ? { ...b, pct_from: newPctFrom } : b
+    ));
+    
+    // Update database
+    try {
+      await BeatsAPI.updateBeat(beatId, { pct_from: newPctFrom });
+    } catch (error) {
+      console.error('[Beat Trim Left] Error updating beat:', error);
+    }
+  };
   
   // 🎯 CALCULATE ACT POSITIONS (based on cumulative duration for books)
   const actBlocks = (timelineData?.acts || []).map((act, actIndex) => {
@@ -1108,7 +1585,7 @@ export function VideoEditorTimeline({
     }
   }, [isBookProject, sceneBlocks.length, wordsArray.length]);
   
-  // 📖 PAGE MARKERS FOR BOOKS (based on word count, not time!)
+  // 📖 PAGE MARKERS FOR BOOKS (adaptive intervals based on zoom!)
   const pageMarkers: { x: number; page: number }[] = [];
   
   if (isBookProject && wordsPerPage && readingSpeedWpm) {
@@ -1116,19 +1593,10 @@ export function VideoEditorTimeline({
     // Page N = N × wordsPerPage words
     // Position = (words / readingSpeedWpm) × 60 seconds
     
-    // Choose page increment based on zoom
-    let pageIncrement = 1;
+    // Use adaptive page increment based on pxPerSec (intelligent spacing like time markers!)
+    const pageIncrement = getPageMarkerInterval(pxPerSec, wordsPerPage, readingSpeedWpm);
+    
     const estimatedTotalPages = (totalWords || 0) / wordsPerPage;
-    const pagesPerViewport = (viewportWidth || 0) / pxPerSec / 60 * readingSpeedWpm / wordsPerPage;
-    
-    if (pagesPerViewport > 100) {
-      pageIncrement = 10; // Zoomed out: every 10 pages
-    } else if (pagesPerViewport > 50) {
-      pageIncrement = 5; // Medium: every 5 pages
-    } else if (pagesPerViewport < 10) {
-      pageIncrement = 0.1; // Zoomed in: every 0.1 pages
-    }
-    
     const maxPages = targetPages || estimatedTotalPages;
     const firstPage = Math.floor(viewStartSec / 60 * readingSpeedWpm / wordsPerPage / pageIncrement) * pageIncrement;
     const lastPage = Math.ceil(viewEndSec / 60 * readingSpeedWpm / wordsPerPage / pageIncrement) * pageIncrement;
@@ -1141,7 +1609,9 @@ export function VideoEditorTimeline({
       pageMarkers.push({ x, page });
     }
     
-    console.log('[VideoEditorTimeline] 📄 Page Markers:', {
+    console.log('[VideoEditorTimeline] 📄 Page Markers (adaptive):', {
+      pxPerSec: pxPerSec.toFixed(2),
+      pageIncrement,
       wordsPerPage,
       readingSpeedWpm,
       totalWords,
@@ -1344,8 +1814,14 @@ export function VideoEditorTimeline({
             <span className="ml-4">Target: {targetPages} pages</span>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">Zoom</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setZoomAroundCursor(Math.max(0, zoom - 0.1))}
+            className="p-1.5 rounded-full hover:bg-muted/50 transition-colors"
+            title="Zoom out"
+          >
+            <Minus className="size-4 text-muted-foreground" />
+          </button>
           <input
             type="range"
             min={0}
@@ -1354,10 +1830,15 @@ export function VideoEditorTimeline({
             value={zoom}
             onChange={handleZoomSlider}
             className="w-32"
+            title={`${fitPxPerSec.toFixed(2)} - ${MAX_PX_PER_SEC} px/s`}
           />
-          <span className="text-xs text-muted-foreground font-mono">
-            {pxPerSec.toFixed(1)} px/s
-          </span>
+          <button
+            onClick={() => setZoomAroundCursor(Math.min(1, zoom + 0.1))}
+            className="p-1.5 rounded-full hover:bg-muted/50 transition-colors"
+            title="Zoom in"
+          >
+            <Plus className="size-4 text-muted-foreground" />
+          </button>
         </div>
       </div>
       
@@ -1369,10 +1850,20 @@ export function VideoEditorTimeline({
             <span className="text-[9px] text-foreground font-medium">Zeit</span>
           </div>
           <div 
-            className="border-b border-border px-2 flex items-center bg-card relative"
+            className="border-b border-border px-2 flex items-center justify-between bg-card relative"
             style={{ height: `${trackHeights.beat}px` }}
           >
             <span className="text-[9px] text-foreground font-medium">Beat</span>
+            <button
+              onClick={() => setBeatMagnetEnabled(!beatMagnetEnabled)}
+              className={cn(
+                'text-sm transition-all hover:scale-110',
+                beatMagnetEnabled ? 'opacity-100' : 'opacity-30 grayscale'
+              )}
+              title={beatMagnetEnabled ? 'Magnet: ON (Ripple aktiv)' : 'Magnet: OFF (Keine Ripple)'}
+            >
+              🧲
+            </button>
             <div 
               className={cn(
                 "absolute bottom-0 left-0 right-0 h-1 cursor-ns-resize transition-all",
@@ -1437,7 +1928,7 @@ export function VideoEditorTimeline({
           onMouseUp={handleCursorDragEnd}
           onMouseLeave={handleCursorDragEnd}
         >
-          <div ref={viewportRef} style={{ width: `${totalWidthPx}px` }}>
+          <div style={{ width: `${totalWidthPx}px` }}>
             {/* Time Ruler */}
             <div 
               className="relative h-12 bg-card border-b border-border"
@@ -1494,25 +1985,45 @@ export function VideoEditorTimeline({
             >
               {beatBlocks
                 .filter(beat => beat.visible)
-                .map(beat => (
-                  <div
-                    key={beat.id}
-                    className={cn(
-                      'absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity',
-                      BEAT_STYLES.container
-                    )}
-                    style={{
-                      left: `${beat.x}px`,
-                      width: `${beat.width}px`,
-                    }}
-                  >
-                    <div className="h-full flex items-center px-2 overflow-hidden">
-                      <span className={cn('text-[10px] font-medium truncate', BEAT_STYLES.text)}>
-                        {beat.label}
-                      </span>
+                .map((beat, index) => {
+                  const displayText = getBlockText(beat.label || '', beat.width, 'beat', index);
+                  return (
+                    <div
+                      key={beat.id}
+                      className={cn(
+                        'absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity group',
+                        BEAT_STYLES.container
+                      )}
+                      style={{
+                        left: `${beat.x}px`,
+                        width: `${beat.width}px`,
+                      }}
+                      onDoubleClick={() => handleDeleteBeat(beat.id)}
+                      title="Doppelklick zum Löschen"
+                    >
+                      {/* Left Handle */}
+                      <div
+                        className="absolute left-0 top-0 bottom-0 w-1.5 bg-purple-900/80 dark:bg-purple-600/80 cursor-ew-resize hover:bg-purple-700 dark:hover:bg-purple-500 transition-colors rounded-l z-10"
+                        onMouseDown={(e) => handleTrimStart(beat.id, 'left', e)}
+                        title="Linken Rand ziehen"
+                      />
+                      
+                      {/* Center Content */}
+                      <div className="h-full flex items-center justify-center px-1 overflow-hidden">
+                        <span className={cn('text-[10px] font-medium truncate', BEAT_STYLES.text)}>
+                          {displayText}
+                        </span>
+                      </div>
+                      
+                      {/* Right Handle */}
+                      <div
+                        className="absolute right-0 top-0 bottom-0 w-1.5 bg-purple-900/80 dark:bg-purple-600/80 cursor-ew-resize hover:bg-purple-700 dark:hover:bg-purple-500 transition-colors rounded-r z-10"
+                        onMouseDown={(e) => handleTrimStart(beat.id, 'right', e)}
+                        title="Rechten Rand ziehen"
+                      />
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               
               {/* Playhead */}
               <div
@@ -1528,22 +2039,25 @@ export function VideoEditorTimeline({
             >
               {actBlocks
                 .filter(act => act.visible)
-                .map(act => (
-                  <div
-                    key={act.id}
-                    className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-blue-50 dark:bg-blue-950/40 border-2 border-blue-200 dark:border-blue-700"
-                    style={{
-                      left: `${act.x}px`,
-                      width: `${act.width}px`,
-                    }}
-                  >
-                    <div className="h-full flex items-center px-2 overflow-hidden">
-                      <span className="text-[10px] text-blue-900 dark:text-blue-100 font-medium truncate">
-                        {act.title}
-                      </span>
+                .map((act, index) => {
+                  const displayText = getBlockText(act.title || '', act.width, 'act', index);
+                  return (
+                    <div
+                      key={act.id}
+                      className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-blue-50 dark:bg-blue-950/40 border-2 border-blue-200 dark:border-blue-700"
+                      style={{
+                        left: `${act.x}px`,
+                        width: `${act.width}px`,
+                      }}
+                    >
+                      <div className="h-full flex items-center justify-center px-1 overflow-hidden">
+                        <span className="text-[10px] text-blue-900 dark:text-blue-100 font-medium truncate">
+                          {displayText}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               
               {/* Playhead */}
               <div
@@ -1559,22 +2073,25 @@ export function VideoEditorTimeline({
             >
               {sequenceBlocks
                 .filter(seq => seq.visible)
-                .map(seq => (
-                  <div
-                    key={seq.id}
-                    className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-green-50 dark:bg-green-950/40 border-2 border-green-200 dark:border-green-700"
-                    style={{
-                      left: `${seq.x}px`,
-                      width: `${seq.width}px`,
-                    }}
-                  >
-                    <div className="h-full flex items-center px-2 overflow-hidden">
-                      <span className="text-[10px] text-green-900 dark:text-green-100 font-medium truncate">
-                        {seq.title}
-                      </span>
+                .map((seq, index) => {
+                  const displayText = getBlockText(seq.title || '', seq.width, 'chapter', index);
+                  return (
+                    <div
+                      key={seq.id}
+                      className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-80 transition-opacity bg-green-50 dark:bg-green-950/40 border-2 border-green-200 dark:border-green-700"
+                      style={{
+                        left: `${seq.x}px`,
+                        width: `${seq.width}px`,
+                      }}
+                    >
+                      <div className="h-full flex items-center justify-center px-1 overflow-hidden">
+                        <span className="text-[10px] text-green-900 dark:text-green-100 font-medium truncate">
+                          {displayText}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               
               {/* Playhead */}
               <div
@@ -1590,34 +2107,57 @@ export function VideoEditorTimeline({
             >
               {sceneBlocks
                 .filter(scene => scene.visible)
-                .map(scene => (
-                  <div
-                    key={scene.id}
-                    className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-90 transition-opacity bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-200 dark:border-amber-700"
-                    style={{
-                      left: `${scene.x}px`,
-                      width: `${scene.width}px`,
-                    }}
-                    onClick={() => {
-                      console.log('[VideoEditorTimeline] 🚀 Opening Content Modal for scene:', scene.id);
-                      setEditingSceneForModal(scene);
-                      setShowContentModal(true);
-                    }}
-                  >
-                    <div className="h-full flex flex-col px-2 py-1 overflow-hidden">
-                      <span className="text-[9px] text-amber-900 dark:text-amber-100 font-medium mb-0.5">
-                        {scene.title}
-                      </span>
-                      <div className="flex-1 overflow-hidden text-[8px] text-amber-700 dark:text-amber-300">
-                        {scene.content && typeof scene.content === 'object' ? (
-                          <ReadonlyTiptapView content={scene.content} />
-                        ) : (
-                          <em className="text-muted-foreground/50">Leer...</em>
-                        )}
-                      </div>
+                .map((scene, index) => {
+                  const displayText = getBlockText(scene.title || '', scene.width, 'scene', index);
+                  const showFullContent = scene.width >= 120;
+                  const showAbbreviatedTitle = scene.width >= 60 && scene.width < 120;
+                  const showMinimal = scene.width < 60;
+                  
+                  return (
+                    <div
+                      key={scene.id}
+                      className="absolute top-1 bottom-1 rounded cursor-pointer hover:opacity-90 transition-opacity bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-200 dark:border-amber-700"
+                      style={{
+                        left: `${scene.x}px`,
+                        width: `${scene.width}px`,
+                      }}
+                      onClick={() => {
+                        console.log('[VideoEditorTimeline] 🚀 Opening Content Modal for scene:', scene.id);
+                        setEditingSceneForModal(scene);
+                        setShowContentModal(true);
+                      }}
+                    >
+                      {showFullContent && (
+                        <div className="h-full flex flex-col px-2 py-1 overflow-hidden">
+                          <span className="text-[9px] text-amber-900 dark:text-amber-100 font-medium mb-0.5 truncate">
+                            {scene.title}
+                          </span>
+                          <div className="flex-1 overflow-hidden text-[8px] text-amber-700 dark:text-amber-300">
+                            {scene.content && typeof scene.content === 'object' ? (
+                              <ReadonlyTiptapView content={scene.content} />
+                            ) : (
+                              <em className="text-muted-foreground/50">Leer...</em>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {showAbbreviatedTitle && (
+                        <div className="h-full flex items-center justify-center px-1 overflow-hidden">
+                          <span className="text-[9px] text-amber-900 dark:text-amber-100 font-medium truncate">
+                            {displayText}
+                          </span>
+                        </div>
+                      )}
+                      {showMinimal && (
+                        <div className="h-full flex items-center justify-center overflow-hidden">
+                          <span className="text-[9px] text-amber-900 dark:text-amber-100 font-bold">
+                            {displayText}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               
               {/* Playhead */}
               <div

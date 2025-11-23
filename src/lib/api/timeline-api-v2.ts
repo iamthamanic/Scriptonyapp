@@ -89,6 +89,7 @@ export async function getNodes(filters: {
   level?: 1 | 2 | 3 | 4;
   parentId?: string | null;
   templateId?: string;
+  excludeContent?: boolean; // 🚀 NEW: Exclude content field for performance
 }): Promise<TimelineNode[]> {
   const params = new URLSearchParams({
     project_id: filters.projectId,
@@ -104,6 +105,11 @@ export async function getNodes(filters: {
   
   if (filters.templateId) {
     params.append('template_id', filters.templateId);
+  }
+
+  // 🚀 NEW: Exclude content for structure-only loading
+  if (filters.excludeContent) {
+    params.append('exclude_content', 'true');
   }
 
   const result = await apiGet(`/nodes?${params}`);
@@ -496,4 +502,62 @@ export async function getSections(
     level: 3,
     parentId: chapterId,
   });
+}
+
+// =============================================================================
+// 🚀 LAZY LOADING - Phase 2 Optimization
+// =============================================================================
+
+/**
+ * 📖 Fetch ONLY node content (for lazy loading)
+ * Returns just the content field from metadata
+ */
+export async function fetchNodeContent(
+  nodeId: string
+): Promise<{ content: any; wordCount?: number }> {
+  console.log('[Timeline API V2] 📖 Lazy loading content for node:', nodeId);
+  
+  const node = await getNode(nodeId);
+  
+  return {
+    content: node.metadata?.content || null,
+    wordCount: node.metadata?.wordCount,
+  };
+}
+
+/**
+ * 🏗️ Load timeline structure WITHOUT content (for initial load)
+ * Massively faster for books with lots of text
+ */
+export async function loadTimelineStructure(
+  projectId: string,
+  templateId?: string
+): Promise<{
+  acts: TimelineNode[];
+  sequences: TimelineNode[];
+  scenes: TimelineNode[];
+}> {
+  console.log('[Timeline API V2] 🏗️ Loading structure only (no content):', projectId);
+  const timerLabel = `[Timeline API V2] Structure Load ${projectId}`;
+  console.time(timerLabel);
+
+  // Load all nodes but exclude content field
+  const allNodes = await getNodes({
+    projectId,
+    templateId,
+    excludeContent: true, // 🚀 Key optimization!
+  });
+
+  const acts = allNodes.filter(n => n.level === 1);
+  const sequences = allNodes.filter(n => n.level === 2);
+  const scenes = allNodes.filter(n => n.level === 3);
+
+  console.timeEnd(timerLabel);
+  console.log('[Timeline API V2] Structure loaded:', {
+    acts: acts.length,
+    sequences: sequences.length,
+    scenes: scenes.length,
+  });
+
+  return { acts, sequences, scenes };
 }

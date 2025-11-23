@@ -49,86 +49,73 @@ export function BeatColumn({
     const currentBeat = beats.find(b => b.id === beatId);
     if (!currentBeat) return;
 
+    // 🎯 MAGNET SNAPPING - Snap to adjacent beats (3% threshold)
+    const SNAP_THRESHOLD = 3;
+    
     // Sort all beats by position
     const sortedBeats = [...beats].sort((a, b) => a.pctFrom - b.pctFrom);
     const currentIndex = sortedBeats.findIndex(b => b.id === beatId);
 
-    // Calculate updates
-    const updatedBeats: Array<{ id: string; updates: Partial<BeatCardData> }> = [];
+    // Find adjacent beats for snapping
+    const beatAbove = currentIndex > 0 ? sortedBeats[currentIndex - 1] : null;
+    const beatBelow = currentIndex < sortedBeats.length - 1 ? sortedBeats[currentIndex + 1] : null;
 
-    if (handle === 'bottom') {
-      // Expanding bottom → push ALL beats below
-      const oldEnd = currentBeat.pctTo;
-      const newEnd = newPctTo;
-      
-      // Update current beat
-      updatedBeats.push({ id: beatId, updates: { pctFrom: currentBeat.pctFrom, pctTo: newEnd } });
-
-      // Push all beats below - maintain their size, just shift position
-      let previousEnd = newEnd;
-      for (let i = currentIndex + 1; i < sortedBeats.length; i++) {
-        const beat = sortedBeats[i];
-        const beatSize = beat.pctTo - beat.pctFrom;
-        
-        const newFrom = previousEnd;
-        const newTo = previousEnd + beatSize;
-        
-        // 🚧 GRENZE: Unterster Beat darf nicht über 100% hinaus
-        if (newTo > 100) {
-          console.log(`🚫 Beat "${beat.label}" würde über 100% hinausgehen - Resize abgebrochen`);
-          return; // Abort entire resize operation
-        }
-        
-        updatedBeats.push({ 
-          id: beat.id, 
-          updates: { 
-            pctFrom: newFrom, 
-            pctTo: newTo 
-          } 
-        });
-        
-        previousEnd = newTo;
+    // Apply snapping
+    if (handle === 'top' && beatAbove) {
+      const distanceToAbove = Math.abs(newPctFrom - beatAbove.pctTo);
+      if (distanceToAbove < SNAP_THRESHOLD) {
+        newPctFrom = beatAbove.pctTo; // Snap to bottom of beat above
+        console.log('🧲 Snapped to beat above');
       }
-
-    } else if (handle === 'top') {
-      // Expanding top → push ALL beats above
-      const oldStart = currentBeat.pctFrom;
-      const newStart = newPctFrom;
-      
-      // Update current beat
-      updatedBeats.push({ id: beatId, updates: { pctFrom: newStart, pctTo: currentBeat.pctTo } });
-
-      // Push all beats above - maintain their size, just shift position
-      let nextStart = newStart;
-      for (let i = currentIndex - 1; i >= 0; i--) {
-        const beat = sortedBeats[i];
-        const beatSize = beat.pctTo - beat.pctFrom;
-        
-        const newFrom = nextStart - beatSize;
-        const newTo = nextStart;
-        
-        // 🚧 GRENZE: Oberster Beat darf nicht unter 0% hinaus
-        if (newFrom < 0) {
-          console.log(`🚫 Beat "${beat.label}" würde unter 0% hinausgehen - Resize abgebrochen`);
-          return; // Abort entire resize operation
-        }
-        
-        updatedBeats.push({ 
-          id: beat.id, 
-          updates: { 
-            pctFrom: newFrom, 
-            pctTo: newTo 
-          } 
-        });
-        
-        nextStart = newFrom;
+    } else if (handle === 'bottom' && beatBelow) {
+      const distanceToBelow = Math.abs(newPctTo - beatBelow.pctFrom);
+      if (distanceToBelow < SNAP_THRESHOLD) {
+        newPctTo = beatBelow.pctFrom; // Snap to top of beat below
+        console.log('🧲 Snapped to beat below');
       }
     }
 
-    // Apply all updates
-    updatedBeats.forEach(({ id, updates }) => {
-      onUpdateBeat(id, updates);
-    });
+    // 🚧 PREVENT OVERLAP - Beats can't go beyond adjacent beats
+    if (handle === 'top') {
+      // Can't drag top above the bottom of beat above
+      if (beatAbove && newPctFrom < beatAbove.pctTo) {
+        newPctFrom = beatAbove.pctTo;
+        console.log('🚫 Prevented overlap with beat above');
+      }
+      // Can't drag top below current bottom
+      if (newPctFrom >= currentBeat.pctTo) {
+        console.log('🚫 Top handle can\'t go below bottom');
+        return;
+      }
+      // Can't go below 0%
+      if (newPctFrom < 0) {
+        newPctFrom = 0;
+      }
+    } else if (handle === 'bottom') {
+      // Can't drag bottom below the top of beat below
+      if (beatBelow && newPctTo > beatBelow.pctFrom) {
+        newPctTo = beatBelow.pctFrom;
+        console.log('🚫 Prevented overlap with beat below');
+      }
+      // Can't drag bottom above current top
+      if (newPctTo <= currentBeat.pctFrom) {
+        console.log('🚫 Bottom handle can\'t go above top');
+        return;
+      }
+      // Can't go above 100%
+      if (newPctTo > 100) {
+        newPctTo = 100;
+      }
+    }
+
+    // Update the beat
+    const updates: Partial<BeatCardData> = {
+      pctFrom: handle === 'top' ? newPctFrom : currentBeat.pctFrom,
+      pctTo: handle === 'bottom' ? newPctTo : currentBeat.pctTo,
+    };
+
+    console.log(`✅ Updating beat "${currentBeat.label}":`, updates);
+    onUpdateBeat(beatId, updates);
   };
 
   // 🎯 Calculate container bounds (first act top to last act bottom)

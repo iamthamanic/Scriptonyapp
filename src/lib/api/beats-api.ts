@@ -7,7 +7,7 @@
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { getAuthToken } from '../auth/getAuthToken';
 
-const BEATS_BASE_URL = `https://${projectId}.supabase.co/functions/v1/scriptony-beats`;
+const BEATS_BASE_URL = `https://${projectId}.supabase.co/functions/v1/make-server-3b52693b`;
 
 export interface StoryBeat {
   id: string;
@@ -107,22 +107,55 @@ export async function createBeat(payload: CreateBeatPayload): Promise<StoryBeat>
 export async function updateBeat(beatId: string, payload: UpdateBeatPayload): Promise<StoryBeat> {
   const token = await getAuthToken();
   
-  const response = await fetch(`${BEATS_BASE_URL}/beats/${beatId}`, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to update beat');
+  if (!token) {
+    throw new Error('Not authenticated - no access token available');
   }
+  
+  const url = `${BEATS_BASE_URL}/beats/${beatId}`;
+  console.log('[BeatsAPI] Updating beat:', { beatId, payload, url, token: token.substring(0, 20) + '...' });
+  
+  try {
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
 
-  const data = await response.json();
-  return data.beat;
+    if (!response.ok) {
+      let errorMessage = 'Failed to update beat';
+      try {
+        const error = await response.json();
+        errorMessage = error.error || errorMessage;
+      } catch (e) {
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      }
+      console.error('[BeatsAPI] Update failed:', { beatId, status: response.status, error: errorMessage });
+      throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+    console.log('[BeatsAPI] Update successful:', { beatId });
+    return data.beat;
+  } catch (error) {
+    console.error('[BeatsAPI] Network or parsing error:', error);
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      console.error('[BeatsAPI] 🚨 CORS or Network issue!', {
+        url,
+        beatId,
+        projectId,
+        checkList: [
+          '1. Is the Edge Function deployed?',
+          '2. Check browser console for CORS errors',
+          '3. Verify Supabase URL is correct',
+          '4. Check if Auth token is valid'
+        ]
+      });
+    }
+    throw error;
+  }
 }
 
 /**
@@ -130,6 +163,12 @@ export async function updateBeat(beatId: string, payload: UpdateBeatPayload): Pr
  */
 export async function deleteBeat(beatId: string): Promise<void> {
   const token = await getAuthToken();
+  
+  if (!token) {
+    throw new Error('Not authenticated - no access token available');
+  }
+  
+  console.log('[BeatsAPI] Deleting beat:', { beatId });
   
   const response = await fetch(`${BEATS_BASE_URL}/beats/${beatId}`, {
     method: 'DELETE',
@@ -140,9 +179,18 @@ export async function deleteBeat(beatId: string): Promise<void> {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to delete beat');
+    let errorMessage = 'Failed to delete beat';
+    try {
+      const error = await response.json();
+      errorMessage = error.error || errorMessage;
+    } catch (e) {
+      errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+    }
+    console.error('[BeatsAPI] Delete failed:', { beatId, status: response.status, error: errorMessage });
+    throw new Error(errorMessage);
   }
+  
+  console.log('[BeatsAPI] Delete successful:', { beatId });
 }
 
 /**

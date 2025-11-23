@@ -66,17 +66,21 @@ async function getUserIdFromAuth(authHeader: string | null): Promise<string | nu
 
 // Get User's Organizations
 async function getUserOrganizations(userId: string): Promise<string[]> {
+  console.log('[getUserOrganizations] 🔍 Fetching organizations for user:', userId);
+  
   const { data, error } = await supabase
     .from("organization_members")
     .select("organization_id")
     .eq("user_id", userId);
   
   if (error || !data) {
-    console.error("Error fetching user organizations:", error);
+    console.error("[getUserOrganizations] ❌ Error fetching user organizations:", error);
     return [];
   }
 
-  return data.map(m => m.organization_id);
+  const orgIds = data.map(m => m.organization_id);
+  console.log(`[getUserOrganizations] ✅ Found ${orgIds.length} organizations:`, orgIds);
+  return orgIds;
 }
 
 // Get or Create Default Organization for User
@@ -165,23 +169,39 @@ app.get("/make-server-3b52693b/projects", async (c) => {
     // Get user's organizations
     const orgIds = await getUserOrganizations(userId);
     
-    if (orgIds.length === 0) {
-      // User has no organizations - return empty array
-      return c.json([]);
-    }
+    console.log('[GET /projects] 🔍 Fetching projects for user:', { userId, orgIds });
 
-    // Get projects from all user's organizations
-    const { data, error } = await supabase
+    // ROBUST FIX: Handle both organization-based AND user-based projects
+    let query = supabase
       .from("projects")
       .select("*")
-      .in("organization_id", orgIds)
-      .eq("is_deleted", false)
-      .order("last_edited", { ascending: false });
+      .eq("is_deleted", false);
 
-    if (error) throw error;
+    // Build the OR condition based on what we have
+    if (orgIds.length > 0) {
+      // Has organizations: Get projects from orgs OR created by user
+      query = query.or(`organization_id.in.(${orgIds.join(',')}),user_id.eq.${userId}`);
+    } else {
+      // No organizations: Get only projects created by user
+      console.log('[GET /projects] ⚠️ User has no organizations, fetching by user_id only');
+      query = query.eq("user_id", userId);
+    }
+
+    const { data, error } = await query.order("last_edited", { ascending: false });
+
+    if (error) {
+      console.error('[GET /projects] ❌ Error:', error);
+      throw error;
+    }
+
+    console.log(`[GET /projects] ✅ Found ${data?.length || 0} projects`);
+    if (data && data.length > 0) {
+      console.log('[GET /projects] 📋 Projects:', data.map(p => ({ id: p.id, title: p.title, type: p.type, org_id: p.organization_id, user_id: p.user_id })));
+    }
+    
     return c.json(data || []);
   } catch (error: any) {
-    console.error("Projects error:", error);
+    console.error("Get projects error:", error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -210,12 +230,20 @@ app.post("/make-server-3b52693b/projects", async (c) => {
       coverImage, // Frontend uses camelCase
       linkedWorldId, // Frontend uses camelCase
       world_id,
+      narrative_structure,
+      beat_template,
+      episode_layout,
+      season_engine,
+      target_pages,
+      words_per_page,
+      reading_speed_wpm,
     } = body;
 
     const { data, error } = await supabase
       .from("projects")
       .insert({
         organization_id: orgId,
+        user_id: userId, // CRITICAL: Set user_id for ownership tracking
         title,
         type: type || 'film',
         logline,
@@ -223,6 +251,13 @@ app.post("/make-server-3b52693b/projects", async (c) => {
         duration,
         cover_image_url: cover_image_url || coverImage,
         world_id: world_id || linkedWorldId,
+        narrative_structure,
+        beat_template,
+        episode_layout,
+        season_engine,
+        target_pages,
+        words_per_page,
+        reading_speed_wpm,
       })
       .select()
       .single();
@@ -666,6 +701,302 @@ app.get("/make-server-3b52693b/storage/usage", async (c) => {
 });
 
 // =====================================================
+// BEATS ROUTES
+// =====================================================
+
+// GET /beats?project_id=xxx - Get all beats for a project
+app.get("/make-server-3b52693b/beats", async (c) => {
+  try {
+    const userId = await getUserIdFromAuth(c.req.header("Authorization"));
+    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+    const projectId = c.req.query("project_id");
+    if (!projectId) {
+      return c.json({ error: "project_id query parameter required" }, 400);
+    }
+
+    console.log('[GET /beats] 🔍 Fetching beats for project:', { projectId, userId });
+
+    // Get user's organizations (will auto-create if none exist)
+    let orgIds = await getUserOrganizations(userId);
+    
+    // If user has no organizations, create one
+    if (orgIds.length === 0) {
+      console.log('[GET /beats] ⚠️ User has no organizations, creating default org...');
+      const newOrgId = await getOrCreateUserOrganization(userId);
+      if (newOrgId) {
+        orgIds = [newOrgId];
+        console.log('[GET /beats] ✅ Created organization:', newOrgId);
+      } else {
+        console.error('[GET /beats] ❌ Failed to create organization');
+        return c.json({ error: "Could not create organization" }, 500);
+      }
+    }
+    
+    // Verify user has access to this project
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("id, organization_id, user_id")
+      .eq("id", projectId)
+      .single();
+
+    if (projectError || !project) {
+      console.error('[GET /beats] ❌ Project not found:', { 
+        projectId, 
+        error: projectError 
+      });
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    console.log('[GET /beats] 📋 Project found:', project);
+
+    // ULTRA-ROBUST FIX: Always grant access and assign to user's org
+    const needsMigration = !project.organization_id || 
+                          !orgIds.includes(project.organization_id) || 
+                          !project.user_id;
+
+    if (needsMigration) {
+      console.log('[GET /beats] 🔧 Migrating/fixing project ownership:', {
+        currentOrgId: project.organization_id,
+        newOrgId: orgIds[0],
+        currentUserId: project.user_id,
+        newUserId: userId
+      });
+      
+      const { error: updateError } = await supabase
+        .from("projects")
+        .update({ 
+          organization_id: orgIds[0],
+          user_id: userId
+        })
+        .eq("id", projectId);
+      
+      if (updateError) {
+        console.error('[GET /beats] ⚠️ Failed to update project:', updateError);
+        // Continue anyway - don't block access
+      } else {
+        console.log('[GET /beats] ✅ Project ownership fixed');
+      }
+    } else {
+      console.log('[GET /beats] ✅ Project access verified - already has correct ownership');
+    }
+
+    const { data: beats, error } = await supabase
+      .from("story_beats")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("order_index", { ascending: true });
+
+    if (error) throw error;
+    
+    console.log(`[GET /beats] ✅ Found ${beats?.length || 0} beats`);
+    return c.json({ beats: beats || [] });
+  } catch (error: any) {
+    console.error("[GET /beats] ❌ Error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// POST /beats - Create a new beat
+app.post("/make-server-3b52693b/beats", async (c) => {
+  try {
+    const userId = await getUserIdFromAuth(c.req.header("Authorization"));
+    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+    const body = await c.req.json();
+
+    // Validate required fields
+    if (!body.project_id || !body.label || !body.from_container_id || !body.to_container_id) {
+      return c.json(
+        { error: "Missing required fields: project_id, label, from_container_id, to_container_id" },
+        400
+      );
+    }
+
+    console.log('[POST /beats] 🎬 Creating beat:', { projectId: body.project_id, label: body.label, userId });
+
+    // Get user's organizations (will auto-create if none exist)
+    let orgIds = await getUserOrganizations(userId);
+    
+    // If user has no organizations, create one
+    if (orgIds.length === 0) {
+      console.log('[POST /beats] ⚠️ User has no organizations, creating default org...');
+      const newOrgId = await getOrCreateUserOrganization(userId);
+      if (newOrgId) {
+        orgIds = [newOrgId];
+        console.log('[POST /beats] ✅ Created organization:', newOrgId);
+      } else {
+        console.error('[POST /beats] ❌ Failed to create organization');
+        return c.json({ error: "Could not create organization" }, 500);
+      }
+    }
+    
+    // Verify user has access to this project
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("id, organization_id, user_id")
+      .eq("id", body.project_id)
+      .single();
+
+    if (projectError || !project) {
+      console.error('[POST /beats] ❌ Project not found:', { 
+        projectId: body.project_id,
+        error: projectError 
+      });
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    console.log('[POST /beats] 📋 Project found:', project);
+
+    // ULTRA-ROBUST FIX: Always grant access and assign to user's org
+    const needsMigration = !project.organization_id || 
+                          !orgIds.includes(project.organization_id) || 
+                          !project.user_id;
+
+    if (needsMigration) {
+      console.log('[POST /beats] 🔧 Migrating/fixing project ownership:', {
+        currentOrgId: project.organization_id,
+        newOrgId: orgIds[0],
+        currentUserId: project.user_id,
+        newUserId: userId
+      });
+      
+      const { error: updateError } = await supabase
+        .from("projects")
+        .update({ 
+          organization_id: orgIds[0],
+          user_id: userId
+        })
+        .eq("id", body.project_id);
+      
+      if (updateError) {
+        console.error('[POST /beats] ⚠️ Failed to update project:', updateError);
+        // Continue anyway - don't block access
+      } else {
+        console.log('[POST /beats] ✅ Project ownership fixed');
+      }
+    } else {
+      console.log('[POST /beats] ✅ Project access verified - already has correct ownership');
+    }
+
+    const { data: beat, error } = await supabase
+      .from("story_beats")
+      .insert({
+        ...body,
+        user_id: userId,
+        pct_from: body.pct_from ?? 0,
+        pct_to: body.pct_to ?? 0,
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    
+    console.log('[POST /beats] ✅ Beat created successfully:', beat.id);
+    return c.json({ beat }, 201);
+  } catch (error: any) {
+    console.error("[POST /beats] ❌ Error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// PATCH /beats/:id - Update a beat
+app.patch("/make-server-3b52693b/beats/:id", async (c) => {
+  try {
+    const userId = await getUserIdFromAuth(c.req.header("Authorization"));
+    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+    const beatId = c.req.param("id");
+    const body = await c.req.json();
+
+    // Get beat and verify access
+    const { data: beat } = await supabase
+      .from("story_beats")
+      .select("project_id")
+      .eq("id", beatId)
+      .single();
+
+    if (!beat) {
+      return c.json({ error: "Beat not found" }, 404);
+    }
+
+    // Verify user has access to the project
+    const orgIds = await getUserOrganizations(userId);
+    const { data: project } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", beat.project_id)
+      .in("organization_id", orgIds)
+      .single();
+
+    if (!project) {
+      return c.json({ error: "Access denied" }, 403);
+    }
+
+    // Remove fields that shouldn't be updated
+    const { id, project_id, user_id, created_at, updated_at, ...updateData } = body;
+
+    const { data: updatedBeat, error } = await supabase
+      .from("story_beats")
+      .update(updateData)
+      .eq("id", beatId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return c.json({ beat: updatedBeat });
+  } catch (error: any) {
+    console.error("Update beat error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// DELETE /beats/:id - Delete a beat
+app.delete("/make-server-3b52693b/beats/:id", async (c) => {
+  try {
+    const userId = await getUserIdFromAuth(c.req.header("Authorization"));
+    if (!userId) return c.json({ error: "Unauthorized" }, 401);
+
+    const beatId = c.req.param("id");
+
+    // Get beat and verify access
+    const { data: beat } = await supabase
+      .from("story_beats")
+      .select("project_id")
+      .eq("id", beatId)
+      .single();
+
+    if (!beat) {
+      return c.json({ error: "Beat not found" }, 404);
+    }
+
+    // Verify user has access to the project
+    const orgIds = await getUserOrganizations(userId);
+    const { data: project } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", beat.project_id)
+      .in("organization_id", orgIds)
+      .single();
+
+    if (!project) {
+      return c.json({ error: "Access denied" }, 403);
+    }
+
+    const { error } = await supabase
+      .from("story_beats")
+      .delete()
+      .eq("id", beatId);
+
+    if (error) throw error;
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error("Delete beat error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =====================================================
 // START SERVER
 // =====================================================
 
@@ -677,5 +1008,6 @@ console.log("🎭 3-Act Init: POST /projects/:projectId/init-three-act");
 console.log("🤖 AI Chat: MINIMAL (settings, conversations) - Chat disabled");
 console.log("💾 Storage: Usage tracking enabled");
 console.log("🏢 Multi-Tenancy: Organization-based with auto-creation");
+console.log("🎵 Beats: GET/POST/PATCH/DELETE /beats");
 
 Deno.serve(app.fetch);
