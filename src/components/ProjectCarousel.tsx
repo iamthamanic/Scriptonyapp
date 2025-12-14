@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, Film, Calendar as CalendarIcon } from "lucide-react";
-import { Card, CardHeader, CardTitle } from "./ui/card";
-import { Badge } from "./ui/badge";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "./ui/button";
 import { 
   Carousel, 
@@ -9,6 +7,7 @@ import {
   CarouselItem,
   type CarouselApi 
 } from "./ui/carousel";
+import { ProjectCardWithPrefetch } from "./ProjectCardWithPrefetch";
 
 interface Project {
   id: string;
@@ -38,6 +37,17 @@ export function ProjectCarousel({
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
   const hasInitialized = useRef(false);
+  
+  // 🚀 PERFORMANCE: Prefetch manager for each project
+  const prefetchRefs = useRef<Map<string, () => void>>(new Map());
+
+  // Cleanup prefetch listeners on unmount
+  useEffect(() => {
+    return () => {
+      prefetchRefs.current.forEach(cleanup => cleanup());
+      prefetchRefs.current.clear();
+    };
+  }, []);
 
   // Initialize: Scroll to first element (center it) on mount
   useEffect(() => {
@@ -210,10 +220,9 @@ export function ProjectCarousel({
               }`}
             >
               <div className="transition-all duration-300 flex justify-center">
-                <Card
-                  className={`cursor-pointer transition-all duration-300 overflow-hidden hover:shadow-xl w-full max-w-[240px] sm:max-w-[260px] md:max-w-[280px] lg:max-w-[300px] ${
-                    index === current ? "border-primary/50 shadow-lg" : ""
-                  }`}
+                <ProjectCardWithPrefetch
+                  project={project}
+                  coverImage={projectCoverImages[project.id]}
                   onClick={() => {
                     if (index === current) {
                       // Click on center project → Navigate
@@ -223,79 +232,9 @@ export function ProjectCarousel({
                       api?.scrollTo(index);
                     }
                   }}
-                >
-                  {/* Cover Image - Portrait 2:3 */}
-                  <div
-                    className="aspect-[2/3] bg-gradient-to-br from-primary/20 to-accent/20 relative overflow-hidden w-full"
-                    style={
-                      projectCoverImages[project.id]
-                        ? {
-                            backgroundImage: `url(${projectCoverImages[project.id]})`,
-                            backgroundSize: "cover",
-                            backgroundPosition: "center",
-                            backgroundBlendMode: "overlay",
-                          }
-                        : {}
-                    }
-                  >
-                    {!projectCoverImages[project.id] && (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <Film className="size-10 md:size-8 text-primary/40" />
-                      </div>
-                    )}
-
-                    {/* Gradient Overlay */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-                  </div>
-
-                  {/* Project Info */}
-                  <CardHeader className="p-2.5 md:p-3 space-y-1.5">
-                    <CardTitle className="text-xs md:text-sm leading-tight line-clamp-2">
-                      {project.title}
-                    </CardTitle>
-
-                    {project.logline && (
-                      <p className="text-[10px] md:text-xs text-muted-foreground line-clamp-1">
-                        {project.logline}
-                      </p>
-                    )}
-
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <Badge variant="secondary" className="text-[9px] h-4 px-1 flex items-center gap-0.5">
-                        {(() => {
-                          const { label, Icon } = getProjectTypeInfo(project.type);
-                          return (
-                            <>
-                              <Icon className="size-2" />
-                              {label}
-                            </>
-                          );
-                        })()}
-                      </Badge>
-                      {project.genre && (
-                        <Badge variant="outline" className="text-[9px] h-4 px-1">
-                          {project.genre}
-                        </Badge>
-                      )}
-                      {project.last_edited && (
-                        <div className="flex items-center gap-0.5 text-[8px] md:text-[9px] text-muted-foreground mt-0.5 w-full">
-                          <CalendarIcon className="size-2" />
-                          <span>
-                            {new Date(project.last_edited).toLocaleDateString("de-DE", {
-                              day: "2-digit",
-                              month: "2-digit",
-                            })}
-                            ,{" "}
-                            {new Date(project.last_edited).toLocaleTimeString("de-DE", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </CardHeader>
-                </Card>
+                  getProjectTypeInfo={getProjectTypeInfo}
+                  isCenter={index === current}
+                />
               </div>
             </CarouselItem>
           ))}

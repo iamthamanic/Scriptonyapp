@@ -390,7 +390,7 @@ export function AudioEditDialog({ open, onOpenChange, audioFile, onSave }: Audio
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-3xl max-h-[90vh] overflow-y-auto md:w-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Scissors className="w-4 h-4 text-violet-600" />

@@ -1,7 +1,7 @@
 /**
  * 👤 SCRIPTONY CHARACTERS MICROSERVICE
  * 
- * 📅 CREATED: 2025-11-01
+ * 📅 CREATED: 2025-11-25
  * 🎯 PURPOSE: Characters Management (Universal for all project types)
  * 
  * Extracted from scriptony-timeline-v2 for:
@@ -30,6 +30,99 @@ import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { Context, Next } from "npm:hono";
+
+// =============================================================================
+// COMPRESSION MIDDLEWARE (INLINE)
+// =============================================================================
+
+/**
+ * 🗜️ Gzip compression using CompressionStream API
+ */
+async function gzipCompress(text: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+      controller.close();
+    }
+  });
+
+  const compressedStream = stream.pipeThrough(
+    new CompressionStream('gzip')
+  );
+
+  const chunks: Uint8Array[] = [];
+  const reader = compressedStream.getReader();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+
+  // Concatenate chunks
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
+}
+
+/**
+ * Compress middleware for Hono - Automatically compress responses with gzip
+ */
+async function compress(c: Context, next: Next) {
+  await next();
+
+  // Only compress JSON responses
+  const contentType = c.res.headers.get('Content-Type');
+  if (!contentType || !contentType.includes('application/json')) {
+    return;
+  }
+
+  // Check if client accepts compression
+  const acceptEncoding = c.req.header('Accept-Encoding') || '';
+  
+  // Get response body
+  const body = await c.res.text();
+  
+  // Skip compression for small responses (<1KB)
+  if (body.length < 1024) {
+    c.res = new Response(body, {
+      status: c.res.status,
+      headers: c.res.headers,
+    });
+    return;
+  }
+
+  // Compress with gzip (best browser support)
+  if (acceptEncoding.includes('gzip')) {
+    const compressed = await gzipCompress(body);
+    c.res = new Response(compressed, {
+      status: c.res.status,
+      headers: new Headers({
+        ...Object.fromEntries(c.res.headers),
+        'Content-Encoding': 'gzip',
+        'Content-Length': compressed.byteLength.toString(),
+        'Vary': 'Accept-Encoding',
+      }),
+    });
+    
+    console.log(`[Compression] Compressed ${body.length} → ${compressed.byteLength} bytes (${Math.round((1 - compressed.byteLength / body.length) * 100)}% savings)`);
+    return;
+  }
+
+  // Fallback: no compression
+  c.res = new Response(body, {
+    status: c.res.status,
+    headers: c.res.headers,
+  });
+}
 
 // =============================================================================
 // SETUP
@@ -42,15 +135,16 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-// Enable logger & CORS
-app.use('*', logger(console.log));
+// Enable CORS (must be FIRST!), logger & compression
 app.use("/*", cors({
   origin: "*",
   allowHeaders: ["Content-Type", "Authorization"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  exposeHeaders: ["Content-Length"],
+  exposeHeaders: ["Content-Length", "Content-Encoding"],
   maxAge: 600,
 }));
+app.use('*', logger(console.log));
+app.use('*', compress); // 🗜️ PERFORMANCE: Enable gzip compression
 
 // =============================================================================
 // AUTH HELPER

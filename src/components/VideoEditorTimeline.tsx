@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Play, Pause, Plus, Minus, Maximize2, Minimize2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { cn } from './ui/utils';
@@ -10,6 +10,8 @@ import type { BookTimelineData } from './BookDropdown';
 import { RichTextEditorModal } from './RichTextEditorModal';
 import { ReadonlyTiptapView } from './ReadonlyTiptapView';
 import { TimelineTextPreview } from './TimelineTextPreview';
+import { trimBeatLeft, trimBeatRight } from './timeline-helpers';
+import { calculateActBlocks, calculateSequenceBlocks, calculateSceneBlocks } from './timeline-blocks';
 
 /**
  * 🎬 VIDEO EDITOR TIMELINE (CapCut Style)
@@ -228,6 +230,9 @@ export function VideoEditorTimeline({
   const [beats, setBeats] = useState<BeatsAPI.StoryBeat[]>([]);
   const [beatsLoading, setBeatsLoading] = useState(false);
   
+  // 🎯 TRACK DB BEATS: Set of beat IDs that exist in the database
+  const [dbBeatIds, setDbBeatIds] = useState<Set<string>>(new Set());
+  
   // 🧲 BEAT MAGNET (Ripple Editing)
   const [beatMagnetEnabled, setBeatMagnetEnabled] = useState(true);
   
@@ -281,6 +286,7 @@ export function VideoEditorTimeline({
   const isBookProjectRef = useRef<boolean>(isBookProject);
   const viewStartSecRef = useRef<number>(0);
   const pxPerSecRef = useRef<number>(0);
+  const currentTimeRef = useRef<number>(0); // 🎯 Current playhead time (for snapping!)
   
   // 🎯 TRACK HEIGHTS (CapCut-Style with localStorage)
   const TRACK_CONSTRAINTS = {
@@ -376,7 +382,179 @@ export function VideoEditorTimeline({
   
   // 🧲 BEAT RIPPLE FUNCTIONS (CapCut-Style Magnetic Timeline)
   const MIN_BEAT_DURATION_SEC = 1; // Minimum beat duration (like CapCut's 0.1s, but 1s for beats)
+  const SNAP_THRESHOLD_PX = 8; // Pixel-based snapping threshold (CapCut/DaVinci style!)
   
+  /**
+   * 🧲 SNAP TIME TO NEAREST EDGE (CapCut/DaVinci Style)
+   * 
+   * Snaps a time value to nearby beats or playhead based on PIXEL distance,
+   * not percentage. This ensures consistent snapping behavior at all zoom levels.
+   * 
+   * @param rawSec - Raw time in seconds to snap
+   * @param beatsArray - Array of all beats
+   * @param duration - Total timeline duration in seconds
+   * @param pxPerSec - Current pixels per second (for pixel-based threshold)
+   * @param options - Optional: excludeBeatId, snapToPlayheadSec
+   * @returns Snapped time in seconds
+   */
+  function snapTime(
+    rawSec: number,
+    beatsArray: BeatsAPI.StoryBeat[],
+    duration: number,
+    pxPerSec: number,
+    options?: {
+      excludeBeatId?: string;
+      snapToPlayheadSec?: number;
+    }
+  ): number {
+    const thresholdSec = SNAP_THRESHOLD_PX / pxPerSec;
+    
+    const edges: number[] = [];
+    
+    // Add beat edges
+    for (const b of beatsArray) {
+      if (options?.excludeBeatId && b.id === options.excludeBeatId) continue;
+      edges.push((b.pct_from / 100) * duration);
+      edges.push((b.pct_to / 100) * duration);
+    }
+    
+    // Add playhead edge
+    if (typeof options?.snapToPlayheadSec === 'number') {
+      edges.push(options.snapToPlayheadSec);
+    }
+    
+    let best = rawSec;
+    let bestDelta = thresholdSec;
+    
+    for (const edge of edges) {
+      const delta = Math.abs(rawSec - edge);
+      if (delta <= bestDelta) {
+        bestDelta = delta;
+        best = edge;
+      }
+    }
+    
+    return Math.max(0, Math.min(duration, best));
+  }
+  
+  /* OLD - REPLACED BY handleTrimMoveSimplified
+  const handleTrimMove = (e: MouseEvent) => {
+    if (!trimingBeat) return;
+    
+    const deltaX = e.clientX - trimStartXRef.current;
+    const deltaSec = deltaX / pxPerSec;
+    let newSec = trimStartSecRef.current + deltaSec;
+    
+    // Get current beat
+    const beat = beats.find(b => b.id === trimingBeat.id);
+    if (!beat) return;
+    
+    if (trimingBeat.handle === 'left') {
+      // LEFT HANDLE: Resize from start
+      const beatEndSec = (beat.pct_to / 100) * duration;
+      
+      // Clamp to min duration and bounds
+      newSec = Math.max(0, Math.min(beatEndSec - MIN_BEAT_DURATION_SEC, newSec));
+      
+      // 🧲 SNAP (if magnet enabled)
+      if (beatMagnetEnabled) {
+        newSec = snapTime(newSec, beats, duration, pxPerSec, {
+          excludeBeatId: trimingBeat.id,
+          snapToPlayheadSec: currentTimeRef.current
+        });
+      }
+      
+      // ✅ Convert snapped seconds to percentage
+      let newPctFrom = (newSec / duration) * 100;
+      
+      // 🧲 FIND ADJACENT BEAT (based on NEW position for accurate snapping!)
+      const otherBeats = beats
+        .filter(b => b.id !== trimingBeat.id)
+        .sort((a, b) => a.pct_from - b.pct_from);
+      
+      // Find beat immediately above (closest beat that ends BEFORE new position)
+      const beatsAbove = otherBeats.filter(b => b.pct_to <= newPctFrom);
+      const beatAbove = beatsAbove.length > 0 ? beatsAbove[beatsAbove.length - 1] : null;
+      
+      console.log(`[Beat Trim] 📍 LEFT: "${beat.label}" moving to ${newPctFrom.toFixed(1)}%`, {
+        magnetEnabled: beatMagnetEnabled,
+        beatAbove: beatAbove ? `"${beatAbove.label}" ends at ${beatAbove.pct_to.toFixed(1)}%` : 'none'
+      });
+      
+      // 🧲 SNAP FIRST (if magnet enabled and close enough)
+      if (beatAbove && beatMagnetEnabled) {
+        const distance = Math.abs(newPctFrom - beatAbove.pct_to);
+        if (distance < SNAP_THRESHOLD_PERCENT) {
+          console.log(`[Beat Trim] 🧲 LEFT snapped! Distance=${distance.toFixed(2)}%`);
+          newPctFrom = beatAbove.pct_to;
+        }
+      }
+      
+      // 🚫 THEN PREVENT OVERLAP: Can't go above beatAbove's bottom
+      if (beatAbove) {
+        const minAllowed = beatAbove.pct_to;
+        if (newPctFrom < minAllowed) {
+          console.log(`[Beat Trim] 🚫 LEFT blocked at ${minAllowed}%`);
+          newPctFrom = minAllowed;
+        }
+      }
+      
+      // 🚫 Min beat duration
+      const maxAllowed = beat.pct_to - (MIN_BEAT_DURATION_SEC / duration * 100);
+      newPctFrom = Math.min(newPctFrom, maxAllowed);
+      
+      setBeats(prev => prev.map(b =>
+        b.id === trimingBeat.id ? { ...b, pct_from: newPctFrom } : b
+      ));
+      
+    } else {
+      // RIGHT HANDLE: Resize from end (CapCut/DaVinci Magnet Style)
+      const oldStartSec = (beat.pct_from / 100) * duration;
+      let clampedEndSec = Math.max(oldStartSec + MIN_BEAT_DURATION_SEC, Math.min(duration, newSec));
+      let newPctTo = (clampedEndSec / duration) * 100;
+      
+      // 🧲 FIND ADJACENT BEAT (based on NEW position for accurate snapping!)
+      const otherBeats = beats
+        .filter(b => b.id !== trimingBeat.id)
+        .sort((a, b) => a.pct_from - b.pct_from);
+      
+      // Find beat immediately below (closest beat that starts AFTER CURRENT end)
+      const beatsBelow = otherBeats.filter(b => b.pct_from >= beat.pct_to);
+      const beatBelow = beatsBelow.length > 0 ? beatsBelow[0] : null;
+      
+      console.log(`[Beat Trim] 📍 RIGHT: "${beat.label}" moving to ${newPctTo.toFixed(1)}%`, {
+        magnetEnabled: beatMagnetEnabled,
+        beatBelow: beatBelow ? `"${beatBelow.label}" starts at ${beatBelow.pct_from.toFixed(1)}%` : 'none'
+      });
+      
+      // CAPCUT/DAVINCI MAGNET: Snapping + Hard Stop
+      if (beatBelow) {
+        // SNAP if close enough and magnet enabled
+        if (beatMagnetEnabled) {
+          const distance = Math.abs(newPctTo - beatBelow.pct_from);
+          if (distance < SNAP_THRESHOLD_PERCENT) {
+            newPctTo = beatBelow.pct_from;
+          }
+        }
+        
+        // HARD STOP: Prevent overlap (always active)
+        if (newPctTo > beatBelow.pct_from) {
+          newPctTo = beatBelow.pct_from;
+        }
+      }
+      
+      // 🚫 Min beat duration
+      const minAllowed = beat.pct_from + (MIN_BEAT_DURATION_SEC / duration * 100);
+      newPctTo = Math.max(newPctTo, minAllowed);
+      
+      setBeats(prev => prev.map(b =>
+        b.id === trimingBeat.id ? { ...b, pct_to: newPctTo } : b
+      ));
+    }
+  };
+  */
+  
+  // 🆕 NEW SIMPLIFIED handleTrimMove using extracted helpers
   const handleTrimMove = (e: MouseEvent) => {
     if (!trimingBeat) return;
     
@@ -384,25 +562,42 @@ export function VideoEditorTimeline({
     const deltaSec = deltaX / pxPerSec;
     const newSec = trimStartSecRef.current + deltaSec;
     
-    // Only update local state during drag (no DB updates!)
+    // Get current beat
     const beat = beats.find(b => b.id === trimingBeat.id);
     if (!beat) return;
     
     if (trimingBeat.handle === 'left') {
-      const oldEndSec = (beat.pct_to / 100) * duration;
-      const clampedStartSec = Math.max(0, Math.min(oldEndSec - MIN_BEAT_DURATION_SEC, newSec));
-      const newPctFrom = (clampedStartSec / duration) * 100;
+      // LEFT HANDLE: Trim from start
+      const result = trimBeatLeft(
+        beat,
+        beats,
+        newSec,
+        duration,
+        beatMagnetEnabled,
+        snapTime,
+        pxPerSec,
+        currentTimeRef.current
+      );
       
       setBeats(prev => prev.map(b =>
-        b.id === trimingBeat.id ? { ...b, pct_from: newPctFrom } : b
+        b.id === trimingBeat.id ? { ...b, pct_from: result.newPctFrom } : b
       ));
+      
     } else {
-      const oldStartSec = (beat.pct_from / 100) * duration;
-      const clampedEndSec = Math.max(oldStartSec + MIN_BEAT_DURATION_SEC, Math.min(duration, newSec));
-      const newPctTo = (clampedEndSec / duration) * 100;
+      // RIGHT HANDLE: Trim from end
+      const result = trimBeatRight(
+        beat,
+        beats,
+        newSec,
+        duration,
+        beatMagnetEnabled,
+        snapTime,
+        pxPerSec,
+        currentTimeRef.current
+      );
       
       setBeats(prev => prev.map(b =>
-        b.id === trimingBeat.id ? { ...b, pct_to: newPctTo } : b
+        b.id === trimingBeat.id ? { ...b, pct_to: result.newPctTo } : b
       ));
     }
   };
@@ -431,31 +626,111 @@ export function VideoEditorTimeline({
         const oldEndSec = trimStartSecRef.current;
         const withRipple = applyBeatRipple(beats, trimingBeat.id, oldEndSec, endSec, beatMagnetEnabled);
         
-        // Update the trimmed beat first
-        await BeatsAPI.updateBeat(trimingBeat.id, { pct_to: beat.pct_to });
+        // Update the trimmed beat first (only if it's in DB)
+        if (dbBeatIds.has(trimingBeat.id)) {
+          try {
+            await BeatsAPI.updateBeat(trimingBeat.id, { pct_to: beat.pct_to });
+          } catch (error: any) {
+            // If beat doesn't exist in DB (404), remove it from tracking
+            if (error.message?.includes('404') || error.message?.includes('not found')) {
+              console.warn(`[Beat Trim] ⚠️ Beat ${trimingBeat.id} not found in DB, removing from tracking...`);
+              setDbBeatIds(prev => {
+                const next = new Set(prev);
+                next.delete(trimingBeat.id);
+                return next;
+              });
+              setTrimingBeat(null);
+              return;
+            }
+            throw error;
+          }
+        } else {
+          console.log(`[Beat Trim] ⏭️ Skipping DB update for template beat ${trimingBeat.id}`);
+        }
         
-        // Update rippled beats if magnet is enabled
-        if (beatMagnetEnabled) {
-          const rippleUpdates = withRipple
-            .filter(b => {
-              const original = originalBeats.find(ob => ob.id === b.id);
-              return b.id !== trimingBeat.id && 
-                     original && 
-                     (b.pct_from !== original.pct_from || b.pct_to !== original.pct_to);
-            });
-          
-          // Update all rippled beats sequentially
-          for (const b of rippleUpdates) {
-            await BeatsAPI.updateBeat(b.id, { pct_from: b.pct_from, pct_to: b.pct_to });
+        // 🎯 UPDATE PUSHED/COMPRESSED BEATS (from manual pushing or ripple)
+        // First check for manually pushed beats (from handleTrimMove)
+        const pushedBeats = beats.filter(b => {
+          const original = originalBeats.find(ob => ob.id === b.id);
+          return b.id !== trimingBeat.id && 
+                 original && 
+                 (b.pct_from !== original.pct_from || b.pct_to !== original.pct_to);
+        });
+        
+        // Then check rippled beats (from applyBeatRipple)
+        const rippleUpdates = beatMagnetEnabled ? withRipple.filter(b => {
+          const original = originalBeats.find(ob => ob.id === b.id);
+          return b.id !== trimingBeat.id && 
+                 original && 
+                 (b.pct_from !== original.pct_from || b.pct_to !== original.pct_to);
+        }) : [];
+        
+        // Combine both (pushed beats have priority)
+        const allUpdates = [...pushedBeats];
+        for (const r of rippleUpdates) {
+          if (!allUpdates.find(p => p.id === r.id)) {
+            allUpdates.push(r);
           }
         }
         
-        // Apply to local state
-        setBeats(withRipple);
+        // Filter to only DB beats
+        const dbUpdates = allUpdates.filter(b => dbBeatIds.has(b.id));
+        console.log(`[Beat Trim] 📤 Saving ${dbUpdates.length}/${allUpdates.length} pushed/rippled beats to DB (skipping ${allUpdates.length - dbUpdates.length} template beats)`);
+        
+        // Update all affected beats sequentially
+        for (const b of dbUpdates) {
+          try {
+            await BeatsAPI.updateBeat(b.id, { pct_from: b.pct_from, pct_to: b.pct_to });
+            console.log(`[Beat Trim] ✅ Saved \"${b.label}\" position`);
+          } catch (error: any) {
+            // If beat doesn't exist, remove from tracking
+            if (error.message?.includes('404') || error.message?.includes('not found')) {
+              console.warn(`[Beat Trim] ⚠️ Beat ${b.id} not found in DB, removing from tracking...`);
+              setDbBeatIds(prev => {
+                const next = new Set(prev);
+                next.delete(b.id);
+                return next;
+              });
+              continue;
+            }
+            throw error;
+          }
+        }
+        
+        // Apply to local state (use current beats state which already includes pushed beats)
+        // If ripple was applied, merge with current state
+        if (beatMagnetEnabled && withRipple.length > 0) {
+          // Merge ripple updates with manually pushed beats
+          const mergedBeats = beats.map(b => {
+            const rippled = withRipple.find(r => r.id === b.id);
+            return rippled || b;
+          });
+          setBeats(mergedBeats);
+        }
+        // Otherwise beats state is already correct from handleTrimMove
         
       } else {
-        // Left handle - just update DB
-        await BeatsAPI.updateBeat(trimingBeat.id, { pct_from: beat.pct_from });
+        // Left handle - just update DB (only if it's in DB)
+        if (dbBeatIds.has(trimingBeat.id)) {
+          try {
+            await BeatsAPI.updateBeat(trimingBeat.id, { pct_from: beat.pct_from });
+          } catch (error: any) {
+            // If beat doesn't exist in DB (404), remove it from tracking
+            if (error.message?.includes('404') || error.message?.includes('not found')) {
+              console.warn(`[Beat Trim] ⚠️ Beat ${trimingBeat.id} not found in DB, removing from tracking...`);
+              setDbBeatIds(prev => {
+                const next = new Set(prev);
+                next.delete(trimingBeat.id);
+                return next;
+              });
+              setTrimingBeat(null);
+              return;
+            }
+            throw error;
+          }
+        } else {
+          console.log(`[Beat Trim] ⏭️ Skipping DB update for template beat ${trimingBeat.id}`);
+        }
       }
       
       console.log('[Beat Trim] ✅ DB updated successfully');
@@ -737,8 +1012,7 @@ export function VideoEditorTimeline({
   const viewEndSec = viewStartSec + (viewportWidth || 0) / pxPerSec;
   
   // 🔄 UPDATE REFS (for RAF loop access without waiting for React render!)
-  const currentTimeRef = useRef(currentTime);
-  currentTimeRef.current = currentTime;
+  currentTimeRef.current = currentTime; // Already declared above - just update
   viewStartSecRef.current = viewStartSec;
   pxPerSecRef.current = pxPerSec;
   isPlayingRef.current = isPlaying;
@@ -1014,6 +1288,55 @@ export function VideoEditorTimeline({
     loadTimelineData();
   }, [projectId, timelineData, isLoadingData, isBookProject, getAccessToken, onDataChange]);
   
+  // 🛠️ AUTO-FIX OVERLAPS: Repair all overlapping beats
+  const fixOverlappingBeats = (beatsToFix: BeatsAPI.StoryBeat[]): BeatsAPI.StoryBeat[] => {
+    if (beatsToFix.length === 0) return beatsToFix;
+    
+    console.log('[Beat Auto-Fix] 🔧 Checking for overlaps...');
+    
+    // Sort beats by pct_from
+    const sorted = [...beatsToFix].sort((a, b) => a.pct_from - b.pct_from);
+    
+    let hasOverlaps = false;
+    const fixed: BeatsAPI.StoryBeat[] = [];
+    
+    for (let i = 0; i < sorted.length; i++) {
+      const beat = { ...sorted[i] };
+      
+      if (i > 0) {
+        const prevBeat = fixed[i - 1];
+        
+        // Check if this beat overlaps with previous
+        if (beat.pct_from < prevBeat.pct_to) {
+          hasOverlaps = true;
+          console.log(`[Beat Auto-Fix] ⚠️ OVERLAP DETECTED: "${beat.label}" (${beat.pct_from.toFixed(1)}-${beat.pct_to.toFixed(1)}%) overlaps with "${prevBeat.label}" (${prevBeat.pct_from.toFixed(1)}-${prevBeat.pct_to.toFixed(1)}%)`);
+          
+          // Fix: Move this beat to start right after the previous beat
+          const originalLength = beat.pct_to - beat.pct_from;
+          beat.pct_from = prevBeat.pct_to;
+          beat.pct_to = beat.pct_from + originalLength;
+          
+          // Clamp to 100%
+          if (beat.pct_to > 100) {
+            beat.pct_to = 100;
+          }
+          
+          console.log(`[Beat Auto-Fix] ✅ FIXED: "${beat.label}" moved to ${beat.pct_from.toFixed(1)}-${beat.pct_to.toFixed(1)}%`);
+        }
+      }
+      
+      fixed.push(beat);
+    }
+    
+    if (hasOverlaps) {
+      console.log('[Beat Auto-Fix] 🎉 All overlaps fixed!');
+    } else {
+      console.log('[Beat Auto-Fix] ✅ No overlaps detected');
+    }
+    
+    return fixed;
+  };
+  
   // 🎬 LOAD BEATS
   useEffect(() => {
     console.log('[VideoEditorTimeline] 🎬 Beat loading effect triggered:', {
@@ -1042,7 +1365,13 @@ export function VideoEditorTimeline({
         created_at: '',
         updated_at: '',
       }));
-      setBeats(convertedBeats);
+      
+      // 🛠️ Auto-fix overlaps
+      const fixedBeats = fixOverlappingBeats(convertedBeats);
+      setBeats(fixedBeats);
+      
+      // 🎯 Template beats are NOT in DB yet, so dbBeatIds stays empty
+      setDbBeatIds(new Set());
     } else {
       console.log('[VideoEditorTimeline] 📥 Loading beats from API...');
       const loadBeats = async () => {
@@ -1050,7 +1379,13 @@ export function VideoEditorTimeline({
           setBeatsLoading(true);
           const fetchedBeats = await BeatsAPI.getBeats(projectId);
           console.log('[VideoEditorTimeline] ✅ Loaded', fetchedBeats.length, 'beats from API');
-          setBeats(fetchedBeats);
+          
+          // 🛠️ Auto-fix overlaps
+          const fixedBeats = fixOverlappingBeats(fetchedBeats);
+          setBeats(fixedBeats);
+          
+          // 🎯 Track DB beat IDs
+          setDbBeatIds(new Set(fixedBeats.map(b => b.id)));
         } catch (error) {
           console.error('[VideoEditorTimeline] Failed to load beats:', error);
         } finally {
@@ -1062,22 +1397,30 @@ export function VideoEditorTimeline({
     }
   }, [projectId, parentBeats]);
   
-  // 🎯 MAP BEATS TO PIXELS
-  const beatBlocks = beats.map(beat => {
-    const startSec = (beat.pct_from / 100) * duration;
-    const endSec = (beat.pct_to / 100) * duration;
-    const x = (startSec - viewStartSec) * pxPerSec;
-    const width = (endSec - startSec) * pxPerSec;
-    
-    return {
-      ...beat,
-      startSec,
-      endSec,
-      x,
-      width,
-      visible: endSec >= viewStartSec && startSec <= viewEndSec,
-    };
-  });
+  // 🎯 MAP BEATS TO PIXELS (MEMOIZED for performance!)
+  const beatBlocks = useMemo(() => {
+    const start = performance.now();
+    const result = beats.map(beat => {
+      const startSec = (beat.pct_from / 100) * duration;
+      const endSec = (beat.pct_to / 100) * duration;
+      const x = (startSec - viewStartSec) * pxPerSec;
+      const width = (endSec - startSec) * pxPerSec;
+      
+      return {
+        ...beat,
+        startSec,
+        endSec,
+        x,
+        width,
+        visible: endSec >= viewStartSec && startSec <= viewEndSec,
+      };
+    });
+    const elapsed = performance.now() - start;
+    if (elapsed > 5) {
+      console.warn(`[VideoEditorTimeline] ⚠️ beatBlocks calculation took ${elapsed.toFixed(2)}ms (SLA: 5ms)`);
+    }
+    return result;
+  }, [beats, duration, viewStartSec, viewEndSec, pxPerSec]);
   
   /**
    * Apply ripple effect to beats after a beat's end time changes
@@ -1198,116 +1541,9 @@ export function VideoEditorTimeline({
     }
   };
   
-  /**
-   * Trim beat from right handle
-   */
-  const handleBeatTrimRight = async (beatId: string, newEndSec: number) => {
-    const beat = beats.find(b => b.id === beatId);
-    if (!beat) return;
-    
-    const oldStartSec = (beat.pct_from / 100) * duration;
-    const oldEndSec = (beat.pct_to / 100) * duration;
-    
-    // Clamp to minimum duration
-    const clampedEndSec = Math.max(oldStartSec + MIN_BEAT_DURATION_SEC, Math.min(duration, newEndSec));
-    
-    // Convert to percentage
-    const newPctTo = (clampedEndSec / duration) * 100;
-    
-    // Update beat
-    const updatedBeats = beats.map(b =>
-      b.id === beatId ? { ...b, pct_to: newPctTo } : b
-    );
-    
-    // Apply ripple
-    const withRipple = applyBeatRipple(
-      updatedBeats,
-      beatId,
-      oldEndSec,
-      clampedEndSec,
-      beatMagnetEnabled
-    );
-    
-    setBeats(withRipple);
-    
-    // Update database
-    try {
-      await BeatsAPI.updateBeat(beatId, { pct_to: newPctTo });
-      
-      // Update rippled beats in database
-      if (beatMagnetEnabled) {
-        withRipple.forEach(b => {
-          if (b.id !== beatId && (b.pct_from !== beats.find(ob => ob.id === b.id)?.pct_from)) {
-            BeatsAPI.updateBeat(b.id, { pct_from: b.pct_from, pct_to: b.pct_to });
-          }
-        });
-      }
-    } catch (error) {
-      console.error('[Beat Trim Right] Error updating beat:', error);
-    }
-  };
-  
-  /**
-   * Trim beat from left handle
-   */
-  const handleBeatTrimLeft = async (beatId: string, newStartSec: number) => {
-    const beat = beats.find(b => b.id === beatId);
-    if (!beat) return;
-    
-    const oldEndSec = (beat.pct_to / 100) * duration;
-    
-    // Clamp to minimum duration and bounds
-    const clampedStartSec = Math.max(0, Math.min(oldEndSec - MIN_BEAT_DURATION_SEC, newStartSec));
-    
-    // Check for collision with previous beat
-    const beatStartSec = (beat.pct_from / 100) * duration;
-    const sortedBeats = [...beats].sort((a, b) => a.pct_from - b.pct_from);
-    const beatIndex = sortedBeats.findIndex(b => b.id === beatId);
-    
-    if (beatIndex > 0 && beatMagnetEnabled) {
-      const prevBeat = sortedBeats[beatIndex - 1];
-      const prevEndSec = (prevBeat.pct_to / 100) * duration;
-      
-      // If extending left would overlap previous beat, push previous beat left
-      if (clampedStartSec < prevEndSec) {
-        const pushDelta = prevEndSec - clampedStartSec;
-        const newPrevEndSec = prevEndSec - pushDelta;
-        const newPrevStartSec = (prevBeat.pct_from / 100) * duration - pushDelta;
-        
-        // Clamp previous beat
-        const finalPrevStartSec = Math.max(0, newPrevStartSec);
-        const finalPrevEndSec = Math.max(finalPrevStartSec + MIN_BEAT_DURATION_SEC, newPrevEndSec);
-        
-        // Update previous beat
-        const newPrevPctFrom = (finalPrevStartSec / duration) * 100;
-        const newPrevPctTo = (finalPrevEndSec / duration) * 100;
-        
-        await BeatsAPI.updateBeat(prevBeat.id, { pct_from: newPrevPctFrom, pct_to: newPrevPctTo });
-        
-        setBeats(prev => prev.map(b =>
-          b.id === prevBeat.id ? { ...b, pct_from: newPrevPctFrom, pct_to: newPrevPctTo } : b
-        ));
-      }
-    }
-    
-    // Convert to percentage
-    const newPctFrom = (clampedStartSec / duration) * 100;
-    
-    // Update beat
-    setBeats(prev => prev.map(b =>
-      b.id === beatId ? { ...b, pct_from: newPctFrom } : b
-    ));
-    
-    // Update database
-    try {
-      await BeatsAPI.updateBeat(beatId, { pct_from: newPctFrom });
-    } catch (error) {
-      console.error('[Beat Trim Left] Error updating beat:', error);
-    }
-  };
-  
-  // 🎯 CALCULATE ACT POSITIONS (based on cumulative duration for books)
-  const actBlocks = (timelineData?.acts || []).map((act, actIndex) => {
+  // ⚠️ DEPRECATED: Old inline calculation (replaced by memoized version below)
+  // Kept for reference only - not used in render
+  const actBlocks_DEPRECATED = (timelineData?.acts || []).map((act, actIndex) => {
     if (isBookProject && readingSpeedWpm) {
       // 📖 BOOK: Position based on cumulative duration
       // Acts with text: duration = (wordCount / wpm) * 60
@@ -1386,8 +1622,20 @@ export function VideoEditorTimeline({
     }
   });
   
-  // 🎯 CALCULATE SEQUENCE/CHAPTER POSITIONS
-  const sequenceBlocks: any[] = [];
+  // 🚀 OPTIMIZED: Memoized act blocks calculation
+  const actBlocks = useMemo(() => {
+    const start = performance.now();
+    const result = calculateActBlocks(timelineData, duration, viewStartSec, viewEndSec, pxPerSec, isBookProject, readingSpeedWpm);
+    const elapsed = performance.now() - start;
+    if (elapsed > 10) {
+      console.warn(`[VideoEditorTimeline] ⚠️ actBlocks calculation took ${elapsed.toFixed(2)}ms (SLA: 10ms)`);
+    }
+    return result;
+  }, [timelineData, duration, viewStartSec, viewEndSec, pxPerSec, isBookProject, readingSpeedWpm]);
+  
+  // ⚠️ DEPRECATED: Old inline calculation (replaced by memoized version below)
+  // Kept for reference only - not used in render
+  const sequenceBlocks_DEPRECATED: any[] = [];
   
   if (isBookProject && totalWords && readingSpeedWpm) {
     // 📖 BOOK: Position based on ACTUAL word count from scenes
@@ -1425,7 +1673,7 @@ export function VideoEditorTimeline({
           
           console.log(`[VideoEditorTimeline] 📗 Seq "${sequence.title}": ${seqWords} words → ${startSec.toFixed(0)}s - ${endSec.toFixed(0)}s`);
           
-          sequenceBlocks.push({
+          sequenceBlocks_DEPRECATED.push({
             ...sequence,
             wordCount: seqWords,
             startSec,
@@ -1461,7 +1709,7 @@ export function VideoEditorTimeline({
         const x = (startSec - viewStartSec) * pxPerSec;
         const width = (endSec - startSec) * pxPerSec;
         
-        sequenceBlocks.push({
+        sequenceBlocks_DEPRECATED.push({
           ...sequence,
           startSec,
           endSec,
@@ -1473,8 +1721,20 @@ export function VideoEditorTimeline({
     });
   }
   
-  // 🎯 CALCULATE SCENE/SECTION POSITIONS
-  const sceneBlocks: any[] = [];
+  // 🚀 OPTIMIZED: Memoized sequence blocks calculation
+  const sequenceBlocks = useMemo(() => {
+    const start = performance.now();
+    const result = calculateSequenceBlocks(timelineData, duration, viewStartSec, viewEndSec, pxPerSec, isBookProject, totalWords, readingSpeedWpm);
+    const elapsed = performance.now() - start;
+    if (elapsed > 10) {
+      console.warn(`[VideoEditorTimeline] ⚠️ sequenceBlocks calculation took ${elapsed.toFixed(2)}ms (SLA: 10ms)`);
+    }
+    return result;
+  }, [timelineData, duration, viewStartSec, viewEndSec, pxPerSec, isBookProject, totalWords, readingSpeedWpm]);
+  
+  // ⚠️ DEPRECATED: Old inline calculation (replaced by memoized version below)
+  // Kept for reference only - not used in render
+  const sceneBlocks_DEPRECATED: any[] = [];
   
   if (isBookProject && readingSpeedWpm) {
     // 📖 BOOK: Position based on word count from content
@@ -1504,9 +1764,9 @@ export function VideoEditorTimeline({
             const x = (startSec - viewStartSec) * pxPerSec;
             const width = (endSec - startSec) * pxPerSec;
             
-            console.log(`[VideoEditorTimeline] 📕 Scene "${scene.title}": ${sceneWords} words → ${startSec.toFixed(0)}s - ${endSec.toFixed(0)}s`);
+            console.log(`[VideoEditorTimeline] �� Scene "${scene.title}": ${sceneWords} words → ${startSec.toFixed(0)}s - ${endSec.toFixed(0)}s`);
             
-            sceneBlocks.push({
+            sceneBlocks_DEPRECATED.push({
               ...scene,
               wordCount: sceneWords,
               startSec,
@@ -1553,7 +1813,7 @@ export function VideoEditorTimeline({
           const x = (startSec - viewStartSec) * pxPerSec;
           const width = (endSec - startSec) * pxPerSec;
           
-          sceneBlocks.push({
+          sceneBlocks_DEPRECATED.push({
             ...scene,
             startSec,
             endSec,
@@ -1565,6 +1825,17 @@ export function VideoEditorTimeline({
       });
     });
   }
+  
+  // 🚀 OPTIMIZED: Memoized scene blocks calculation
+  const sceneBlocks = useMemo(() => {
+    const start = performance.now();
+    const result = calculateSceneBlocks(timelineData, duration, viewStartSec, viewEndSec, pxPerSec, isBookProject, readingSpeedWpm);
+    const elapsed = performance.now() - start;
+    if (elapsed > 10) {
+      console.warn(`[VideoEditorTimeline] ⚠️ sceneBlocks calculation took ${elapsed.toFixed(2)}ms (SLA: 10ms)`);
+    }
+    return result;
+  }, [timelineData, duration, viewStartSec, viewEndSec, pxPerSec, isBookProject, readingSpeedWpm]);
   
   // 🎯 UPDATE REF: Store sceneBlocks for playback functions
   sceneBlocksRef.current = sceneBlocks;
@@ -1627,9 +1898,9 @@ export function VideoEditorTimeline({
   
   // Handle playhead click
   const handlePlayheadClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!viewportRef.current) return;
+    if (!scrollRef.current) return;
     
-    const rect = viewportRef.current.getBoundingClientRect();
+    const rect = scrollRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const newTime = viewStartSec + clickX / pxPerSec;
     const clampedTime = Math.max(0, Math.min(duration, newTime));
@@ -1664,9 +1935,9 @@ export function VideoEditorTimeline({
   
   // Handle cursor drag start
   const handleCursorDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!viewportRef.current) return;
+    if (!scrollRef.current) return;
     
-    const rect = viewportRef.current.getBoundingClientRect();
+    const rect = scrollRef.current.getBoundingClientRect();
     const dragStartX = e.clientX - rect.left;
     const dragStartTime = currentTime;
     
@@ -1677,9 +1948,9 @@ export function VideoEditorTimeline({
   
   // Handle cursor drag move
   const handleCursorDragMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isDraggingCursor || !viewportRef.current) return;
+    if (!isDraggingCursor || !scrollRef.current) return;
     
-    const rect = viewportRef.current.getBoundingClientRect();
+    const rect = scrollRef.current.getBoundingClientRect();
     const dragCurrentX = e.clientX - rect.left;
     const dragStartX = dragStartXRef.current;
     const dragStartTime = dragStartTimeRef.current;

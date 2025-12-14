@@ -202,6 +202,7 @@
     --container-sm: 24rem;
     --container-md: 28rem;
     --container-lg: 32rem;
+    --container-xl: 36rem;
     --container-2xl: 42rem;
     --container-3xl: 48rem;
     --container-4xl: 56rem;
@@ -598,6 +599,10 @@
     position: fixed;
   }
 
+  .fixed\! {
+    position: fixed !important;
+  }
+
   .relative {
     position: relative;
   }
@@ -894,6 +899,10 @@
 
   .mt-2 {
     margin-top: calc(var(--spacing) * 2);
+  }
+
+  .mt-3 {
+    margin-top: calc(var(--spacing) * 3);
   }
 
   .mt-4 {
@@ -1430,6 +1439,10 @@
     min-height: 20px;
   }
 
+  .min-h-\[44px\] {
+    min-height: 44px;
+  }
+
   .min-h-\[50px\] {
     min-height: 50px;
   }
@@ -1574,6 +1587,10 @@
     width: calc(var(--spacing) * 32);
   }
 
+  .w-48 {
+    width: calc(var(--spacing) * 48);
+  }
+
   .w-60 {
     width: calc(var(--spacing) * 60);
   }
@@ -1608,6 +1625,10 @@
 
   .w-\[70px\] {
     width: 70px;
+  }
+
+  .w-\[95vw\] {
+    width: 95vw;
   }
 
   .w-\[180px\] {
@@ -1700,6 +1721,10 @@
 
   .max-w-none {
     max-width: none;
+  }
+
+  .max-w-xl {
+    max-width: var(--container-xl);
   }
 
   .max-w-xs {
@@ -2286,6 +2311,10 @@
   .border-dashed {
     --tw-border-style: dashed;
     border-style: dashed;
+  }
+
+  .border-\[\#6E59A5\] {
+    border-color: #6e59a5;
   }
 
   .border-accent {
@@ -3547,6 +3576,10 @@
     padding-top: calc(var(--spacing) * 6);
   }
 
+  .pt-14 {
+    padding-top: calc(var(--spacing) * 14);
+  }
+
   .pt-16 {
     padding-top: calc(var(--spacing) * 16);
   }
@@ -3607,6 +3640,10 @@
     padding-bottom: calc(var(--spacing) * 12);
   }
 
+  .pb-20 {
+    padding-bottom: calc(var(--spacing) * 20);
+  }
+
   .pb-24 {
     padding-bottom: calc(var(--spacing) * 24);
   }
@@ -3641,6 +3678,10 @@
 
   .text-left {
     text-align: left;
+  }
+
+  .text-right {
+    text-align: right;
   }
 
   .align-middle {
@@ -4775,6 +4816,12 @@
   }
 
   @media (hover: hover) {
+    .hover\:bg-accent:hover {
+      background-color: var(--accent);
+    }
+  }
+
+  @media (hover: hover) {
     .hover\:bg-accent\/5:hover {
       background-color: var(--accent);
     }
@@ -4782,6 +4829,18 @@
     @supports (color: color-mix(in lab, red, red)) {
       .hover\:bg-accent\/5:hover {
         background-color: color-mix(in oklab, var(--accent) 5%, transparent);
+      }
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:bg-accent\/50:hover {
+      background-color: var(--accent);
+    }
+
+    @supports (color: color-mix(in lab, red, red)) {
+      .hover\:bg-accent\/50:hover {
+        background-color: color-mix(in oklab, var(--accent) 50%, transparent);
       }
     }
   }
@@ -5083,6 +5142,12 @@
   @media (hover: hover) {
     .hover\:bg-yellow-50:hover {
       background-color: var(--color-yellow-50);
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:text-accent-foreground:hover {
+      color: var(--accent-foreground);
     }
   }
 
@@ -5754,12 +5819,6 @@
   }
 
   @media (width >= 40rem) {
-    .sm\:max-w-3xl {
-      max-width: var(--container-3xl);
-    }
-  }
-
-  @media (width >= 40rem) {
     .sm\:max-w-\[260px\] {
       max-width: 260px;
     }
@@ -5856,12 +5915,6 @@
   }
 
   @media (width >= 48rem) {
-    .md\:mx-auto {
-      margin-inline: auto;
-    }
-  }
-
-  @media (width >= 48rem) {
     .md\:-ml-0 {
       margin-left: calc(var(--spacing) * 0);
     }
@@ -5949,8 +6002,8 @@
   }
 
   @media (width >= 48rem) {
-    .md\:max-w-5xl {
-      max-width: var(--container-5xl);
+    .md\:w-auto {
+      width: auto;
     }
   }
 

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2, List, MoreVertical, Copy, BarChart3, ChevronUp, Tv, Book, Headphones, Layers } from "lucide-react";
+import { Film, Plus, ChevronRight, ArrowLeft, Upload, X, Info, Search, Calendar as CalendarIcon, Camera, Edit2, Save, GripVertical, Image as ImageIcon, AtSign, Globe, ChevronDown, User, Trash2, AlertTriangle, Loader2, List, MoreVertical, Copy, BarChart3, ChevronUp, Tv, Book, Headphones, Layers, Clock } from "lucide-react";
 import { DndProvider, useDrag, useDrop } from "react-dnd";
 import { motion, AnimatePresence } from "motion/react";
 import { Button } from "../ui/button";
@@ -730,6 +730,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
         showStatsDialog={showStatsDialog}
         setShowStatsDialog={setShowStatsDialog}
         timelineCache={timelineCache}
+        timelineCacheLoading={timelineCacheLoading}
         onTimelineDataChange={handleTimelineDataChange}
         structureOpen={structureOpen}
         setStructureOpen={setStructureOpen}
@@ -976,7 +977,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                 projectCoverImages={projectCoverImages}
                 onNavigate={onNavigate}
                 getProjectTypeInfo={getProjectTypeInfo}
-                showLatestLabel={filteredProjects.length > 0 && filteredProjects[0].last_edited !== undefined}
+                showLatestLabel={filteredProjects.length > 0}
               />
             );
           }
@@ -988,7 +989,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
               layout
             >
               <AnimatePresence mode="popLayout">
-                {filteredProjects.map((project) => (
+                {filteredProjects.map((project, index) => (
                   <motion.div
                     key={project.id}
                     layout
@@ -999,9 +1000,17 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                   >
                     {/* LIST VIEW */}
                       <Card
-                        className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
+                        className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30 relative"
                         onClick={() => onNavigate("projekte", project.id)}
                       >
+                        {/* "Zuletzt bearbeitet" Badge - ONLY first item - TOP RIGHT */}
+                        {index === 0 && (
+                          <Badge variant="default" className="absolute top-2 right-2 z-10 text-[9px] h-4 px-1.5 flex items-center gap-0.5 shadow-md">
+                            <Clock className="size-2" />
+                            Zuletzt bearbeitet
+                          </Badge>
+                        )}
+                        
                         <div className="flex items-center gap-3 p-3 rounded-lg transition-all hover:bg-primary/20 border-2 border-transparent hover:border-primary/30">
                           {/* Thumbnail Left - Portrait 2:3 Ratio */}
                           <div 
@@ -1098,7 +1107,8 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
                                   <span>
                                     Zuletzt: {new Date(project.last_edited).toLocaleDateString("de-DE", { 
                                       day: "2-digit", 
-                                      month: "2-digit" 
+                                      month: "2-digit",
+                                      year: "numeric"
                                     })}, {new Date(project.last_edited).toLocaleTimeString("de-DE", { 
                                       hour: "2-digit", 
                                       minute: "2-digit" 
@@ -1120,7 +1130,7 @@ export function ProjectsPage({ selectedProjectId, onNavigate }: ProjectsPageProp
 
       {/* New Project Dialog */}
       <Dialog open={showNewProjectDialog} onOpenChange={setShowNewProjectDialog}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] max-w-2xl rounded-2xl max-h-[85vh] overflow-y-auto md:w-auto">
           <DialogHeader>
             <DialogTitle className="text-primary">Create New Project</DialogTitle>
             <DialogDescription className="sr-only">
@@ -2695,6 +2705,7 @@ interface ProjectDetailProps {
   setShowStatsDialog: (show: boolean) => void;
   // Timeline Cache
   timelineCache: Record<string, TimelineData>;
+  timelineCacheLoading: Record<string, boolean>;
   onTimelineDataChange: (projectId: string, data: TimelineData) => void;
   // Collapsible Sections
   structureOpen: boolean;
@@ -2715,7 +2726,7 @@ interface ProjectDetailProps {
   onEditInspiration: (inspiration: ProjectInspiration) => void;
 }
 
-function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading, onDuplicate, onShowStats, showStatsDialog, setShowStatsDialog, timelineCache, onTimelineDataChange, structureOpen, setStructureOpen, charactersOpen, setCharactersOpen, inspirationOpen, setInspirationOpen, inspirations, inspirationsLoading, showAddInspirationDialog, setShowAddInspirationDialog, editingInspiration, setEditingInspiration, onSaveInspiration, onDeleteInspiration, onEditInspiration }: ProjectDetailProps) {
+function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldbuildingItems, onUpdate, onDelete, showDeleteDialog, setShowDeleteDialog, deletePassword, setDeletePassword, deleteLoading, onDuplicate, onShowStats, showStatsDialog, setShowStatsDialog, timelineCache, timelineCacheLoading, onTimelineDataChange, structureOpen, setStructureOpen, charactersOpen, setCharactersOpen, inspirationOpen, setInspirationOpen, inspirations, inspirationsLoading, showAddInspirationDialog, setShowAddInspirationDialog, editingInspiration, setEditingInspiration, onSaveInspiration, onDeleteInspiration, onEditInspiration }: ProjectDetailProps) {
   const [structureView, setStructureView] = useState<"dropdown" | "timeline">("dropdown");
   const [showNewScene, setShowNewScene] = useState(false);
   const [showNewCharacter, setShowNewCharacter] = useState(false);
@@ -4364,6 +4375,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
           beatTemplate={project.beat_template}
           initialData={timelineCache[project.id]}
           onDataChange={(data) => onTimelineDataChange(project.id, data)}
+          isLoadingCache={timelineCacheLoading[project.id]}
           // 📖 Book Metrics for Timeline Duration
           totalWords={calculatedWords}
           wordsPerPage={project.words_per_page || 250}
@@ -4500,7 +4512,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         setShowNewScene(open);
         if (!open) resetNewSceneForm();
       }}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] max-w-2xl rounded-2xl max-h-[85vh] overflow-y-auto md:w-auto">
           <DialogHeader>
             <DialogTitle>Neue Szene</DialogTitle>
             <DialogDescription>Füge eine neue Szene zu deinem Projekt hinzu</DialogDescription>
@@ -4590,7 +4602,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
 
       {/* Conflict Dialog */}
       <AlertDialog open={showConflictDialog} onOpenChange={setShowConflictDialog}>
-        <AlertDialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl">
+        <AlertDialogContent className="w-[95vw] max-w-xl rounded-2xl md:w-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Szenen-Konflikt</AlertDialogTitle>
             <AlertDialogDescription>
@@ -4629,7 +4641,7 @@ function ProjectDetail({ project, onBack, coverImage, onCoverImageChange, worldb
         setShowNewCharacter(open);
         if (!open) resetNewCharacterForm();
       }}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] max-w-2xl rounded-2xl max-h-[85vh] overflow-y-auto md:w-auto">
           <DialogHeader>
             <DialogTitle>Neuer Charakter</DialogTitle>
             <DialogDescription>Erstelle einen neuen Charakter für dein Projekt</DialogDescription>

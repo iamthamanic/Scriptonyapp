@@ -1,350 +1,418 @@
 /**
  * 🎬 SCRIPTONY BEATS - Story Beats Microservice
+ * 📅 last updated: 2025-11-25
+
  * 
- * CRUD Operations für Story Beats (Save the Cat, Hero's Journey, etc.)
+ * 🚀 PERFORMANCE-OPTIMIERT (Hono Framework)
+ * 
+ * CRUD Operations für Story Beats (Save the Cat, Hero's Journey, etc.):
  * - GET /beats?project_id=xxx - Liste aller Beats
  * - POST /beats - Neuen Beat erstellen
  * - PATCH /beats/:id - Beat aktualisieren
  * - DELETE /beats/:id - Beat löschen
  */
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { Hono } from "npm:hono";
+import { cors } from "npm:hono/cors";
+import { logger } from "npm:hono/logger";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { Context, Next } from "npm:hono";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// =============================================================================
+// COMPRESSION MIDDLEWARE (INLINE)
+// =============================================================================
 
-interface StoryBeat {
-  id?: string;
-  project_id: string;
-  user_id?: string;
-  label: string;
-  template_abbr?: string;
-  description?: string;
-  from_container_id: string;
-  to_container_id: string;
-  pct_from: number;
-  pct_to: number;
-  color?: string;
-  notes?: string;
-  order_index?: number;
-  created_at?: string;
-  updated_at?: string;
+/**
+ * 🗜️ Gzip compression using CompressionStream API
+ */
+async function gzipCompress(text: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+      controller.close();
+    }
+  });
+
+  const compressedStream = stream.pipeThrough(
+    new CompressionStream('gzip')
+  );
+
+  const chunks: Uint8Array[] = [];
+  const reader = compressedStream.getReader();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+
+  // Concatenate chunks
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
 }
 
-serve(async (req) => {
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+/**
+ * Compress middleware for Hono - Automatically compress responses with gzip
+ */
+async function compress(c: Context, next: Next) {
+  await next();
+
+  // Only compress JSON responses
+  const contentType = c.res.headers.get('Content-Type');
+  if (!contentType || !contentType.includes('application/json')) {
+    return;
   }
 
+  // Check if client accepts compression
+  const acceptEncoding = c.req.header('Accept-Encoding') || '';
+  
+  // Get response body
+  const body = await c.res.text();
+  
+  // Skip compression for small responses (<1KB)
+  if (body.length < 1024) {
+    c.res = new Response(body, {
+      status: c.res.status,
+      headers: c.res.headers,
+    });
+    return;
+  }
+
+  // Compress with gzip (best browser support)
+  if (acceptEncoding.includes('gzip')) {
+    const compressed = await gzipCompress(body);
+    c.res = new Response(compressed, {
+      status: c.res.status,
+      headers: new Headers({
+        ...Object.fromEntries(c.res.headers),
+        'Content-Encoding': 'gzip',
+        'Content-Length': compressed.byteLength.toString(),
+        'Vary': 'Accept-Encoding',
+      }),
+    });
+    
+    console.log(`[Compression] Compressed ${body.length} → ${compressed.byteLength} bytes (${Math.round((1 - compressed.byteLength / body.length) * 100)}% savings)`);
+    return;
+  }
+
+  // Fallback: no compression
+  c.res = new Response(body, {
+    status: c.res.status,
+    headers: c.res.headers,
+  });
+}
+
+// =============================================================================
+// SETUP
+// =============================================================================
+
+const app = new Hono().basePath("/scriptony-beats");
+
+const supabase = createClient(
+  Deno.env.get("SUPABASE_URL")!,
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+);
+
+// Enable CORS (must be FIRST!), logger & compression
+app.use("/*", cors({
+  origin: "*",
+  allowHeaders: ["Content-Type", "Authorization"],
+  allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  exposeHeaders: ["Content-Length", "Content-Encoding"],
+  maxAge: 600,
+}));
+app.use('*', logger(console.log));
+app.use('*', compress); // 🗜️ PERFORMANCE: Enable gzip compression
+
+// =============================================================================
+// AUTH HELPER
+// =============================================================================
+
+async function getUserIdFromAuth(authHeader: string | undefined): Promise<string | null> {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return null;
+  }
+  
+  const token = authHeader.substring(7);
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  
+  if (error || !user) {
+    return null;
+  }
+  
+  return user.id;
+}
+
+// =============================================================================
+// HEALTH CHECK
+// =============================================================================
+
+app.get("/health", (c) => {
+  return c.json({ 
+    status: "ok", 
+    function: "scriptony-beats",
+    version: "1.0.0",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// =============================================================================
+// BEATS ROUTES
+// =============================================================================
+
+/**
+ * GET /beats?project_id=xxx
+ * Get all beats for a project
+ */
+app.get("/beats", async (c) => {
   try {
-    // Client für Auth (mit Anon Key)
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      }
-    );
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
 
-    // Admin Client für interne Queries (mit Service Role Key)
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      }
-    );
-
-    // Get user from auth header
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Missing Authorization header' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
     }
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    );
-
-    if (userError || !user) {
-      console.error('Auth error:', userError);
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    const projectId = c.req.query("project_id");
+    
+    if (!projectId) {
+      return c.json({ error: "project_id query parameter required" }, 400);
     }
 
-    const url = new URL(req.url);
-    const path = url.pathname.replace('/scriptony-beats', '');
+    console.log(`[scriptony-beats] 🔍 GET /beats for project: ${projectId}`);
 
-    // ============================================
-    // GET /beats?project_id=xxx
-    // ============================================
-    if (req.method === 'GET' && path === '/beats') {
-      const projectId = url.searchParams.get('project_id');
-      
-      if (!projectId) {
-        return new Response(
-          JSON.stringify({ error: 'project_id query parameter required' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+    const { data: beats, error } = await supabase
+      .from('story_beats')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('order_index', { ascending: true });
 
-      const { data: beats, error } = await supabase
-        .from('story_beats')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('order_index', { ascending: true });
-
-      if (error) {
-        console.error('Error fetching beats:', error);
-        return new Response(
-          JSON.stringify({ error: error.message }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({ beats }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (error) {
+      console.error('[scriptony-beats] ❌ Error fetching beats:', error);
+      return c.json({ error: error.message }, 500);
     }
 
-    // ============================================
-    // POST /beats
-    // ============================================
-    if (req.method === 'POST' && path === '/beats') {
-      const body: Partial<StoryBeat> = await req.json();
-
-      console.log('[POST /beats] Request received:', { 
-        project_id: body.project_id, 
-        label: body.label,
-        user_id: user.id 
-      });
-
-      // Validate required fields
-      if (!body.project_id || !body.label || !body.from_container_id || !body.to_container_id) {
-        return new Response(
-          JSON.stringify({ error: 'Missing required fields: project_id, label, from_container_id, to_container_id' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Validate percentage ranges
-      if (
-        body.pct_from !== undefined && (body.pct_from < 0 || body.pct_from > 100) ||
-        body.pct_to !== undefined && (body.pct_to < 0 || body.pct_to > 100)
-      ) {
-        return new Response(
-          JSON.stringify({ error: 'pct_from and pct_to must be between 0 and 100' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Verify project exists
-      const { data: project, error: projectError } = await supabaseAdmin
-        .from('projects')
-        .select('id, organization_id, title')
-        .eq('id', body.project_id)
-        .single();
-
-      console.log('[POST /beats] Project query:', { 
-        project, 
-        projectError,
-        project_id: body.project_id
-      });
-
-      if (projectError || !project) {
-        console.error('[POST /beats] Project not found:', {
-          projectError,
-          project_id: body.project_id
-        });
-
-        return new Response(
-          JSON.stringify({ 
-            error: 'Project not found',
-            details: projectError?.message
-          }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const { data: beat, error } = await supabaseAdmin
-        .from('story_beats')
-        .insert({
-          ...body,
-          user_id: user.id,
-          pct_from: body.pct_from ?? 0,
-          pct_to: body.pct_to ?? 0,
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error('[POST /beats] Error creating beat:', error);
-        return new Response(
-          JSON.stringify({ error: error.message }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      console.log('[POST /beats] Beat created successfully:', beat.id);
-      return new Response(
-        JSON.stringify({ beat }),
-        { status: 201, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // ============================================
-    // PATCH /beats/:id
-    // ============================================
-    const patchMatch = path.match(/^\/beats\/([a-f0-9-]+)$/);
-    if (req.method === 'PATCH' && patchMatch) {
-      const beatId = patchMatch[1];
-      const body: Partial<StoryBeat> = await req.json();
-
-      // Validate percentage ranges
-      if (
-        body.pct_from !== undefined && (body.pct_from < 0 || body.pct_from > 100) ||
-        body.pct_to !== undefined && (body.pct_to < 0 || body.pct_to > 100)
-      ) {
-        return new Response(
-          JSON.stringify({ error: 'pct_from and pct_to must be between 0 and 100' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Verify user owns the beat (via project)
-      const { data: existingBeat, error: fetchError } = await supabaseAdmin
-        .from('story_beats')
-        .select('project_id')
-        .eq('id', beatId)
-        .single();
-
-      if (fetchError || !existingBeat) {
-        return new Response(
-          JSON.stringify({ error: 'Beat not found' }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Verify project exists
-      const { data: project, error: projectError } = await supabaseAdmin
-        .from('projects')
-        .select('id')
-        .eq('id', existingBeat.project_id)
-        .single();
-
-      if (projectError || !project) {
-        return new Response(
-          JSON.stringify({ error: 'Project not found' }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Remove fields that shouldn't be updated
-      const { id, project_id, user_id, created_at, updated_at, ...updateData } = body as any;
-
-      const { data: beat, error } = await supabaseAdmin
-        .from('story_beats')
-        .update(updateData)
-        .eq('id', beatId)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error updating beat:', error);
-        return new Response(
-          JSON.stringify({ error: error.message }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({ beat }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // ============================================
-    // DELETE /beats/:id
-    // ============================================
-    const deleteMatch = path.match(/^\/beats\/([a-f0-9-]+)$/);
-    if (req.method === 'DELETE' && deleteMatch) {
-      const beatId = deleteMatch[1];
-
-      // Verify user owns the beat (via project)
-      const { data: existingBeat, error: fetchError } = await supabaseAdmin
-        .from('story_beats')
-        .select('project_id')
-        .eq('id', beatId)
-        .single();
-
-      if (fetchError || !existingBeat) {
-        return new Response(
-          JSON.stringify({ error: 'Beat not found' }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Verify project exists
-      const { data: project, error: projectError } = await supabaseAdmin
-        .from('projects')
-        .select('id')
-        .eq('id', existingBeat.project_id)
-        .single();
-
-      if (projectError || !project) {
-        return new Response(
-          JSON.stringify({ error: 'Project not found' }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const { error } = await supabaseAdmin
-        .from('story_beats')
-        .delete()
-        .eq('id', beatId);
-
-      if (error) {
-        console.error('Error deleting beat:', error);
-        return new Response(
-          JSON.stringify({ error: error.message }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({ success: true }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // ============================================
-    // ROUTE NOT FOUND
-    // ============================================
-    return new Response(
-      JSON.stringify({ error: 'Route not found' }),
-      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
-  } catch (error) {
-    console.error('Unexpected error:', error);
-    return new Response(
-      JSON.stringify({ error: error.message || 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    console.log(`[scriptony-beats] ✅ Found ${beats?.length || 0} beats`);
+    return c.json({ beats: beats || [] });
+  } catch (error: any) {
+    console.error("Beats GET error:", error);
+    return c.json({ error: error.message }, 500);
   }
 });
+
+/**
+ * POST /beats
+ * Create new beat
+ */
+app.post("/beats", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const body = await c.req.json();
+    const { 
+      project_id, 
+      label, 
+      template_abbr,
+      description,
+      from_container_id, 
+      to_container_id,
+      pct_from,
+      pct_to,
+      color,
+      notes,
+      order_index,
+    } = body;
+
+    console.log('[scriptony-beats] 📝 POST /beats:', { 
+      project_id, 
+      label,
+      user_id: userId 
+    });
+
+    // Validate required fields
+    if (!project_id || !label || !from_container_id || !to_container_id) {
+      return c.json({ 
+        error: 'Missing required fields: project_id, label, from_container_id, to_container_id' 
+      }, 400);
+    }
+
+    // Validate percentage ranges
+    if (
+      (pct_from !== undefined && (pct_from < 0 || pct_from > 100)) ||
+      (pct_to !== undefined && (pct_to < 0 || pct_to > 100))
+    ) {
+      return c.json({ error: 'pct_from and pct_to must be between 0 and 100' }, 400);
+    }
+
+    // Verify project exists
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('id, organization_id, title')
+      .eq('id', project_id)
+      .single();
+
+    if (projectError || !project) {
+      console.error('[scriptony-beats] ❌ Project not found:', project_id);
+      return c.json({ 
+        error: 'Project not found',
+        details: projectError?.message
+      }, 404);
+    }
+
+    const { data: beat, error } = await supabase
+      .from('story_beats')
+      .insert({
+        project_id,
+        user_id: userId,
+        label,
+        template_abbr: template_abbr || null,
+        description: description || null,
+        from_container_id,
+        to_container_id,
+        pct_from: pct_from ?? 0,
+        pct_to: pct_to ?? 0,
+        color: color || null,
+        notes: notes || null,
+        order_index: order_index ?? 0,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[scriptony-beats] ❌ Error creating beat:', error);
+      return c.json({ error: error.message }, 500);
+    }
+
+    console.log('[scriptony-beats] ✅ Beat created:', beat.id);
+    return c.json({ beat }, 201);
+  } catch (error: any) {
+    console.error("Beats POST error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * PATCH /beats/:id
+ * Update beat
+ */
+app.patch("/beats/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const beatId = c.req.param("id");
+    const body = await c.req.json();
+
+    console.log('[scriptony-beats] 🔄 PATCH /beats/:id:', { beatId });
+
+    // Validate percentage ranges
+    if (
+      (body.pct_from !== undefined && (body.pct_from < 0 || body.pct_from > 100)) ||
+      (body.pct_to !== undefined && (body.pct_to < 0 || body.pct_to > 100))
+    ) {
+      return c.json({ error: 'pct_from and pct_to must be between 0 and 100' }, 400);
+    }
+
+    // Verify beat exists
+    const { data: existingBeat, error: fetchError } = await supabase
+      .from('story_beats')
+      .select('project_id')
+      .eq('id', beatId)
+      .single();
+
+    if (fetchError || !existingBeat) {
+      return c.json({ error: 'Beat not found' }, 404);
+    }
+
+    // Remove fields that shouldn't be updated
+    const { id, project_id, user_id, created_at, updated_at, ...updateData } = body;
+
+    const { data: beat, error } = await supabase
+      .from('story_beats')
+      .update(updateData)
+      .eq('id', beatId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[scriptony-beats] ❌ Error updating beat:', error);
+      return c.json({ error: error.message }, 500);
+    }
+
+    console.log('[scriptony-beats] ✅ Beat updated:', beatId);
+    return c.json({ beat });
+  } catch (error: any) {
+    console.error("Beats PATCH error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * DELETE /beats/:id
+ * Delete beat
+ */
+app.delete("/beats/:id", async (c) => {
+  try {
+    const authHeader = c.req.header("Authorization");
+    const userId = await getUserIdFromAuth(authHeader);
+
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const beatId = c.req.param("id");
+
+    console.log('[scriptony-beats] 🗑️ DELETE /beats/:id:', { beatId });
+
+    // Verify beat exists
+    const { data: existingBeat, error: fetchError } = await supabase
+      .from('story_beats')
+      .select('project_id')
+      .eq('id', beatId)
+      .single();
+
+    if (fetchError || !existingBeat) {
+      return c.json({ error: 'Beat not found' }, 404);
+    }
+
+    const { error } = await supabase
+      .from('story_beats')
+      .delete()
+      .eq('id', beatId);
+
+    if (error) {
+      console.error('[scriptony-beats] ❌ Error deleting beat:', error);
+      return c.json({ error: error.message }, 500);
+    }
+
+    console.log('[scriptony-beats] ✅ Beat deleted:', beatId);
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error("Beats DELETE error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// =============================================================================
+// START SERVER
+// =============================================================================
+
+console.log("🎬 Scriptony Beats Function starting...");
+Deno.serve(app.fetch);

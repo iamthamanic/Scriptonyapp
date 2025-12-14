@@ -197,7 +197,7 @@ export function UploadPage({ onNavigate }: UploadPageProps) {
 
       {/* Analysis Result Dialog */}
       <Dialog open={showResultDialog} onOpenChange={setShowResultDialog}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] max-w-3xl rounded-2xl max-h-[85vh] overflow-y-auto md:w-auto">
           <DialogHeader>
             <DialogTitle>Analyse-Ergebnisse</DialogTitle>
             <DialogDescription className="text-xs">

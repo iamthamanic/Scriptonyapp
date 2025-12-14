@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { Navigation } from "./components/Navigation";
 import { HomePage } from "./components/pages/HomePage";
 import { ProjectsPage } from "./components/pages/ProjectsPage";
@@ -20,6 +21,7 @@ import { ScriptonyAssistant } from "./components/ScriptonyAssistant";
 import { ServerStatusBanner } from "./components/ServerStatusBanner";
 import { ConnectionStatusIndicator } from "./components/ConnectionStatusIndicator";
 import { PerformanceDashboard } from "./components/PerformanceDashboard";
+import { useIsMobile } from "./components/ui/use-mobile";
 import {
   seedInitialData,
   seedTestUser,
@@ -29,10 +31,12 @@ import { TranslationProvider } from "./hooks/useTranslation";
 import { getAuthClient } from "./lib/auth/getAuthClient";
 import { STORAGE_KEYS } from "./lib/config";
 import { setupUndoKeyboardShortcuts } from "./lib/undo-manager";
+import { queryClient } from "./lib/react-query";
 import scriptonyLogo from "figma:asset/762fa3b0c4bc468cb3c0661e6181aee92a01370d.png";
 
 function AppContent() {
   const { user, loading: authLoading } = useAuth();
+  const isMobile = useIsMobile();
   
   // 🔥 ALL STATE DECLARATIONS FIRST (before ANY useEffects)
   const [currentPage, setCurrentPage] = useState(() => {
@@ -47,7 +51,7 @@ function AppContent() {
     const hash = window.location.hash.slice(1); // Remove leading #
     const pathParts = hash.split('/');
     const page = pathParts[0];
-    const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "project-recovery"];
+    const validPages = ["home", "projekte", "welten", "worldbuilding", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "project-recovery"];
     return validPages.includes(page) ? page : "home";
   });
   
@@ -93,7 +97,7 @@ function AppContent() {
       
       console.log('🔗 hashchange detected:', { hash, page, id, categoryId });
       
-      const validPages = ["home", "projekte", "welten", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "project-recovery"];
+      const validPages = ["home", "projekte", "welten", "worldbuilding", "creative-gym", "upload", "admin", "superadmin", "einstellungen", "settings", "present", "auth", "migration", "reset-password", "api-test", "project-recovery"];
       if (validPages.includes(page) || page === "") {
         setCurrentPage(page || "home");
         setSelectedId(id);
@@ -188,6 +192,7 @@ function AppContent() {
           />
         );
       case "welten":
+      case "worldbuilding":
         return (
           <WorldbuildingPage
             selectedWorldId={selectedId}
@@ -195,6 +200,7 @@ function AppContent() {
             onNavigate={handleNavigate}
           />
         );
+      case "gym":
       case "creative-gym":
         return <CreativeGymPage />;
       case "upload":
@@ -233,9 +239,20 @@ function AppContent() {
         theme={theme}
         onToggleTheme={toggleTheme}
         userRole={user.role}
+        currentProjectId={selectedId || null}
       />
       <ServerStatusBanner />
-      <main className="pb-safe w-full md:max-w-5xl md:mx-auto">{renderPage()}</main>
+      {/* 
+        Desktop: content below top nav
+        Mobile: full width with bottom nav spacing 
+      */}
+      <main className={`pb-safe w-full ${ 
+        isMobile 
+          ? 'pb-20' // Bottom nav height on mobile
+          : 'pt-14 max-w-7xl mx-auto px-6' // Top nav spacing on desktop
+      }`}>
+        {renderPage()}
+      </main>
       <Toaster position="top-center" />
       <ScriptonyAssistant />
       <ConnectionStatusIndicator />
@@ -363,7 +380,9 @@ export default function App() {
   return (
     <TranslationProvider>
       <AuthProvider>
-        <AppContent />
+        <QueryClientProvider client={queryClient}>
+          <AppContent />
+        </QueryClientProvider>
       </AuthProvider>
     </TranslationProvider>
   );

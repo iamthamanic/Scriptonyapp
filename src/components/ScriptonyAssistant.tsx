@@ -1624,7 +1624,7 @@ export function ScriptonyAssistant() {
 
       {/* System Prompt Dialog */}
       <Dialog open={isSystemPromptOpen} onOpenChange={setIsSystemPromptOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+        <DialogContent className="w-[95vw] max-w-2xl max-h-[80vh] flex flex-col md:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <div className="size-[20px] flex items-center justify-center">
@@ -1677,7 +1677,7 @@ export function ScriptonyAssistant() {
 
       {/* Export Chat Dialog */}
       <Dialog open={isExportDialogOpen} onOpenChange={setIsExportDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-[95vw] max-w-md md:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <div className="size-[20px] flex items-center justify-center">
@@ -1758,7 +1758,7 @@ export function ScriptonyAssistant() {
 
       {/* Chat History Dialog */}
       <Dialog open={isChatHistoryOpen} onOpenChange={setIsChatHistoryOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+        <DialogContent className="w-[95vw] max-w-4xl max-h-[80vh] flex flex-col md:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <div className="size-[20px] flex items-center justify-center">
@@ -1921,7 +1921,7 @@ export function ScriptonyAssistant() {
 
       {/* RAG Database Dialog */}
       <Dialog open={isRAGDatabaseOpen} onOpenChange={setIsRAGDatabaseOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+        <DialogContent className="w-[95vw] max-w-4xl max-h-[80vh] flex flex-col md:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <div className="size-[20px] flex items-center justify-center">
@@ -2259,7 +2259,7 @@ export function ScriptonyAssistant() {
 
       {/* File Preview Dialog */}
       <Dialog open={previewFile !== null} onOpenChange={() => setPreviewFile(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
+        <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-auto md:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {previewFile?.type === 'pdf' && <FileText className="size-5 text-red-500" />}

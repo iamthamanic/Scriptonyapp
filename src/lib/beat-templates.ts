@@ -453,6 +453,204 @@ export const SEVEN_POINT_TEMPLATE: BeatTemplate = {
   ],
 };
 
+// 8-SEQUENCES: French 8-Sequence Structure
+export const EIGHT_SEQUENCES_TEMPLATE: BeatTemplate = {
+  id: '8-sequences',
+  name: '8-Sequenzen',
+  abbr: '8SEQ',
+  description: 'Französische 8-Sequenzen-Struktur',
+  beats: [
+    {
+      label: 'Sequence 1: Setup',
+      templateAbbr: '8SEQ',
+      pctFrom: 0,
+      pctTo: 12.5,
+      color: '#9B87C4',
+      items: [],
+    },
+    {
+      label: 'Sequence 2: Predicament',
+      templateAbbr: '8SEQ',
+      pctFrom: 12.5,
+      pctTo: 25,
+      color: '#9B87C4',
+      items: [],
+    },
+    {
+      label: 'Sequence 3: First Obstacle',
+      templateAbbr: '8SEQ',
+      pctFrom: 25,
+      pctTo: 37.5,
+      color: '#8B77B4',
+      items: [],
+    },
+    {
+      label: 'Sequence 4: Complication',
+      templateAbbr: '8SEQ',
+      pctFrom: 37.5,
+      pctTo: 50,
+      color: '#7B67A4',
+      items: [],
+    },
+    {
+      label: 'Sequence 5: Obstacle & Setback',
+      templateAbbr: '8SEQ',
+      pctFrom: 50,
+      pctTo: 62.5,
+      color: '#7B67A4',
+      items: [],
+    },
+    {
+      label: 'Sequence 6: Second Obstacle',
+      templateAbbr: '8SEQ',
+      pctFrom: 62.5,
+      pctTo: 75,
+      color: '#8B77B4',
+      items: [],
+    },
+    {
+      label: 'Sequence 7: Final Push',
+      templateAbbr: '8SEQ',
+      pctFrom: 75,
+      pctTo: 87.5,
+      color: '#9B87C4',
+      items: [],
+    },
+    {
+      label: 'Sequence 8: Resolution',
+      templateAbbr: '8SEQ',
+      pctFrom: 87.5,
+      pctTo: 100,
+      color: '#AB97D4',
+      items: [],
+    },
+  ],
+};
+
+// STORY CIRCLE: Dan Harmon's Story Circle (8 Stages)
+export const STORY_CIRCLE_TEMPLATE: BeatTemplate = {
+  id: 'story-circle',
+  name: 'Story Circle 8',
+  abbr: 'SC8',
+  description: 'Dan Harmon\'s Story Circle (8 Stages)',
+  beats: [
+    {
+      label: '1. You (Comfort Zone)',
+      templateAbbr: 'SC8',
+      pctFrom: 0,
+      pctTo: 12.5,
+      color: '#9B87C4',
+      items: [],
+    },
+    {
+      label: '2. Need (Want)',
+      templateAbbr: 'SC8',
+      pctFrom: 12.5,
+      pctTo: 25,
+      color: '#9B87C4',
+      items: [],
+    },
+    {
+      label: '3. Go (Cross Threshold)',
+      templateAbbr: 'SC8',
+      pctFrom: 25,
+      pctTo: 37.5,
+      color: '#8B77B4',
+      items: [],
+    },
+    {
+      label: '4. Search (Adapt)',
+      templateAbbr: 'SC8',
+      pctFrom: 37.5,
+      pctTo: 50,
+      color: '#7B67A4',
+      items: [],
+    },
+    {
+      label: '5. Find (Get)',
+      templateAbbr: 'SC8',
+      pctFrom: 50,
+      pctTo: 62.5,
+      color: '#6B5794',
+      items: [],
+    },
+    {
+      label: '6. Take (Pay Price)',
+      templateAbbr: 'SC8',
+      pctFrom: 62.5,
+      pctTo: 75,
+      color: '#7B67A4',
+      items: [],
+    },
+    {
+      label: '7. Return (Bring Back)',
+      templateAbbr: 'SC8',
+      pctFrom: 75,
+      pctTo: 87.5,
+      color: '#8B77B4',
+      items: [],
+    },
+    {
+      label: '8. Change (Transform)',
+      templateAbbr: 'SC8',
+      pctFrom: 87.5,
+      pctTo: 100,
+      color: '#AB97D4',
+      items: [],
+    },
+  ],
+};
+
+// SEASON-LITE-5: Macro Template for Season Structure
+export const SEASON_LITE_5_TEMPLATE: BeatTemplate = {
+  id: 'season-lite-5',
+  name: 'Season-Lite-5 (Macro)',
+  abbr: 'SL5',
+  description: 'Macro-Template für Season-Structure (5 Beats)',
+  beats: [
+    {
+      label: 'Season Opening',
+      templateAbbr: 'SL5',
+      pctFrom: 0,
+      pctTo: 20,
+      color: '#9B87C4',
+      items: [],
+    },
+    {
+      label: 'Rising Stakes',
+      templateAbbr: 'SL5',
+      pctFrom: 20,
+      pctTo: 40,
+      color: '#8B77B4',
+      items: [],
+    },
+    {
+      label: 'Season Midpoint',
+      templateAbbr: 'SL5',
+      pctFrom: 40,
+      pctTo: 60,
+      color: '#7B67A4',
+      items: [],
+    },
+    {
+      label: 'Darkest Hour',
+      templateAbbr: 'SL5',
+      pctFrom: 60,
+      pctTo: 80,
+      color: '#8B77B4',
+      items: [],
+    },
+    {
+      label: 'Season Finale',
+      templateAbbr: 'SL5',
+      pctFrom: 80,
+      pctTo: 100,
+      color: '#9B87C4',
+      items: [],
+    },
+  ],
+};
+
 // Template Registry
 export const BEAT_TEMPLATES: Record<string, BeatTemplate> = {
   'lite-7': LITE_7_TEMPLATE,
@@ -460,6 +658,9 @@ export const BEAT_TEMPLATES: Record<string, BeatTemplate> = {
   'heroes-journey': HEROES_JOURNEY_TEMPLATE,
   'syd-field': SYD_FIELD_TEMPLATE,
   'seven-point': SEVEN_POINT_TEMPLATE,
+  '8-sequences': EIGHT_SEQUENCES_TEMPLATE,
+  'story-circle': STORY_CIRCLE_TEMPLATE,
+  'season-lite-5': SEASON_LITE_5_TEMPLATE,
 };
 
 // Helper: Generate Beats with unique IDs

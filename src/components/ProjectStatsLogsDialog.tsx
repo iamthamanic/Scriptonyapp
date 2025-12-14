@@ -471,7 +471,7 @@ export function ProjectStatsLogsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-5xl max-h-[90vh] overflow-y-auto md:w-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <BarChart3 className="size-5 text-primary" />
@@ -543,7 +543,7 @@ export function ProjectStatsLogsDialog({
                       Timeline Overview
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                     <div className="flex flex-col gap-1 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-100 dark:border-blue-900">
                       <span className="text-xs text-muted-foreground">Acts</span>
                       <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">

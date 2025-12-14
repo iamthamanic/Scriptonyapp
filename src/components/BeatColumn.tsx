@@ -49,63 +49,86 @@ export function BeatColumn({
     const currentBeat = beats.find(b => b.id === beatId);
     if (!currentBeat) return;
 
-    // 🎯 MAGNET SNAPPING - Snap to adjacent beats (3% threshold)
-    const SNAP_THRESHOLD = 3;
+    console.log(`[Beat Resize] 🎯 START:`, {
+      beatId,
+      label: currentBeat.label,
+      handle,
+      current: { from: currentBeat.pctFrom, to: currentBeat.pctTo },
+      requested: { from: newPctFrom, to: newPctTo }
+    });
+
+    // 🎯 MAGNET SNAPPING - Snap to adjacent beats (2% threshold)
+    const SNAP_THRESHOLD = 2;
     
-    // Sort all beats by position
-    const sortedBeats = [...beats].sort((a, b) => a.pctFrom - b.pctFrom);
-    const currentIndex = sortedBeats.findIndex(b => b.id === beatId);
+    // Sort all beats by position (excluding current beat)
+    const otherBeats = beats.filter(b => b.id !== beatId).sort((a, b) => a.pctFrom - b.pctFrom);
+    
+    // Find adjacent beats
+    const beatsAbove = otherBeats.filter(b => b.pctTo <= currentBeat.pctFrom);
+    const beatsBelow = otherBeats.filter(b => b.pctFrom >= currentBeat.pctTo);
+    
+    const beatAbove = beatsAbove.length > 0 ? beatsAbove[beatsAbove.length - 1] : null;
+    const beatBelow = beatsBelow.length > 0 ? beatsBelow[0] : null;
 
-    // Find adjacent beats for snapping
-    const beatAbove = currentIndex > 0 ? sortedBeats[currentIndex - 1] : null;
-    const beatBelow = currentIndex < sortedBeats.length - 1 ? sortedBeats[currentIndex + 1] : null;
+    console.log(`[Beat Resize] 📊 Adjacent beats:`, {
+      beatAbove: beatAbove ? `${beatAbove.label} (${beatAbove.pctFrom}-${beatAbove.pctTo}%)` : 'none',
+      beatBelow: beatBelow ? `${beatBelow.label} (${beatBelow.pctFrom}-${beatBelow.pctTo}%)` : 'none'
+    });
 
-    // Apply snapping
-    if (handle === 'top' && beatAbove) {
-      const distanceToAbove = Math.abs(newPctFrom - beatAbove.pctTo);
-      if (distanceToAbove < SNAP_THRESHOLD) {
-        newPctFrom = beatAbove.pctTo; // Snap to bottom of beat above
-        console.log('🧲 Snapped to beat above');
-      }
-    } else if (handle === 'bottom' && beatBelow) {
-      const distanceToBelow = Math.abs(newPctTo - beatBelow.pctFrom);
-      if (distanceToBelow < SNAP_THRESHOLD) {
-        newPctTo = beatBelow.pctFrom; // Snap to top of beat below
-        console.log('🧲 Snapped to beat below');
-      }
-    }
-
-    // 🚧 PREVENT OVERLAP - Beats can't go beyond adjacent beats
+    // 🚧 PREVENT OVERLAP + APPLY SNAPPING
     if (handle === 'top') {
-      // Can't drag top above the bottom of beat above
-      if (beatAbove && newPctFrom < beatAbove.pctTo) {
-        newPctFrom = beatAbove.pctTo;
-        console.log('🚫 Prevented overlap with beat above');
+      // 🚫 Can't drag top above the bottom of beat above
+      if (beatAbove) {
+        const minAllowed = beatAbove.pctTo;
+        if (newPctFrom < minAllowed) {
+          console.log(`[Beat Resize] 🚫 Blocked: Top would overlap beat above. Min=${minAllowed}%, Requested=${newPctFrom}%`);
+          newPctFrom = minAllowed;
+        }
+        
+        // 🧲 Snap if close
+        const distanceToAbove = Math.abs(newPctFrom - beatAbove.pctTo);
+        if (distanceToAbove < SNAP_THRESHOLD) {
+          console.log(`[Beat Resize] 🧲 SNAP to beat above! Distance=${distanceToAbove}%`);
+          newPctFrom = beatAbove.pctTo;
+        }
       }
-      // Can't drag top below current bottom
-      if (newPctFrom >= currentBeat.pctTo) {
-        console.log('🚫 Top handle can\'t go below bottom');
-        return;
+      
+      // 🚫 Can't drag top below current bottom (min 1% height)
+      const maxAllowed = currentBeat.pctTo - 1;
+      if (newPctFrom >= maxAllowed) {
+        console.log(`[Beat Resize] 🚫 Blocked: Top would exceed bottom. Max=${maxAllowed}%, Requested=${newPctFrom}%`);
+        return; // Don't update
       }
-      // Can't go below 0%
-      if (newPctFrom < 0) {
-        newPctFrom = 0;
-      }
+      
+      // 🚫 Can't go below 0%
+      newPctFrom = Math.max(0, newPctFrom);
+      
     } else if (handle === 'bottom') {
-      // Can't drag bottom below the top of beat below
-      if (beatBelow && newPctTo > beatBelow.pctFrom) {
-        newPctTo = beatBelow.pctFrom;
-        console.log('🚫 Prevented overlap with beat below');
+      // 🚫 Can't drag bottom below the top of beat below
+      if (beatBelow) {
+        const maxAllowed = beatBelow.pctFrom;
+        if (newPctTo > maxAllowed) {
+          console.log(`[Beat Resize] 🚫 Blocked: Bottom would overlap beat below. Max=${maxAllowed}%, Requested=${newPctTo}%`);
+          newPctTo = maxAllowed;
+        }
+        
+        // 🧲 Snap if close
+        const distanceToBelow = Math.abs(newPctTo - beatBelow.pctFrom);
+        if (distanceToBelow < SNAP_THRESHOLD) {
+          console.log(`[Beat Resize] 🧲 SNAP to beat below! Distance=${distanceToBelow}%`);
+          newPctTo = beatBelow.pctFrom;
+        }
       }
-      // Can't drag bottom above current top
-      if (newPctTo <= currentBeat.pctFrom) {
-        console.log('🚫 Bottom handle can\'t go above top');
-        return;
+      
+      // 🚫 Can't drag bottom above current top (min 1% height)
+      const minAllowed = currentBeat.pctFrom + 1;
+      if (newPctTo <= minAllowed) {
+        console.log(`[Beat Resize] 🚫 Blocked: Bottom would be above top. Min=${minAllowed}%, Requested=${newPctTo}%`);
+        return; // Don't update
       }
-      // Can't go above 100%
-      if (newPctTo > 100) {
-        newPctTo = 100;
-      }
+      
+      // 🚫 Can't go above 100%
+      newPctTo = Math.min(100, newPctTo);
     }
 
     // Update the beat
@@ -114,7 +137,7 @@ export function BeatColumn({
       pctTo: handle === 'bottom' ? newPctTo : currentBeat.pctTo,
     };
 
-    console.log(`✅ Updating beat "${currentBeat.label}":`, updates);
+    console.log(`[Beat Resize] ✅ UPDATING "${currentBeat.label}":`, updates);
     onUpdateBeat(beatId, updates);
   };
 

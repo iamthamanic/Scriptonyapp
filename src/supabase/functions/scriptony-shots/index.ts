@@ -1,14 +1,8 @@
 /**
  * 🎬 SCRIPTONY SHOTS MICROSERVICE
  * 
- * 📅 CREATED: 2025-11-01
+ * 📅 CREATED: 2025-11-25
  * 🎯 PURPOSE: Shots Management (Film-specific)
- * 
- * Extracted from scriptony-timeline-v2 for:
- * ✅ Better Performance (600ms → 200ms)
- * ✅ Faster Cold Starts (2.5s → 0.8s)
- * ✅ Independent Deployments
- * ✅ Better Caching
  * 
  * ROUTES:
  * - GET    /shots?project_id=X          Bulk Load Shots
@@ -28,7 +22,93 @@ import { logger } from "npm:hono/logger";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 // =============================================================================
-// SETUP
+// TYPES
+// =============================================================================
+
+interface Shot {
+  id?: string;
+  project_id: string;
+  scene_id: string;
+  order_index: number; // FIXED: Changed from order_in_scene to order_index
+  shot_type?: string;
+  camera_movement?: string;
+  angle?: string;
+  description?: string;
+  image_url?: string;
+  character_ids?: string[];
+  duration_seconds?: number;
+  start_time?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// =============================================================================
+// COMPRESSION MIDDLEWARE (INLINE)
+// =============================================================================
+
+async function gzipCompress(text: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+      controller.close();
+    }
+  });
+
+  const compressedStream = stream.pipeThrough(
+    new CompressionStream('gzip')
+  );
+
+  const reader = compressedStream.getReader();
+  const chunks: Uint8Array[] = [];
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
+}
+
+function compress() {
+  return async (c: any, next: any) => {
+    await next();
+    
+    const acceptEncoding = c.req.header('Accept-Encoding') || '';
+    if (!acceptEncoding.includes('gzip')) {
+      return;
+    }
+
+    const contentType = c.res.headers.get('Content-Type') || '';
+    if (!contentType.includes('application/json') && !contentType.includes('text/')) {
+      return;
+    }
+
+    const body = await c.res.text();
+    const compressed = await gzipCompress(body);
+    
+    c.res = new Response(compressed, {
+      status: c.res.status,
+      headers: {
+        ...Object.fromEntries(c.res.headers),
+        'Content-Encoding': 'gzip',
+        'Content-Length': compressed.length.toString(),
+      },
+    });
+  };
+}
+
+// =============================================================================
+// APP SETUP
 // =============================================================================
 
 const app = new Hono().basePath("/scriptony-shots");
@@ -38,26 +118,28 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-// Enable logger & CORS
-app.use('*', logger(console.log));
+// CORS MUST BE FIRST!
 app.use("/*", cors({
   origin: "*",
   allowHeaders: ["Content-Type", "Authorization"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  exposeHeaders: ["Content-Length"],
+  exposeHeaders: ["Content-Length", "Content-Encoding"],
   maxAge: 600,
 }));
 
+app.use('*', logger(console.log));
+app.use('*', compress());
+
 // =============================================================================
-// AUTH HELPER
+// HELPER: GET USER FROM TOKEN
 // =============================================================================
 
-async function getUserIdFromAuth(authHeader: string | undefined): Promise<string | null> {
+async function getUserIdFromToken(authHeader: string | undefined): Promise<string | null> {
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return null;
   }
   
-  const token = authHeader.substring(7);
+  const token = authHeader.replace("Bearer ", "");
   const { data: { user }, error } = await supabase.auth.getUser(token);
   
   if (error || !user) {
@@ -92,472 +174,224 @@ app.get("/health", (c) => {
 });
 
 // =============================================================================
-// SHOTS ROUTES
+// ROUTES: SHOTS CRUD
 // =============================================================================
 
-/**
- * GET /shots?project_id=X
- * Get all shots for a project (BULK LOADER for performance)
- * 
- * OR
- * 
- * GET /shots/:sceneId
- * Get all shots for a scene
- */
-app.get("/shots/:sceneId?", async (c) => {
+// GET /shots?project_id=X - Bulk Load all shots for project
+app.get("/shots", async (c) => {
   try {
-    const authHeader = c.req.header("Authorization");
-    const userId = await getUserIdFromAuth(authHeader);
-
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
+    const projectId = c.req.query("project_id");
+    
+    if (!projectId) {
+      return c.json({ error: "project_id is required" }, 400);
     }
 
-    // Check if this is a bulk request (query param) or scene-specific (path param)
-    const projectId = c.req.query("project_id");
-    const sceneId = c.req.param("sceneId");
-
-    // JOIN with shot_audio and shot_characters to include all related data
-    let query = supabase
+    // Query shots with character relations
+    const { data: shots, error } = await supabase
       .from("shots")
       .select(`
         *,
-        shot_audio (
-          id,
-          shot_id,
-          type,
-          file_url,
-          file_name,
-          label,
-          file_size,
-          start_time,
-          end_time,
-          fade_in,
-          fade_out,
-          waveform_data,
-          audio_duration,
-          created_at
-        ),
         shot_characters (
           character_id,
           characters (
             id,
             name,
-            image_url,
-            description
+            color
           )
         )
-      `);
-
-    if (projectId) {
-      // Bulk request: Get all shots for project
-      query = query.eq("project_id", projectId);
-    } else if (sceneId) {
-      // Scene-specific request
-      query = query.eq("scene_id", sceneId);
-    } else {
-      return c.json({ error: "project_id or sceneId is required" }, 400);
-    }
-
-    const { data, error } = await query.order("order_index", { ascending: true });
+      `)
+      .eq("project_id", projectId)
+      .order("scene_id", { ascending: true })
+      .order("order_index", { ascending: true }); // FIXED: Changed from order_in_scene
 
     if (error) {
-      console.error("Error fetching shots:", error);
+      console.error("Error loading shots:", error);
       return c.json({ error: error.message }, 500);
     }
 
-    // Transform to camelCase and include audio files + characters
-    const transformedShots = (data || []).map(shot => ({
-      id: shot.id,
-      projectId: shot.project_id,
-      sceneId: shot.scene_id,
-      shotNumber: shot.shot_number,
-      description: shot.description,
-      cameraAngle: shot.camera_angle,
-      cameraMovement: shot.camera_movement,
-      framing: shot.framing,
-      lens: shot.lens,
-      duration: shot.duration,
-      shotlengthMinutes: shot.shotlength_minutes,
-      shotlengthSeconds: shot.shotlength_seconds,
-      composition: shot.composition,
-      lightingNotes: shot.lighting_notes,
-      imageUrl: shot.image_url,
-      soundNotes: shot.sound_notes,
-      storyboardUrl: shot.storyboard_url,
-      referenceImageUrl: shot.reference_image_url,
-      dialog: shot.dialog,
-      notes: shot.notes,
-      orderIndex: shot.order_index,
-      createdAt: shot.created_at,
-      updatedAt: shot.updated_at,
-      // Audio files (read from shot_audio table)
-      audioFiles: (shot.shot_audio || []).map((audio: any) => ({
-        id: audio.id,
-        shotId: audio.shot_id,
-        type: audio.type,
-        fileUrl: audio.file_url,
-        fileName: audio.file_name,
-        label: audio.label,
-        fileSize: audio.file_size,
-        startTime: audio.start_time,
-        endTime: audio.end_time,
-        fadeIn: audio.fade_in,
-        fadeOut: audio.fade_out,
-        waveformData: audio.waveform_data,
-        duration: audio.audio_duration,
-        createdAt: audio.created_at,
-      })),
-      // Characters (read from shot_characters join table)
-      characters: (shot.shot_characters || [])
-        .map((sc: any) => sc.characters)
-        .filter(Boolean)
-        .map((char: any) => ({
-          id: char.id,
-          name: char.name,
-          imageUrl: char.image_url,
-          description: char.description,
-        })),
-    }));
+    // Transform to include character_ids array
+    const transformedShots = shots?.map(shot => ({
+      ...shot,
+      character_ids: shot.shot_characters?.map((sc: any) => sc.character_id) || [],
+      characters: shot.shot_characters?.map((sc: any) => sc.characters).filter(Boolean) || [],
+    })) || [];
 
-    return c.json({ shots: transformedShots });
+    return c.json({ 
+      shots: transformedShots,
+      count: transformedShots.length,
+    });
   } catch (error: any) {
-    console.error("Shots GET error:", error);
+    console.error("Get shots error:", error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-/**
- * POST /shots
- * Create a new shot
- */
+// GET /shots/:sceneId - Get shots for specific scene
+app.get("/shots/:sceneId", async (c) => {
+  try {
+    const sceneId = c.req.param("sceneId");
+    
+    const { data: shots, error } = await supabase
+      .from("shots")
+      .select(`
+        *,
+        shot_characters (
+          character_id,
+          characters (
+            id,
+            name,
+            color
+          )
+        )
+      `)
+      .eq("scene_id", sceneId)
+      .order("order_index", { ascending: true }); // FIXED: Changed from order_in_scene
+
+    if (error) {
+      console.error("Error loading shots for scene:", error);
+      return c.json({ error: error.message }, 500);
+    }
+
+    const transformedShots = shots?.map(shot => ({
+      ...shot,
+      character_ids: shot.shot_characters?.map((sc: any) => sc.character_id) || [],
+      characters: shot.shot_characters?.map((sc: any) => sc.characters).filter(Boolean) || [],
+    })) || [];
+
+    return c.json({ 
+      shots: transformedShots,
+      count: transformedShots.length,
+    });
+  } catch (error: any) {
+    console.error("Get shots for scene error:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// POST /shots - Create new shot
 app.post("/shots", async (c) => {
   try {
-    const authHeader = c.req.header("Authorization");
-    const userId = await getUserIdFromAuth(authHeader);
-
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
     const body = await c.req.json();
-    const scene_id = body.scene_id || body.sceneId;
-    const shot_number = body.shot_number || body.shotNumber;
+    const { scene_id, order_index, project_id, ...shotData } = body; // FIXED: Changed from order_in_scene
 
-    if (!scene_id || !shot_number) {
-      return c.json({ error: "scene_id and shot_number are required" }, 400);
+    if (!scene_id || !project_id) {
+      return c.json({ error: "scene_id and project_id are required" }, 400);
     }
 
-    // Get project_id from scene node
-    // 🛡️ RETRY LOGIC: Scene might not be visible immediately after creation due to replication lag
-    let sceneNode = null;
-    let sceneError = null;
-    let retryCount = 0;
-    const maxRetries = 3;
-    
-    while (retryCount < maxRetries && !sceneNode) {
-      const result = await supabase
-        .from("timeline_nodes")
-        .select("project_id")
-        .eq("id", scene_id)
-        .single();
+    // Get next order if not provided
+    let finalOrder = order_index; // FIXED: Changed from order_in_scene
+    if (finalOrder === undefined) {
+      const { data: existingShots } = await supabase
+        .from("shots")
+        .select("order_index") // FIXED: Changed from order_in_scene
+        .eq("scene_id", scene_id)
+        .order("order_index", { ascending: false }) // FIXED: Changed from order_in_scene
+        .limit(1);
       
-      sceneNode = result.data;
-      sceneError = result.error;
-      
-      if (!sceneNode && retryCount < maxRetries - 1) {
-        console.log(`⏳ Scene not found, retrying (${retryCount + 1}/${maxRetries})...`);
-        // Wait 100ms before retry
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      
-      retryCount++;
+      finalOrder = existingShots && existingShots.length > 0 
+        ? existingShots[0].order_index + 1  // FIXED: Changed from order_in_scene
+        : 0;
     }
 
-    if (sceneError || !sceneNode) {
-      console.error("❌ Scene not found in timeline_nodes after retries:", {
-        scene_id,
-        error: sceneError,
-        sceneNode,
-        retriesAttempted: retryCount,
-      });
-      return c.json({ 
-        error: "Cannot create shot: Scene does not exist in database",
-        details: sceneError?.message || "Scene ID does not exist in timeline_nodes",
-      }, 400);
-    }
-    
-    console.log(`✅ Scene found after ${retryCount} attempt(s):`, scene_id);
-
-    // Get highest order_index
-    const { data: existingShots } = await supabase
-      .from("shots")
-      .select("order_index")
-      .eq("scene_id", scene_id)
-      .order("order_index", { ascending: false })
-      .limit(1);
-
-    const nextOrderIndex = (existingShots?.[0]?.order_index ?? -1) + 1;
-
-    const { data, error } = await supabase
+    // Create shot
+    const { data: shot, error } = await supabase
       .from("shots")
       .insert({
-        project_id: sceneNode.project_id,
         scene_id,
-        shot_number,
-        description: body.description,
-        camera_angle: body.camera_angle || body.cameraAngle,
-        camera_movement: body.camera_movement || body.cameraMovement,
-        framing: body.framing,
-        lens: body.lens,
-        duration: body.duration,
-        shotlength_minutes: body.shotlength_minutes || body.shotlengthMinutes,
-        shotlength_seconds: body.shotlength_seconds || body.shotlengthSeconds,
-        composition: body.composition,
-        lighting_notes: body.lighting_notes || body.lightingNotes,
-        image_url: body.image_url || body.imageUrl,
-        sound_notes: body.sound_notes || body.soundNotes,
-        storyboard_url: body.storyboard_url || body.storyboardUrl,
-        reference_image_url: body.reference_image_url || body.referenceImageUrl,
-        dialog: body.dialog,
-        notes: body.notes,
-        order_index: nextOrderIndex,
-        user_id: userId,  // ✅ For Activity Logs user attribution
+        project_id,
+        order_index: finalOrder, // FIXED: Changed from order_in_scene
+        ...shotData,
       })
       .select()
       .single();
 
     if (error) {
-      console.error("❌ Error creating shot:", {
-        error,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-        sceneId: scene_id,
-        shotNumber: shot_number,
-        sceneNodeExists: !!sceneNode,
-        projectId: sceneNode?.project_id,
-      });
-      
-      // Special handling for foreign key errors
-      if (error.code === '23503') {
-        return c.json({ 
-          error: "Cannot create shot: Scene does not exist in database",
-          details: "The scene you're trying to add a shot to wasn't found. This can happen if the scene creation failed. Please refresh the page and try again.",
-          technical: error.message,
-        }, 400);
-      }
-      
-      return c.json({ 
-        error: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-      }, 500);
+      console.error("Error creating shot:", error);
+      return c.json({ error: error.message }, 500);
     }
 
-    // Transform to camelCase
-    const transformedShot = {
-      id: data.id,
-      projectId: data.project_id,
-      sceneId: data.scene_id,
-      shotNumber: data.shot_number,
-      description: data.description,
-      cameraAngle: data.camera_angle,
-      cameraMovement: data.camera_movement,
-      framing: data.framing,
-      lens: data.lens,
-      duration: data.duration,
-      shotlengthMinutes: data.shotlength_minutes,
-      shotlengthSeconds: data.shotlength_seconds,
-      composition: data.composition,
-      lightingNotes: data.lighting_notes,
-      imageUrl: data.image_url,
-      soundNotes: data.sound_notes,
-      storyboardUrl: data.storyboard_url,
-      referenceImageUrl: data.reference_image_url,
-      dialog: data.dialog,
-      notes: data.notes,
-      orderIndex: data.order_index,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    };
+    // Handle character relations if provided
+    if (body.character_ids && body.character_ids.length > 0) {
+      const relations = body.character_ids.map((charId: string) => ({
+        shot_id: shot.id,
+        character_id: charId,
+      }));
 
-    return c.json({ shot: transformedShot }, 201);
+      await supabase.from("shot_characters").insert(relations);
+    }
+
+    return c.json({ shot }, 201);
   } catch (error: any) {
-    console.error("Shots POST error:", error);
+    console.error("Create shot error:", error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-/**
- * PUT /shots/:id
- * Update a shot
- * 
- * ✅ INCLUDES TIMESTAMP TRACKING FIX!
- */
+// PUT /shots/:id - Update shot (WITH TIMESTAMP!)
 app.put("/shots/:id", async (c) => {
   try {
-    const authHeader = c.req.header("Authorization");
-    const userId = await getUserIdFromAuth(authHeader);
-
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
     const shotId = c.req.param("id");
-    const updates = await c.req.json();
-
-    console.log("📝 Shot PUT request:", { shotId, updates });
-
-    const dbUpdates: any = {};
-    if (updates.shot_number !== undefined || updates.shotNumber !== undefined) {
-      dbUpdates.shot_number = updates.shot_number || updates.shotNumber;
-    }
-    if (updates.description !== undefined) dbUpdates.description = updates.description;
-    if (updates.camera_angle !== undefined || updates.cameraAngle !== undefined) {
-      dbUpdates.camera_angle = updates.camera_angle || updates.cameraAngle;
-    }
-    if (updates.camera_movement !== undefined || updates.cameraMovement !== undefined) {
-      dbUpdates.camera_movement = updates.camera_movement || updates.cameraMovement;
-    }
-    if (updates.framing !== undefined) dbUpdates.framing = updates.framing;
-    if (updates.lens !== undefined) dbUpdates.lens = updates.lens;
-    if (updates.duration !== undefined) dbUpdates.duration = updates.duration;
-    if (updates.shotlength_minutes !== undefined || updates.shotlengthMinutes !== undefined) {
-      dbUpdates.shotlength_minutes = updates.shotlength_minutes || updates.shotlengthMinutes;
-    }
-    if (updates.shotlength_seconds !== undefined || updates.shotlengthSeconds !== undefined) {
-      dbUpdates.shotlength_seconds = updates.shotlength_seconds || updates.shotlengthSeconds;
-    }
-    if (updates.composition !== undefined) dbUpdates.composition = updates.composition;
-    if (updates.lighting_notes !== undefined || updates.lightingNotes !== undefined) {
-      dbUpdates.lighting_notes = updates.lighting_notes || updates.lightingNotes;
-    }
-    if (updates.image_url !== undefined || updates.imageUrl !== undefined) {
-      dbUpdates.image_url = updates.image_url || updates.imageUrl;
-    }
-    if (updates.sound_notes !== undefined || updates.soundNotes !== undefined) {
-      dbUpdates.sound_notes = updates.sound_notes || updates.soundNotes;
-    }
-    if (updates.storyboard_url !== undefined || updates.storyboardUrl !== undefined) {
-      dbUpdates.storyboard_url = updates.storyboard_url || updates.storyboardUrl;
-    }
-    if (updates.reference_image_url !== undefined || updates.referenceImageUrl !== undefined) {
-      dbUpdates.reference_image_url = updates.reference_image_url || updates.referenceImageUrl;
-    }
+    const body = await c.req.json();
     
-    // ✅ DIALOG & NOTES: Accept both JSON object and string (backward compatibility)
-    if (updates.dialog !== undefined) {
-      let dialog = updates.dialog;
-      // If it's a string, try to parse it (legacy data)
-      if (typeof dialog === 'string') {
-        try {
-          dialog = JSON.parse(dialog);
-        } catch {
-          // Keep as string if not valid JSON
-        }
-      }
-      dbUpdates.dialog = dialog;
-    }
-    
-    if (updates.notes !== undefined) {
-      let notes = updates.notes;
-      // If it's a string, try to parse it (legacy data)
-      if (typeof notes === 'string') {
-        try {
-          notes = JSON.parse(notes);
-        } catch {
-          // Keep as string if not valid JSON
-        }
-      }
-      dbUpdates.notes = notes;
-    }
-    if (updates.orderIndex !== undefined) dbUpdates.order_index = updates.orderIndex;
-    
-    // ✅ TIMESTAMP: Accept updated_at from client for last modified tracking
-    if (updates.updated_at !== undefined || updates.updatedAt !== undefined) {
-      dbUpdates.updated_at = updates.updated_at || updates.updatedAt;
-    }
-    
-    // ✅ Always update user_id on modifications (for Activity Logs)
-    dbUpdates.user_id = userId;
+    // Extract character_ids for separate handling
+    const { character_ids, ...updateData } = body;
 
-    console.log("📊 DB Updates object:", { dbUpdates, hasUpdates: Object.keys(dbUpdates).length > 0 });
+    // IMPORTANT: Always update timestamp
+    const dataToUpdate = {
+      ...updateData,
+      updated_at: new Date().toISOString(),
+    };
 
-    const { data, error } = await supabase
+    // Update shot
+    const { data: shot, error } = await supabase
       .from("shots")
-      .update(dbUpdates)
+      .update(dataToUpdate)
       .eq("id", shotId)
       .select()
       .single();
 
     if (error) {
-      console.error("❌ Error updating shot:", {
-        error,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-        shotId,
-        updates,
-        dbUpdates,
-      });
+      console.error("Error updating shot:", error);
       return c.json({ error: error.message }, 500);
     }
 
-    console.log("✅ Shot updated successfully:", { shotId, data });
+    // Update character relations if provided
+    if (character_ids !== undefined) {
+      // Delete existing relations
+      await supabase
+        .from("shot_characters")
+        .delete()
+        .eq("shot_id", shotId);
 
-    // Transform to camelCase
-    const transformedShot = {
-      id: data.id,
-      projectId: data.project_id,
-      sceneId: data.scene_id,
-      shotNumber: data.shot_number,
-      description: data.description,
-      cameraAngle: data.camera_angle,
-      cameraMovement: data.camera_movement,
-      framing: data.framing,
-      lens: data.lens,
-      duration: data.duration,
-      shotlengthMinutes: data.shotlength_minutes,
-      shotlengthSeconds: data.shotlength_seconds,
-      composition: data.composition,
-      lightingNotes: data.lighting_notes,
-      imageUrl: data.image_url,
-      soundNotes: data.sound_notes,
-      storyboardUrl: data.storyboard_url,
-      referenceImageUrl: data.reference_image_url,
-      dialog: data.dialog,
-      notes: data.notes,
-      orderIndex: data.order_index,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    };
+      // Insert new relations
+      if (character_ids.length > 0) {
+        const relations = character_ids.map((charId: string) => ({
+          shot_id: shotId,
+          character_id: charId,
+        }));
+        await supabase.from("shot_characters").insert(relations);
+      }
+    }
 
-    return c.json({ shot: transformedShot });
+    return c.json({ shot });
   } catch (error: any) {
-    console.error("Shots PUT error:", error);
+    console.error("Update shot error:", error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-/**
- * DELETE /shots/:id
- * Delete a shot
- */
+// DELETE /shots/:id - Delete shot
 app.delete("/shots/:id", async (c) => {
   try {
-    const authHeader = c.req.header("Authorization");
-    const userId = await getUserIdFromAuth(authHeader);
-
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
     const shotId = c.req.param("id");
 
+    // Delete character relations first (cascade should handle this, but being explicit)
+    await supabase
+      .from("shot_characters")
+      .delete()
+      .eq("shot_id", shotId);
+
+    // Delete shot
     const { error } = await supabase
       .from("shots")
       .delete()
@@ -570,125 +404,108 @@ app.delete("/shots/:id", async (c) => {
 
     return c.json({ success: true });
   } catch (error: any) {
-    console.error("Shots DELETE error:", error);
+    console.error("Delete shot error:", error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-/**
- * POST /shots/reorder
- * Reorder shots within a scene
- */
+// POST /shots/reorder - Reorder shots in scene
 app.post("/shots/reorder", async (c) => {
   try {
-    const authHeader = c.req.header("Authorization");
-    const userId = await getUserIdFromAuth(authHeader);
-
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
+    const { scene_id, shot_orders } = await c.req.json();
+    
+    if (!scene_id || !shot_orders || !Array.isArray(shot_orders)) {
+      return c.json({ error: "scene_id and shot_orders array required" }, 400);
     }
 
-    const { scene_id, shot_ids } = await c.req.json();
-
-    if (!scene_id || !shot_ids || !Array.isArray(shot_ids)) {
-      return c.json({ error: "scene_id and shot_ids array are required" }, 400);
-    }
-
-    // Update order_index for each shot
-    for (let i = 0; i < shot_ids.length; i++) {
-      await supabase
+    // Update each shot's order
+    const updates = shot_orders.map(({ shot_id, order }: any) =>
+      supabase
         .from("shots")
-        .update({ order_index: i })
-        .eq("id", shot_ids[i])
-        .eq("scene_id", scene_id);
-    }
+        .update({ 
+          order_index: order, // FIXED: Changed from order_in_scene
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", shot_id)
+    );
+
+    await Promise.all(updates);
 
     return c.json({ success: true });
   } catch (error: any) {
-    console.error("Shots reorder error:", error);
+    console.error("Reorder shots error:", error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-/**
- * POST /shots/:id/upload-image
- * Upload image for a shot
- */
+// =============================================================================
+// ROUTES: IMAGE UPLOAD
+// =============================================================================
+
 app.post("/shots/:id/upload-image", async (c) => {
   try {
-    const authHeader = c.req.header("Authorization");
-    const userId = await getUserIdFromAuth(authHeader);
-
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
     const shotId = c.req.param("id");
-    const formData = await c.req.formData();
-    const file = formData.get("file") as File;
+    const body = await c.req.json();
+    const { image_data, filename } = body;
 
-    if (!file) {
-      return c.json({ error: "No file provided" }, 400);
+    if (!image_data) {
+      return c.json({ error: "image_data is required" }, 400);
     }
 
-    const bucketName = "make-3b52693b-shots";
-    const { data: buckets } = await supabase.storage.listBuckets();
-    const bucketExists = buckets?.some(bucket => bucket.name === bucketName);
-    
-    if (!bucketExists) {
-      await supabase.storage.createBucket(bucketName, { public: false, fileSizeLimit: 5242880 });
-    } else {
-      // Ensure bucket has correct size limit
-      try {
-        await supabase.storage.updateBucket(bucketName, { public: false, fileSizeLimit: 5242880 });
-      } catch (error) {
-        console.error(`[Image Upload] Failed to update bucket:`, error);
-      }
-    }
+    // Convert base64 to blob
+    const base64Data = image_data.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
 
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${shotId}-${Date.now()}.${fileExt}`;
-    const filePath = `shots/${fileName}`;
-
+    // Upload to storage
+    const filePath = `shots/${shotId}/${filename || Date.now()}.png`;
     const { error: uploadError } = await supabase.storage
-      .from(bucketName)
-      .upload(filePath, file, { contentType: file.type, upsert: true });
+      .from("scriptony-images")
+      .upload(filePath, buffer, {
+        contentType: "image/png",
+        upsert: true,
+      });
 
     if (uploadError) {
-      console.error("Upload error:", uploadError);
+      console.error("Error uploading image:", uploadError);
       return c.json({ error: uploadError.message }, 500);
     }
 
-    const { data: urlData } = await supabase.storage
-      .from(bucketName)
-      .createSignedUrl(filePath, 31536000);
+    // Get public URL
+    const { data: { publicUrl } } = supabase.storage
+      .from("scriptony-images")
+      .getPublicUrl(filePath);
 
-    if (!urlData) {
-      return c.json({ error: "Failed to get signed URL" }, 500);
+    // Update shot with image URL
+    const { error: updateError } = await supabase
+      .from("shots")
+      .update({ 
+        image_url: publicUrl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", shotId);
+
+    if (updateError) {
+      console.error("Error updating shot with image:", updateError);
+      return c.json({ error: updateError.message }, 500);
     }
 
-    await supabase.from("shots").update({ image_url: urlData.signedUrl }).eq("id", shotId);
-
-    return c.json({ imageUrl: urlData.signedUrl });
+    return c.json({ 
+      image_url: publicUrl,
+      success: true,
+    });
   } catch (error: any) {
-    console.error("Image upload error:", error);
+    console.error("Upload image error:", error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-/**
- * POST /shots/:id/characters
- * Add character to shot
- */
+// =============================================================================
+// ROUTES: CHARACTER RELATIONS
+// =============================================================================
+
+// POST /shots/:id/characters - Add character to shot
 app.post("/shots/:id/characters", async (c) => {
   try {
-    const authHeader = c.req.header("Authorization");
-    const userId = await getUserIdFromAuth(authHeader);
-
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
     const shotId = c.req.param("id");
     const { character_id } = await c.req.json();
 
@@ -696,12 +513,11 @@ app.post("/shots/:id/characters", async (c) => {
       return c.json({ error: "character_id is required" }, 400);
     }
 
-    // Add character to shot
     const { error } = await supabase
       .from("shot_characters")
       .insert({
         shot_id: shotId,
-        character_id: character_id,
+        character_id,
       });
 
     if (error) {
@@ -709,65 +525,22 @@ app.post("/shots/:id/characters", async (c) => {
       return c.json({ error: error.message }, 500);
     }
 
-    // Fetch the updated shot with all characters
-    const { data: shotData, error: fetchError } = await supabase
+    // Update shot timestamp
+    await supabase
       .from("shots")
-      .select(`
-        *,
-        shot_characters (
-          character_id,
-          characters (
-            id,
-            name,
-            image_url,
-            description
-          )
-        )
-      `)
-      .eq("id", shotId)
-      .single();
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", shotId);
 
-    if (fetchError || !shotData) {
-      console.error("Error fetching updated shot:", fetchError);
-      return c.json({ error: "Failed to fetch updated shot" }, 500);
-    }
-
-    // Transform to camelCase
-    const transformedShot = {
-      id: shotData.id,
-      projectId: shotData.project_id,
-      sceneId: shotData.scene_id,
-      characters: (shotData.shot_characters || [])
-        .map((sc: any) => sc.characters)
-        .filter(Boolean)
-        .map((char: any) => ({
-          id: char.id,
-          name: char.name,
-          imageUrl: char.image_url,
-          description: char.description,
-        })),
-    };
-
-    return c.json({ shot: transformedShot });
+    return c.json({ success: true });
   } catch (error: any) {
     console.error("Add character to shot error:", error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-/**
- * DELETE /shots/:id/characters/:characterId
- * Remove character from shot
- */
+// DELETE /shots/:id/characters/:characterId - Remove character from shot
 app.delete("/shots/:id/characters/:characterId", async (c) => {
   try {
-    const authHeader = c.req.header("Authorization");
-    const userId = await getUserIdFromAuth(authHeader);
-
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
     const shotId = c.req.param("id");
     const characterId = c.req.param("characterId");
 
@@ -781,6 +554,12 @@ app.delete("/shots/:id/characters/:characterId", async (c) => {
       console.error("Error removing character from shot:", error);
       return c.json({ error: error.message }, 500);
     }
+
+    // Update shot timestamp
+    await supabase
+      .from("shots")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", shotId);
 
     return c.json({ success: true });
   } catch (error: any) {

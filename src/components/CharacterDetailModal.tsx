@@ -125,7 +125,7 @@ export function CharacterDetailModal({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl max-h-[90vh] p-0">
+        <DialogContent className="w-[95vw] max-w-2xl max-h-[90vh] p-0 md:w-auto">
           <DialogHeader className="p-6 pb-4 border-b border-border/40 pr-14">
             <div className="flex items-center justify-between">
               <DialogTitle className="text-xl">Character Details</DialogTitle>

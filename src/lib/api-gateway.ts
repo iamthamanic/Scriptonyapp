@@ -15,6 +15,7 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
  * Edge Function Names (deployed in Supabase Dashboard)
  */
 export const EDGE_FUNCTIONS = {
+  MAIN_SERVER: 'make-server-3b52693b', // Main unified server (fallback/special routes)
   PROJECTS: 'scriptony-projects',
   PROJECT_NODES: 'scriptony-project-nodes', // Generic Template Engine (Nodes) ✅ REFACTORED!
   TIMELINE_V2: 'scriptony-timeline-v2', // DEPRECATED: Use PROJECT_NODES instead
@@ -22,6 +23,7 @@ export const EDGE_FUNCTIONS = {
   CHARACTERS: 'scriptony-characters', // Characters Microservice (Universal) ✅ NEW!
   INSPIRATION: 'scriptony-inspiration', // Visual References & Inspiration ✅ NEW!
   AUDIO: 'scriptony-audio', // Audio Processing (Upload, Waveform, Trim, Fade)
+  BEATS: 'scriptony-beats', // Story Beats (Save the Cat, Hero's Journey, etc.) ✅ NEW!
   WORLDBUILDING: 'scriptony-worldbuilding',
   ASSISTANT: 'scriptony-assistant',
   GYM: 'scriptony-gym',
@@ -77,6 +79,9 @@ const ROUTE_MAP: Record<string, string> = {
   // Note: /shots/:id/upload-audio routes to AUDIO function
   // Note: /shots/:id/audio routes to AUDIO function  
   // Note: /shots/audio/:id routes to AUDIO function
+  
+  // Beats (Save the Cat, Hero's Journey, etc.) ✅ NEW!
+  '/beats': EDGE_FUNCTIONS.BEATS,
   
   // Worldbuilding
   '/worlds': EDGE_FUNCTIONS.WORLDBUILDING,
@@ -238,7 +243,23 @@ export async function apiGateway<T = any>(
     throw new Error(`API Error: ${response.status} - ${errorMessage}`);
   }
   
-  return await response.json();
+  const data = await response.json();
+  console.log(`[API Gateway] ✅ Success Response (JSON):`, JSON.stringify(data, null, 2));
+  
+  // Extra detailed logging for arrays
+  if (Array.isArray(data)) {
+    console.log(`[API Gateway]    → Array with ${data.length} items`);
+    if (data.length > 0) {
+      console.log(`[API Gateway]    → First item:`, JSON.stringify(data[0], null, 2));
+    }
+  } else if (data && typeof data === 'object') {
+    console.log(`[API Gateway]    → Object keys:`, Object.keys(data));
+    if (data.projects) {
+      console.log(`[API Gateway]    → Contains ${data.projects.length} projects`);
+    }
+  }
+  
+  return data;
 }
 
 // =============================================================================
@@ -285,6 +306,17 @@ export async function apiDelete<T = any>(
   accessToken?: string
 ): Promise<T> {
   return apiGateway<T>({ method: 'DELETE', route, accessToken });
+}
+
+/**
+ * PATCH request through API Gateway
+ */
+export async function apiPatch<T = any>(
+  route: string,
+  body: any,
+  accessToken?: string
+): Promise<T> {
+  return apiGateway<T>({ method: 'PATCH', route, body, accessToken });
 }
 
 // =============================================================================

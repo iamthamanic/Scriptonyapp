@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Globe, Plus, Mountain, Landmark, Users, Palette, Building, FileText, ArrowLeft, ChevronRight, ChevronDown, Upload, Search, Calendar as CalendarIcon, X, Camera, Edit2, Save, History, Zap, Coins, BookOpen, Languages, TreePine, Film, Trash2, AlertTriangle, Loader2, LayoutGrid, List, MoreVertical, Copy, BarChart3 } from "lucide-react";
+import { Globe, Plus, Mountain, Landmark, Users, Palette, Building, FileText, ArrowLeft, ChevronRight, ChevronDown, Upload, Search, Calendar as CalendarIcon, X, Camera, Edit2, Save, History, Zap, Coins, BookOpen, Languages, TreePine, Film, Trash2, AlertTriangle, Loader2, LayoutGrid, List, MoreVertical, Copy, BarChart3, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { projectsApi, worldsApi } from "../../utils/api";
 import { getCharacters } from "../../lib/api/characters-api";
@@ -475,7 +475,7 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
                   world.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                   world.description.toLowerCase().includes(searchQuery.toLowerCase())
                 )
-                .map((world) => (
+                .map((world, index) => (
                   <motion.div
                     key={world.id}
                     layout
@@ -486,9 +486,17 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
                   >
                     {/* LIST VIEW */}
                       <Card
-                        className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30"
+                        className="active:scale-[0.99] transition-transform cursor-pointer overflow-hidden hover:border-primary/30 relative"
                         onClick={() => onNavigate("worldbuilding", world.id)}
                       >
+                        {/* "Zuletzt bearbeitet" Badge - ONLY first item - TOP RIGHT */}
+                        {index === 0 && (
+                          <Badge variant="default" className="absolute top-2 right-2 z-10 text-[9px] h-4 px-1.5 flex items-center gap-0.5 shadow-md">
+                            <Clock className="size-2" />
+                            Zuletzt bearbeitet
+                          </Badge>
+                        )}
+                        
                         <div className="flex items-center gap-3 p-3 rounded-lg transition-all hover:bg-primary/20 border-2 border-transparent hover:border-primary/30">
                           {/* Icon/Thumbnail Left - Portrait 2:3 Ratio */}
                           <div 
@@ -566,7 +574,8 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
                               <span className="text-[10px] text-muted-foreground">
                                 Zuletzt: {world.lastEdited.toLocaleDateString("de-DE", { 
                                   day: "2-digit", 
-                                  month: "2-digit" 
+                                  month: "2-digit",
+                                  year: "numeric"
                                 })}, {world.lastEdited.toLocaleTimeString("de-DE", { 
                                   hour: "2-digit", 
                                   minute: "2-digit" 
@@ -585,7 +594,7 @@ export function WorldbuildingPage({ selectedWorldId, onNavigate }: Worldbuilding
 
       {/* New World Dialog */}
       <Dialog open={showNewWorldDialog} onOpenChange={setShowNewWorldDialog}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] max-w-2xl rounded-2xl max-h-[85vh] overflow-y-auto md:w-auto">
           <DialogHeader>
             <DialogTitle className="text-primary">Neue Welt erstellen</DialogTitle>
             <DialogDescription className="sr-only">Erstelle eine neue Welt für dein Worldbuilding</DialogDescription>
@@ -1726,7 +1735,7 @@ function WorldDetail({ world, onBack, onUpdate, onDuplicate, onShowStats, coverI
 
       {/* New Asset Dialog */}
       <Dialog open={showNewAssetDialog} onOpenChange={setShowNewAssetDialog}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl">
+        <DialogContent className="w-[95vw] max-w-xl rounded-2xl md:w-auto">
           <DialogHeader>
             <DialogTitle className="text-asset-green">Neues Asset hinzufügen</DialogTitle>
             <DialogDescription>
@@ -1766,7 +1775,7 @@ function WorldDetail({ world, onBack, onUpdate, onDuplicate, onShowStats, coverI
 
       {/* New Category Dialog */}
       <Dialog open={showNewCategoryDialog} onOpenChange={setShowNewCategoryDialog}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] rounded-2xl">
+        <DialogContent className="w-[95vw] max-w-xl rounded-2xl md:w-auto">
           <DialogHeader>
             <DialogTitle className="text-primary">Neue Kategorie hinzufügen</DialogTitle>
             <DialogDescription>

@@ -1,11 +1,37 @@
 /**
  * 🚀 SCRIPTONY CACHE MANAGER
  * 
- * Aggressive caching with localStorage + memory
+ * Aggressive caching with IndexedDB + localStorage + memory
  * Stale-While-Revalidate pattern for instant loads
+ * Triple-layer caching: Memory → IndexedDB → localStorage
  */
 
 import { perfMonitor, type SLACategory } from './performance-monitor';
+
+// =============================================================================
+// INDEXEDDB SETUP
+// =============================================================================
+
+let idbPromise: Promise<IDBDatabase> | null = null;
+
+function getIDB(): Promise<IDBDatabase> {
+  if (!idbPromise) {
+    idbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open('scriptony-cache', 1);
+      
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains('cache')) {
+          db.createObjectStore('cache', { keyPath: 'key' });
+        }
+      };
+    });
+  }
+  return idbPromise;
+}
 
 // =============================================================================
 // TYPES
@@ -40,7 +66,114 @@ class CacheManager {
   private pendingRevalidations = new Map<string, Promise<any>>();
   
   /**
-   * Get from cache (memory first, then localStorage)
+   * Get from cache (memory → IndexedDB → localStorage)
+   * Returns { data, isStale } - data might be stale but valid
+   */
+  async getAsync<T>(
+    key: string,
+    config: CacheConfig = {}
+  ): Promise<{ data: T | null; isStale: boolean; source: 'memory' | 'indexeddb' | 'localstorage' | 'miss' }> {
+    const perfId = `cache-get-async-${key}`;
+    perfMonitor.start(perfId);
+
+    const fullConfig = { ...DEFAULT_CONFIG, ...config };
+    const now = Date.now();
+
+    // 1. Try memory cache first (fastest!)
+    const memEntry = this.memoryCache.get(key);
+    if (memEntry) {
+      const age = now - memEntry.timestamp;
+      const isExpired = age > fullConfig.ttl;
+      const isStale = age > fullConfig.staleTime;
+
+      if (!isExpired && memEntry.version === fullConfig.version) {
+        perfMonitor.end(perfId, fullConfig.slaCategory, `Cache GET (memory): ${key}`, {
+          age,
+          isStale,
+        });
+        return { data: memEntry.data, isStale, source: 'memory' };
+      }
+
+      // Expired or wrong version - remove
+      if (isExpired || memEntry.version !== fullConfig.version) {
+        this.memoryCache.delete(key);
+      }
+    }
+
+    // 2. Try IndexedDB (persistent, survives refreshes!)
+    try {
+      const db = await getIDB();
+      const transaction = db.transaction(['cache'], 'readonly');
+      const store = transaction.objectStore('cache');
+      const request = store.get(key);
+
+      const idbEntry: (CacheEntry<T> & { key: string }) | undefined = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+
+      if (idbEntry) {
+        const age = now - idbEntry.timestamp;
+        const isExpired = age > fullConfig.ttl;
+        const isStale = age > fullConfig.staleTime;
+
+        if (!isExpired && idbEntry.version === fullConfig.version) {
+          // Promote to memory cache
+          this.memoryCache.set(key, idbEntry);
+
+          perfMonitor.end(perfId, fullConfig.slaCategory, `Cache GET (IndexedDB): ${key}`, {
+            age,
+            isStale,
+          });
+          return { data: idbEntry.data, isStale, source: 'indexeddb' };
+        }
+
+        // Expired or wrong version - remove
+        if (isExpired || idbEntry.version !== fullConfig.version) {
+          const deleteTransaction = db.transaction(['cache'], 'readwrite');
+          deleteTransaction.objectStore('cache').delete(key);
+        }
+      }
+    } catch (error) {
+      console.warn('[Cache] Error reading from IndexedDB:', error);
+    }
+
+    // 3. Try localStorage (fallback)
+    try {
+      const stored = localStorage.getItem(this.getStorageKey(key));
+      if (stored) {
+        const entry: CacheEntry<T> = JSON.parse(stored);
+        const age = now - entry.timestamp;
+        const isExpired = age > fullConfig.ttl;
+        const isStale = age > fullConfig.staleTime;
+
+        if (!isExpired && entry.version === fullConfig.version) {
+          // Promote to memory cache AND IndexedDB
+          this.memoryCache.set(key, entry);
+          this.setIndexedDB(key, entry).catch(console.warn);
+
+          perfMonitor.end(perfId, fullConfig.slaCategory, `Cache GET (localStorage): ${key}`, {
+            age,
+            isStale,
+          });
+          return { data: entry.data, isStale, source: 'localstorage' };
+        }
+
+        // Expired or wrong version - remove
+        if (isExpired || entry.version !== fullConfig.version) {
+          localStorage.removeItem(this.getStorageKey(key));
+        }
+      }
+    } catch (error) {
+      console.warn('[Cache] Error reading from localStorage:', error);
+    }
+
+    perfMonitor.end(perfId, fullConfig.slaCategory, `Cache GET (miss): ${key}`);
+    return { data: null, isStale: false, source: 'miss' };
+  }
+
+  /**
+   * Get from cache SYNC (memory → localStorage only, no IndexedDB)
    * Returns { data, isStale } - data might be stale but valid
    */
   get<T>(
@@ -108,7 +241,7 @@ class CacheManager {
   }
 
   /**
-   * Set cache (both memory and localStorage)
+   * Set cache (memory + localStorage + IndexedDB)
    */
   set<T>(
     key: string,
@@ -125,10 +258,15 @@ class CacheManager {
       version: fullConfig.version,
     };
 
-    // Set in memory cache
+    // 1. Set in memory cache (instant!)
     this.memoryCache.set(key, entry);
 
-    // Set in localStorage (async, non-blocking)
+    // 2. Set in IndexedDB (async, non-blocking, survives refresh!)
+    this.setIndexedDB(key, entry).catch((error) => {
+      console.warn('[Cache] Error writing to IndexedDB:', error);
+    });
+
+    // 3. Set in localStorage (fallback, async, non-blocking)
     try {
       localStorage.setItem(this.getStorageKey(key), JSON.stringify(entry));
     } catch (error) {
@@ -140,6 +278,31 @@ class CacheManager {
     perfMonitor.end(perfId, 'CACHE_WRITE', `Cache SET: ${key}`, {
       size: JSON.stringify(data).length,
     });
+  }
+
+  /**
+   * Set cache in IndexedDB (async helper)
+   */
+  private async setIndexedDB<T>(
+    key: string,
+    entry: CacheEntry<T>
+  ): Promise<void> {
+    try {
+      const db = await getIDB();
+      const transaction = db.transaction(['cache'], 'readwrite');
+      const store = transaction.objectStore('cache');
+      
+      // Store with key included in the entry
+      const dataWithKey = { ...entry, key };
+      const request = store.put(dataWithKey);
+
+      await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    } catch (error) {
+      throw error;
+    }
   }
 
   /**

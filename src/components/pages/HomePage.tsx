@@ -282,7 +282,8 @@ export function HomePage({ onNavigate }: HomePageProps) {
                         <span>
                           {item.lastEdited.toLocaleDateString("de-DE", { 
                             day: "2-digit", 
-                            month: "2-digit" 
+                            month: "2-digit",
+                            year: "numeric"
                           })}, {item.lastEdited.toLocaleTimeString("de-DE", { 
                             hour: "2-digit", 
                             minute: "2-digit" 

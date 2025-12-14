@@ -112,7 +112,7 @@ export function AddInspirationDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-2xl max-h-[90vh] overflow-y-auto md:w-auto">
         <DialogHeader>
           <DialogTitle>
             {editInspiration ? "Edit Inspiration" : "Add Inspiration"}

@@ -1,8 +1,7 @@
 /**
  * 🎯 SCRIPTONY PROJECTS - Edge Function
  * 
- * 🕐 LAST UPDATED: 2025-11-08 (Added episode_layout & season_engine for Series)
- * 📝 UPDATED VERSION - Added episode/season structure for TV series
+ * 🕐 LAST UPDATED: 2025-11-25 (Added episode_layout & season_engine for Series)
  * 
  * Handles all Project-related operations:
  * - Project CRUD (all types: Film, Series, Book, Theater, Game, ...)
@@ -18,6 +17,99 @@ import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { Context, Next } from "npm:hono";
+
+// =============================================================================
+// COMPRESSION MIDDLEWARE (INLINE)
+// =============================================================================
+
+/**
+ * 🗜️ Gzip compression using CompressionStream API
+ */
+async function gzipCompress(text: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+      controller.close();
+    }
+  });
+
+  const compressedStream = stream.pipeThrough(
+    new CompressionStream('gzip')
+  );
+
+  const chunks: Uint8Array[] = [];
+  const reader = compressedStream.getReader();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+
+  // Concatenate chunks
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return result;
+}
+
+/**
+ * Compress middleware for Hono - Automatically compress responses with gzip
+ */
+async function compress(c: Context, next: Next) {
+  await next();
+
+  // Only compress JSON responses
+  const contentType = c.res.headers.get('Content-Type');
+  if (!contentType || !contentType.includes('application/json')) {
+    return;
+  }
+
+  // Check if client accepts compression
+  const acceptEncoding = c.req.header('Accept-Encoding') || '';
+  
+  // Get response body
+  const body = await c.res.text();
+  
+  // Skip compression for small responses (<1KB)
+  if (body.length < 1024) {
+    c.res = new Response(body, {
+      status: c.res.status,
+      headers: c.res.headers,
+    });
+    return;
+  }
+
+  // Compress with gzip (best browser support)
+  if (acceptEncoding.includes('gzip')) {
+    const compressed = await gzipCompress(body);
+    c.res = new Response(compressed, {
+      status: c.res.status,
+      headers: new Headers({
+        ...Object.fromEntries(c.res.headers),
+        'Content-Encoding': 'gzip',
+        'Content-Length': compressed.byteLength.toString(),
+        'Vary': 'Accept-Encoding',
+      }),
+    });
+    
+    console.log(`[Compression] Compressed ${body.length} → ${compressed.byteLength} bytes (${Math.round((1 - compressed.byteLength / body.length) * 100)}% savings)`);
+    return;
+  }
+
+  // Fallback: no compression
+  c.res = new Response(body, {
+    status: c.res.status,
+    headers: c.res.headers,
+  });
+}
 
 // =============================================================================
 // SETUP
@@ -31,15 +123,16 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-// Enable logger & CORS
-app.use('*', logger(console.log));
+// Enable CORS (must be FIRST!), logger & compression
 app.use("/*", cors({
   origin: "*",
   allowHeaders: ["Content-Type", "Authorization"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  exposeHeaders: ["Content-Length"],
+  exposeHeaders: ["Content-Length", "Content-Encoding"],
   maxAge: 600,
 }));
+app.use('*', logger(console.log));
+app.use('*', compress); // 🗜️ PERFORMANCE: Enable gzip compression
 
 // =============================================================================
 // AUTH HELPER
@@ -104,23 +197,51 @@ app.get("/projects", async (c) => {
       return c.json({ error: "Unauthorized" }, 401);
     }
 
+    console.log('[scriptony-projects] 🔍 GET /projects for user:', userId);
+
     const orgId = await getUserOrganization(userId);
-    if (!orgId) {
-      return c.json({ error: "User has no organization" }, 403);
+    console.log('[scriptony-projects] 📋 User organization:', orgId);
+
+    // ROBUST FIX: Query by organization_id OR user_id
+    // This ensures we get:
+    // 1. Projects in user's organization
+    // 2. Legacy projects created by this user (even if org is wrong/missing)
+    let query = supabase
+      .from("projects")
+      .select("*");
+
+    if (orgId) {
+      // User has organization: Get projects from org OR created by user
+      query = query.or(`organization_id.eq.${orgId},user_id.eq.${userId}`);
+      console.log('[scriptony-projects] 🔍 Querying with OR: org_id OR user_id');
+    } else {
+      // No organization: Get only projects created by user
+      query = query.eq("user_id", userId);
+      console.log('[scriptony-projects] ⚠️ No organization, querying by user_id only');
     }
 
-    const { data, error } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("organization_id", orgId)
-      .order("created_at", { ascending: false });
+    const { data, error } = await query.order("created_at", { ascending: false });
 
     if (error) {
-      console.error("Error fetching projects:", error);
+      console.error("[scriptony-projects] ❌ Error fetching projects:", error);
       return c.json({ error: error.message }, 500);
     }
 
-    return c.json({ projects: data || [] });
+    // Filter out deleted projects (client-side because Supabase OR doesn't work with multiple ORs)
+    const filteredProjects = (data || []).filter(p => !p.is_deleted);
+
+    console.log(`[scriptony-projects] ✅ Found ${data?.length || 0} projects (${filteredProjects.length} after filtering deleted)`);
+    if (filteredProjects && filteredProjects.length > 0) {
+      console.log('[scriptony-projects] 📋 Projects:', filteredProjects.map(p => ({ 
+        id: p.id, 
+        title: p.title, 
+        type: p.type, 
+        org_id: p.organization_id, 
+        user_id: p.user_id 
+      })));
+    }
+
+    return c.json({ projects: filteredProjects });
   } catch (error: any) {
     console.error("Projects GET error:", error);
     return c.json({ error: error.message }, 500);
@@ -213,6 +334,7 @@ app.post("/projects", async (c) => {
         episode_layout: episode_layout || null,
         season_engine: season_engine || null,
         organization_id: orgId,
+        user_id: userId, // Add user_id to project
       })
       .select()
       .single();

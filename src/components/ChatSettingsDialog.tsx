@@ -409,7 +409,7 @@ export function ChatSettingsDialog({ open, onOpenChange, onUpdate }: ChatSetting
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+      <DialogContent className="w-[95vw] max-w-2xl max-h-[80vh] flex flex-col md:w-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="w-5 h-5" />

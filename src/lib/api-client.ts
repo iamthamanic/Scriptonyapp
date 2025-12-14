@@ -355,6 +355,21 @@ export async function apiDelete<T = any>(
   });
 }
 
+/**
+ * Makes a PATCH request
+ */
+export async function apiPatch<T = any>(
+  endpoint: string,
+  body?: any,
+  options?: Omit<RequestOptions, 'method' | 'body'>
+): Promise<ApiResult<T>> {
+  return apiRequest<T>(endpoint, {
+    ...options,
+    method: 'PATCH',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
 // =============================================================================
 // Helper: Unwrap API Result
 // =============================================================================
@@ -408,6 +423,11 @@ export const apiClient = {
   
   async delete<T = any>(endpoint: string, body?: any, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
     const result = await apiDelete<T>(endpoint, body, options);
+    return unwrapApiResult(result);
+  },
+  
+  async patch<T = any>(endpoint: string, body?: any, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+    const result = await apiPatch<T>(endpoint, body, options);
     return unwrapApiResult(result);
   },
 };
