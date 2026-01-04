@@ -86,9 +86,9 @@ export function InspirationCard({ inspiration, onEdit, onDelete }: InspirationCa
             {/* Tags */}
             {inspiration.tags && inspiration.tags.length > 0 && (
               <div className="flex flex-wrap gap-1 mb-2">
-                {inspiration.tags.slice(0, 3).map((tag) => (
+                {inspiration.tags.slice(0, 3).map((tag, index) => (
                   <Badge 
-                    key={tag}
+                    key={`${tag}-${index}`}
                     variant="secondary"
                     className="text-xs px-1.5 py-0 h-5 bg-white/20 text-white border-white/30"
                   >

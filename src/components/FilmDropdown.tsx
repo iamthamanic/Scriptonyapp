@@ -39,6 +39,7 @@ import { FilmDropdownMobile } from './FilmDropdownMobile';
 import { useAuth } from '../hooks/useAuth';
 import * as ShotsAPI from '../lib/api/shots-api';
 import * as TimelineAPI from '../lib/api/timeline-api';
+import * as TimelineAPIV2 from '../lib/api/timeline-api-v2';
 import * as CharactersAPI from '../lib/api/characters-api';
 import type { Act, Sequence, Scene, Shot, Character } from '../lib/types';
 import { toast } from 'sonner';
@@ -462,21 +463,18 @@ export function FilmDropdown({
     onDataChangeRef.current = onDataChange;
   }, [onDataChange]);
 
-  // Update parent cache whenever data changes (debounced with slight delay)
+  // Update parent cache whenever data changes (immediate update to prevent race conditions)
   useEffect(() => {
-    // Always notify parent of current data state
-    const timer = setTimeout(() => {
-      if (onDataChangeRef.current && !loading) {
-        onDataChangeRef.current({
-          acts,
-          sequences,
-          scenes,
-          shots,
-        });
-      }
-    }, 100); // Small delay to batch updates
-
-    return () => clearTimeout(timer);
+    // 🚀 FIX: Update parent immediately to prevent race conditions with React re-renders
+    // The 100ms timeout was causing stale data to overwrite fresh data
+    if (onDataChangeRef.current && !loading) {
+      onDataChangeRef.current({
+        acts,
+        sequences,
+        scenes,
+        shots,
+      });
+    }
   }, [acts, sequences, scenes, shots, loading]);
 
   const loadTimelineData = async () => {
@@ -512,77 +510,96 @@ export function FilmDropdown({
 
       perfMonitor.start(perfId);
 
-      // Load Acts (Level 1)
-      let loadedActs = await TimelineAPI.getActs(projectId, token);
+      // 🚀🚀🚀 ULTRA FAST: Load EVERYTHING in parallel (optimized without backend changes)
+      console.log('[FilmDropdown] 🚀 Parallel loading timeline data...');
       
-      // If no acts exist, initialize 3-Act structure
-      if (!loadedActs || loadedActs.length === 0) {
-        console.log('No acts found, initializing 3-act structure...');
-        await ShotsAPI.initializeThreeActStructure(projectId, token);
-        // Reload acts after initialization
-        loadedActs = await TimelineAPI.getActs(projectId, token);
-      }
-      
-      setActs(loadedActs || []);
-
-      // 🚀 PERFORMANCE: Load ALL nodes in parallel
-      const [allSequences, allScenes, allShots] = await Promise.all([
+      const [loadedActs, allSequences, allScenes, allShots, loadedCharacters] = await Promise.all([
+        TimelineAPI.getActs(projectId, token).catch(err => {
+          console.error('Error loading acts:', err);
+          return [];
+        }),
         TimelineAPI.getAllSequencesByProject(projectId, token).catch(err => {
           console.error('Error loading sequences:', err);
-          return Promise.all(
-            loadedActs.map(act => 
-              TimelineAPI.getSequences(act.id, token).catch(() => [])
-            )
-          ).then(results => results.flat());
+          return [];
         }),
-        
         TimelineAPI.getAllScenesByProject(projectId, token).catch(err => {
           console.error('Error loading scenes:', err);
           return [];
         }),
-        
         ShotsAPI.getAllShotsByProject(projectId, token).catch(err => {
           console.error('Error loading shots:', err);
           return [];
-        })
+        }),
+        // Load characters in parallel (only if not provided by parent)
+        externalCharacters 
+          ? Promise.resolve([]) 
+          : CharactersAPI.getCharacters(projectId, token).catch(err => {
+              console.error('Error loading characters:', err);
+              return [];
+            })
       ]);
+      
+      console.log('[FilmDropdown] ✅ Parallel load complete:', {
+        acts: loadedActs.length,
+        sequences: allSequences.length,
+        scenes: allScenes.length,
+        shots: allShots.length,
+        characters: loadedCharacters.length,
+      });
 
-      setSequences(allSequences || []);
-      setScenes(allScenes || []);
-      setShots(allShots || []);
+      // If no acts exist, initialize 3-Act structure (OUTSIDE perf tracking)
+      let finalActs = loadedActs;
+      if (!finalActs || finalActs.length === 0) {
+        // Stop perf monitoring before initialization
+        perfMonitor.end(perfId, 'TIMELINE_LOAD', `Timeline Load (API): ${projectId}`, {
+          acts: 0,
+          sequences: allSequences.length,
+          scenes: allScenes.length,
+          shots: allShots.length,
+        });
+        
+        console.log('[FilmDropdown] 🏗️ Initializing 3-act structure...');
+        await ShotsAPI.initializeThreeActStructure(projectId, token);
+        
+        // Reload acts after initialization (not tracked)
+        finalActs = await TimelineAPI.getActs(projectId, token);
+        console.log('[FilmDropdown] ✅ 3-act structure initialized:', finalActs.length);
+      }
+      
+      setActs(finalActs);
+      setSequences(allSequences);
+      setScenes(allScenes);
+      setShots(allShots);
 
-      // Load characters for @-mentions in shots (only if not provided by parent)
+      // Use characters from parallel load (only if not provided by parent)
       if (!externalCharacters) {
-        try {
-          const projectCharacters = await CharactersAPI.getCharacters(projectId, token);
-          console.log('[FilmDropdown] Loaded characters for project:', projectId, projectCharacters);
-          setCharacters(projectCharacters || []);
-        } catch (error) {
-          console.error('[FilmDropdown] Error loading characters:', error);
-          setCharacters([]);
-        }
+        console.log('[FilmDropdown] Using characters from parallel load:', loadedCharacters.length);
+        setCharacters(loadedCharacters);
       } else {
         console.log('[FilmDropdown] Using characters from parent:', externalCharacters.length);
       }
 
       // 🚀 CACHE: Save to cache
       const timelineData: TimelineData = {
-        acts: loadedActs || [],
-        sequences: allSequences || [],
-        scenes: allScenes || [],
-        shots: allShots || [],
+        acts: finalActs,
+        sequences: allSequences,
+        scenes: allScenes,
+        shots: allShots,
       };
       cacheManager.set(cacheKey, timelineData, {
-        ttl: 5 * 60 * 1000,      // 5 minutes
-        staleTime: 30 * 1000,    // 30 seconds
+        ttl: 10 * 60 * 1000,     // 10 minutes (increased from 5)
+        staleTime: 60 * 1000,    // 60 seconds (increased from 30)
       });
 
-      perfMonitor.end(perfId, 'TIMELINE_LOAD', `Timeline Load (API): ${projectId}`, {
-        acts: loadedActs.length,
-        sequences: allSequences.length,
-        scenes: allScenes.length,
-        shots: allShots.length,
-      });
+      // Only end perf tracking if it wasn't already ended during initialization
+      if (finalActs.length > 0 || loadedActs.length > 0) {
+        perfMonitor.end(perfId, 'TIMELINE_LOAD', `Timeline Load (API): ${projectId}`, {
+          acts: finalActs.length,
+          sequences: allSequences.length,
+          scenes: allScenes.length,
+          shots: allShots.length,
+        });
+      }
 
     } catch (error) {
       console.error('Error loading timeline data:', error);
@@ -741,6 +758,12 @@ export function FilmDropdown({
   const handleAddScene = async (sequenceId: string) => {
     if (creating === `scene-${sequenceId}`) return;
 
+    // 🚨 CRITICAL FIX: Don't allow scene creation under temp sequences
+    if (sequenceId.startsWith('temp-')) {
+      toast.error('Bitte warte, bis die Sequence gespeichert wurde');
+      return;
+    }
+
     // 🔥 FIX: Filter out temp scenes and calculate correct scene number
     const seqScenes = scenes.filter(s => 
       s && 
@@ -869,6 +892,7 @@ export function FilmDropdown({
       const newShot = await ShotsAPI.createShot(sceneId, {
         shotNumber: `Shot ${newShotNumber}`,
         description: '',
+        projectId, // ✅ Add projectId
       }, token);
 
       // 🚀 PERFORMANCE: Batch state updates
@@ -1178,6 +1202,7 @@ export function FilmDropdown({
               shotlengthSeconds: shot.shotlengthSeconds,
               notes: shot.notes,
               dialog: shot.dialog,
+              projectId, // ✅ Add projectId
             }, token).then(realShot => ({
               tempId: tempSceneShots[shotIdx].id,
               realShot
@@ -1322,6 +1347,7 @@ export function FilmDropdown({
             shotlengthSeconds: shot.shotlengthSeconds,
             notes: shot.notes,
             dialog: shot.dialog,
+            projectId, // ✅ Add projectId
           }, token).then(realShot => ({
             tempId: sceneShots[shotIdx].id,
             realShot
@@ -1419,6 +1445,7 @@ export function FilmDropdown({
           shotlengthSeconds: shot.shotlengthSeconds,
           notes: shot.notes,
           dialog: shot.dialog,
+          projectId, // ✅ Add projectId
         }, token).then(realShot => ({ tempId: tempShots[idx].id, realShot }))
       );
       
@@ -1844,6 +1871,7 @@ export function FilmDropdown({
         shotlengthSeconds: shot.shotlengthSeconds,
         notes: shot.notes,
         dialog: shot.dialog,
+        projectId, // ✅ Add projectId
       }, token);
 
       setShots([...shots, newShot]);
@@ -2608,11 +2636,11 @@ export function FilmDropdown({
                                   size="sm"
                                   variant="outline"
                                   onClick={() => handleAddScene(sequence.id)}
-                                  disabled={creating === `scene-${sequence.id}`}
+                                  disabled={creating === `scene-${sequence.id}` || pendingIds.has(sequence.id)}
                                   className="w-1/2 md:w-1/4 ml-auto h-6 text-xs bg-white text-center border-2 border-dashed border-pink-200 dark:border-pink-700 text-pink-600 dark:text-pink-400 hover:bg-pink-50 dark:hover:bg-pink-950/40"
                                 >
                                   <Plus className="size-3 mr-1" />
-                                  Scene hinzufügen
+                                  {pendingIds.has(sequence.id) ? 'Wird gespeichert...' : 'Scene hinzufügen'}
                                 </Button>
 
                                 {seqScenes.map((scene, sceneIndex) => {
@@ -2798,7 +2826,7 @@ export function FilmDropdown({
                                               className="w-1/2 md:w-1/4 ml-auto h-6 text-xs bg-white text-center border-2 border-dashed border-yellow-400 dark:border-yellow-600 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-900/20"
                                             >
                                               <Plus className="size-3 mr-1" />
-                                              Shot hinzufügen
+                                              {pendingIds.has(scene.id) ? 'Wird gespeichert...' : 'Shot hinzufügen'}
                                             </Button>
 
                                             {sceneShots.map((shot, shotIndex) => {

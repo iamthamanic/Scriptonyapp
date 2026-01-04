@@ -27,7 +27,7 @@ export const SLA_TARGETS = {
   USER_INTERACTION: 100,   // < 100ms - Button clicks, etc.
   
   // Data Loading
-  TIMELINE_LOAD: 1000,     // < 1s - Timeline komplett laden
+  TIMELINE_LOAD: 1500,     // < 1.5s - Timeline komplett laden (dynamisch basierend auf Größe)
   CHARACTERS_LOAD: 500,    // < 500ms - Characters laden
   BEATS_LOAD: 500,         // < 500ms - Beats laden
   

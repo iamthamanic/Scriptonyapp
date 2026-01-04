@@ -40,10 +40,36 @@ export async function createShot(
   console.log('[Shots API] Creating shot:', { sceneId, shotData });
   
   try {
-    const result = await apiPost('/shots', {
+    // Extract project_id from shotData
+    const projectId = (shotData as any).projectId || (shotData as any).project_id;
+    
+    // Convert ALL camelCase to snake_case for backend
+    const payload: any = {
       scene_id: sceneId,
-      ...shotData,
-    });
+      project_id: projectId,
+    };
+    
+    // Map common camelCase fields to snake_case
+    if ((shotData as any).shotNumber !== undefined) {
+      payload.shot_number = (shotData as any).shotNumber;
+    }
+    if (shotData.description !== undefined) {
+      payload.description = shotData.description;
+    }
+    if (shotData.duration !== undefined) {
+      payload.duration = shotData.duration;
+    }
+    if ((shotData as any).cameraAngle !== undefined) {
+      payload.camera_angle = (shotData as any).cameraAngle;
+    }
+    if ((shotData as any).shotType !== undefined) {
+      payload.shot_type = (shotData as any).shotType;
+    }
+    if ((shotData as any).imageUrl !== undefined) {
+      payload.image_url = (shotData as any).imageUrl;
+    }
+    
+    const result = await apiPost('/shots', payload);
     
     console.log('[Shots API] Raw result:', result);
     const data = unwrapApiResult(result);
