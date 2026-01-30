@@ -554,7 +554,7 @@ export function VideoEditorTimeline({
   };
   */
   
-  // 🆕 NEW SIMPLIFIED handleTrimMove using extracted helpers
+  // 🆕 NEW SIMPLIFIED handleTrimMove using extracted helpers with CapCut-Style Ripple
   const handleTrimMove = (e: MouseEvent) => {
     if (!trimingBeat) return;
     
@@ -567,7 +567,7 @@ export function VideoEditorTimeline({
     if (!beat) return;
     
     if (trimingBeat.handle === 'left') {
-      // LEFT HANDLE: Trim from start
+      // LEFT HANDLE: Trim from start + RIPPLE LEFT
       const result = trimBeatLeft(
         beat,
         beats,
@@ -579,12 +579,20 @@ export function VideoEditorTimeline({
         currentTimeRef.current
       );
       
-      setBeats(prev => prev.map(b =>
-        b.id === trimingBeat.id ? { ...b, pct_from: result.newPctFrom } : b
-      ));
+      // 🚀 Apply to current beat + rippled beats
+      setBeats(prev => {
+        const updated = prev.map(b => {
+          if (b.id === trimingBeat.id) {
+            return { ...b, pct_from: result.newPctFrom };
+          }
+          const rippled = result.rippleBeats.find(rb => rb.id === b.id);
+          return rippled || b;
+        });
+        return updated;
+      });
       
     } else {
-      // RIGHT HANDLE: Trim from end
+      // RIGHT HANDLE: Trim from end + RIPPLE RIGHT
       const result = trimBeatRight(
         beat,
         beats,
@@ -596,9 +604,19 @@ export function VideoEditorTimeline({
         currentTimeRef.current
       );
       
-      setBeats(prev => prev.map(b =>
-        b.id === trimingBeat.id ? { ...b, pct_to: result.newPctTo } : b
-      ));
+      console.log(`[Ripple Debug] Beat: ${beat.label}, newPctTo: ${result.newPctTo.toFixed(2)}, rippleBeats:`, result.rippleBeats.map(b => `${b.label} (${b.pct_from.toFixed(2)}% -> ${b.pct_to.toFixed(2)}%)`));
+      
+      // 🚀 Apply to current beat + rippled beats
+      setBeats(prev => {
+        const updated = prev.map(b => {
+          if (b.id === trimingBeat.id) {
+            return { ...b, pct_to: result.newPctTo };
+          }
+          const rippled = result.rippleBeats.find(rb => rb.id === b.id);
+          return rippled || b;
+        });
+        return updated;
+      });
     }
   };
   
